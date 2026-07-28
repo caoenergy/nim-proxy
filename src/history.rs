@@ -5,13 +5,282 @@
 //! Snapshots are ~4 KB, so 30 days is ~35 MB — retention is a days knob
 //! (HISTORY_DAYS, 0 = keep forever), not a size-management subsystem.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
+use serde::Serialize;
+
 pub const SAMPLE_SECS: u64 = 300;
+const MAX_EXPOSITION_LINE_BYTES: usize = 1024 * 1024;
+const MAX_EXPOSITION_SERIES: usize = 100_000;
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+struct MetricKey {
+    metric: String,
+    labels: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct MetricValue {
+    pub metric: String,
+    pub labels: BTreeMap<String, String>,
+    pub value: f64,
+}
+
+#[derive(Default)]
+struct ParsedSnapshot {
+    counters: BTreeMap<MetricKey, f64>,
+    gauges: BTreeMap<MetricKey, f64>,
+    skipped_lines: usize,
+}
+
+#[derive(Clone, Copy)]
+enum PrometheusType {
+    Counter,
+    Gauge,
+    Histogram,
+}
+
+fn parse_exposition(exposition: &str) -> ParsedSnapshot {
+    let mut parsed = ParsedSnapshot::default();
+    let mut types = BTreeMap::new();
+    let mut series = 0;
+
+    for line in exposition.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(metadata) = line.strip_prefix("# TYPE ") {
+            let mut fields = metadata.split_whitespace();
+            let name = fields.next();
+            let kind = fields.next();
+            if fields.next().is_none() {
+                let kind = match kind {
+                    Some("counter") => Some(PrometheusType::Counter),
+                    Some("gauge") => Some(PrometheusType::Gauge),
+                    Some("histogram") => Some(PrometheusType::Histogram),
+                    _ => None,
+                };
+                if let (Some(name), Some(kind)) = (name, kind) {
+                    if valid_metric_name(name) {
+                        types.insert(name.to_owned(), kind);
+                    }
+                }
+            }
+            continue;
+        }
+        if line.starts_with('#') {
+            continue;
+        }
+        if line.len() > MAX_EXPOSITION_LINE_BYTES || series >= MAX_EXPOSITION_SERIES {
+            parsed.skipped_lines += 1;
+            continue;
+        }
+
+        let split_at = line.rfind('}').map_or(0, |index| index + 1);
+        let sample_and_value = if split_at == 0 {
+            line.split_once(char::is_whitespace)
+        } else {
+            line[split_at..]
+                .split_once(char::is_whitespace)
+                .map(|(_, value)| (&line[..split_at], value))
+        };
+        let Some((series_text, value_text)) = sample_and_value else {
+            parsed.skipped_lines += 1;
+            continue;
+        };
+        let value_text = value_text.trim_start();
+        if value_text.is_empty() || value_text.chars().any(char::is_whitespace) {
+            parsed.skipped_lines += 1;
+            continue;
+        }
+        let Ok(value) = value_text.parse::<f64>() else {
+            parsed.skipped_lines += 1;
+            continue;
+        };
+        if !value.is_finite() {
+            parsed.skipped_lines += 1;
+            continue;
+        }
+        let Some(key) = parse_metric_key(series_text) else {
+            parsed.skipped_lines += 1;
+            continue;
+        };
+
+        series += 1;
+        if is_counter_like(&key.metric, &types) {
+            parsed.counters.insert(key, value);
+        } else {
+            parsed.gauges.insert(key, value);
+        }
+    }
+
+    parsed
+}
+
+fn valid_metric_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == ':')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':')
+}
+
+fn valid_label_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn parse_metric_key(series: &str) -> Option<MetricKey> {
+    let Some(open) = series.find('{') else {
+        return valid_metric_name(series).then(|| MetricKey {
+            metric: series.to_owned(),
+            labels: BTreeMap::new(),
+        });
+    };
+    if !series.ends_with('}') {
+        return None;
+    }
+    let metric = &series[..open];
+    if !valid_metric_name(metric) {
+        return None;
+    }
+    let labels = parse_labels(&series[open + 1..series.len() - 1])?;
+    Some(MetricKey {
+        metric: metric.to_owned(),
+        labels,
+    })
+}
+
+fn parse_labels(input: &str) -> Option<BTreeMap<String, String>> {
+    let mut chars = input.chars().peekable();
+    let mut labels = BTreeMap::new();
+
+    loop {
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        if chars.peek().is_none() {
+            return Some(labels);
+        }
+
+        let mut name = String::new();
+        while let Some(c) = chars.next_if(|c| c.is_ascii_alphanumeric() || *c == '_') {
+            name.push(c);
+        }
+        if !valid_label_name(&name) {
+            return None;
+        }
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        if chars.next() != Some('=') {
+            return None;
+        }
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        if chars.next() != Some('"') {
+            return None;
+        }
+
+        let mut value = String::new();
+        loop {
+            match chars.next()? {
+                '"' => break,
+                '\\' => match chars.next()? {
+                    '"' => value.push('"'),
+                    '\\' => value.push('\\'),
+                    'n' => value.push('\n'),
+                    _ => return None,
+                },
+                c => value.push(c),
+            }
+        }
+        if labels.insert(name, value).is_some() {
+            return None;
+        }
+
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        match chars.next() {
+            Some(',') => {}
+            None => return Some(labels),
+            _ => return None,
+        }
+    }
+}
+
+fn is_counter_like(
+    metric: &str,
+    types: &BTreeMap<String, PrometheusType>,
+) -> bool {
+    if let Some(kind) = types.get(metric) {
+        return matches!(
+            kind,
+            PrometheusType::Counter | PrometheusType::Histogram
+        );
+    }
+    for suffix in ["_bucket", "_count", "_sum"] {
+        if let Some(base) = metric.strip_suffix(suffix) {
+            if matches!(types.get(base), Some(PrometheusType::Histogram)) {
+                return true;
+            }
+        }
+    }
+    metric.ends_with("_total")
+        || metric.ends_with("_bucket")
+        || metric.ends_with("_count")
+        || metric.ends_with("_sum")
+}
+
+#[derive(Default)]
+struct NormalizedMetrics {
+    deltas: BTreeMap<MetricKey, f64>,
+    gauges: BTreeMap<MetricKey, f64>,
+    inferred_reset: bool,
+}
+
+fn normalize(
+    previous: Option<&ParsedSnapshot>,
+    current: &ParsedSnapshot,
+    reset: bool,
+) -> NormalizedMetrics {
+    let inferred_reset = !reset
+        && previous.is_some_and(|previous| {
+            current.counters.iter().any(|(key, current_value)| {
+                previous.counters.get(key).is_some_and(|previous_value| {
+                    current_value - previous_value < -f64::EPSILON
+                })
+            })
+        });
+    let reset_epoch = reset || inferred_reset;
+    let mut deltas = BTreeMap::new();
+
+    for (key, current_value) in &current.counters {
+        let delta = if reset_epoch {
+            *current_value
+        } else {
+            previous
+                .and_then(|snapshot| snapshot.counters.get(key))
+                .map_or(*current_value, |previous_value| {
+                    let delta = current_value - previous_value;
+                    if (-f64::EPSILON..0.0).contains(&delta) {
+                        0.0
+                    } else {
+                        delta
+                    }
+                })
+        };
+        deltas.insert(key.clone(), delta);
+    }
+
+    NormalizedMetrics {
+        deltas,
+        gauges: current.gauges.clone(),
+        inferred_reset,
+    }
+}
 
 pub struct History {
     points: Mutex<Vec<(u64, String)>>,
@@ -131,6 +400,133 @@ impl History {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SNAPSHOT: &str = r#"
+# TYPE nimproxy_requests_total counter
+nimproxy_requests_total{client="Mindmap",model="z-ai/glm-5.2",status="200"} 12
+# TYPE nimproxy_active_requests gauge
+nimproxy_active_requests 2
+# TYPE nimproxy_ttft_seconds histogram
+nimproxy_ttft_seconds_bucket{model="z-ai/glm-5.2",le="0.5"} 3
+nimproxy_ttft_seconds_bucket{model="z-ai/glm-5.2",le="+Inf"} 4
+nimproxy_ttft_seconds_sum{model="z-ai/glm-5.2"} 1.25
+nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
+"#;
+
+    #[test]
+    fn parses_counter_gauge_and_histogram_series() {
+        let parsed = parse_exposition(SNAPSHOT);
+        assert_eq!(parsed.counters.len(), 5);
+        assert_eq!(parsed.gauges.len(), 1);
+        assert_eq!(parsed.skipped_lines, 0);
+    }
+
+    #[test]
+    fn parses_escaped_label_values() {
+        let series =
+            r#"escaped_total{quote="say \"hi\"",path="c:\\tmp",line="a\nb"}"#;
+        let parsed =
+            parse_exposition(&format!("# TYPE escaped_total counter\n{series} 1\n"));
+        assert_eq!(parsed.skipped_lines, 0);
+        let key = parsed.counters.keys().next().unwrap();
+        assert_eq!(key.labels["quote"], "say \"hi\"");
+        assert_eq!(key.labels["path"], "c:\\tmp");
+        assert_eq!(key.labels["line"], "a\nb");
+    }
+
+    #[test]
+    fn parse_skips_nan_and_counts_malformed_lines() {
+        let parsed = parse_exposition(
+            "# TYPE a_total counter\n\
+             a_total NaN\n\
+             missing_value\n\
+             bad-name_total 2\n",
+        );
+        assert!(parsed.counters.is_empty());
+        assert_eq!(parsed.skipped_lines, 3);
+    }
+
+    #[test]
+    fn parses_counter_suffix_without_type_metadata() {
+        let parsed = parse_exposition("orphan_total{kind=\"legacy\"} 9\n");
+        let (key, value) = parsed.counters.iter().next().unwrap();
+        assert_eq!(key.metric, "orphan_total");
+        assert_eq!(key.labels["kind"], "legacy");
+        assert_eq!(*value, 9.0);
+        assert!(parsed.gauges.is_empty());
+        assert_eq!(parsed.skipped_lines, 0);
+    }
+
+    fn metric(values: &BTreeMap<MetricKey, f64>, name: &str) -> f64 {
+        values
+            .iter()
+            .find_map(|(key, value)| (key.metric == name).then_some(*value))
+            .unwrap()
+    }
+
+    #[test]
+    fn explicit_boot_change_counts_new_process_values() {
+        let first =
+            parse_exposition("# TYPE requests_total counter\nrequests_total 100\n");
+        let second =
+            parse_exposition("# TYPE requests_total counter\nrequests_total 7\n");
+        let normalized = normalize(Some(&first), &second, true);
+        assert_eq!(metric(&normalized.deltas, "requests_total"), 7.0);
+    }
+
+    #[test]
+    fn one_legacy_counter_decrease_resets_the_snapshot_epoch() {
+        let first = parse_exposition(
+            "# TYPE a_total counter\na_total 100\n\
+             # TYPE b_total counter\nb_total 20\n",
+        );
+        let second = parse_exposition(
+            "# TYPE a_total counter\na_total 3\n\
+             # TYPE b_total counter\nb_total 25\n",
+        );
+        let normalized = normalize(Some(&first), &second, false);
+        assert!(normalized.inferred_reset);
+        assert_eq!(metric(&normalized.deltas, "a_total"), 3.0);
+        assert_eq!(metric(&normalized.deltas, "b_total"), 25.0);
+    }
+
+    #[test]
+    fn normalize_subtracts_counters_without_a_reset() {
+        let first =
+            parse_exposition("# TYPE requests_total counter\nrequests_total 100\n");
+        let second =
+            parse_exposition("# TYPE requests_total counter\nrequests_total 107\n");
+        let normalized = normalize(Some(&first), &second, false);
+        assert!(!normalized.inferred_reset);
+        assert_eq!(metric(&normalized.deltas, "requests_total"), 7.0);
+    }
+
+    #[test]
+    fn normalize_counts_a_new_counter_from_zero() {
+        let first = parse_exposition("# TYPE old_total counter\nold_total 4\n");
+        let second = parse_exposition(
+            "# TYPE old_total counter\nold_total 6\n\
+             # TYPE new_total counter\nnew_total 9\n",
+        );
+        let normalized = normalize(Some(&first), &second, false);
+        assert_eq!(metric(&normalized.deltas, "old_total"), 2.0);
+        assert_eq!(metric(&normalized.deltas, "new_total"), 9.0);
+    }
+
+    #[test]
+    fn normalize_copies_current_gauges() {
+        let first = parse_exposition(
+            "# TYPE active gauge\nactive 8\n\
+             # TYPE requests_total counter\nrequests_total 3\n",
+        );
+        let second = parse_exposition(
+            "# TYPE active gauge\nactive 2\n\
+             # TYPE requests_total counter\nrequests_total 4\n",
+        );
+        let normalized = normalize(Some(&first), &second, false);
+        assert_eq!(metric(&normalized.gauges, "active"), 2.0);
+        assert_eq!(metric(&normalized.deltas, "requests_total"), 1.0);
+    }
 
     #[test]
     fn retention_prunes_and_range_filters() {
