@@ -6,6 +6,11 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-28] lint — remove duplicate agent workflow documents
+
+- Removed `docs/superpowers`; durable design decisions and operational facts
+  remain in the project knowledge graph instead of a second planning archive.
+
 ## [2026-07-28] decision — reset-aware dashboard history
 
 - Replaced browser-local lifetime and cross-boot subtraction with a
