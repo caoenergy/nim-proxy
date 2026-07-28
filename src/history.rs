@@ -8,15 +8,16 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, Write};
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
 pub const SAMPLE_SECS: u64 = 300;
 const MAX_EXPOSITION_LINE_BYTES: usize = 1024 * 1024;
 const MAX_EXPOSITION_SERIES: usize = 100_000;
+const COMPACT_AFTER_EXPIRED_SAMPLES: usize = 288;
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 struct MetricKey {
@@ -419,12 +420,6 @@ struct SampleRecord<'a> {
     m: &'a str,
 }
 
-#[derive(Serialize)]
-struct LegacySampleRecord<'a> {
-    t: u64,
-    m: &'a str,
-}
-
 pub struct History {
     /// Temporary raw compatibility storage for `/api/history`; Task 7 removes
     /// it after the route switches to typed rollups.
@@ -435,6 +430,11 @@ pub struct History {
     /// retune it live; the sampler reads it on every append.
     days: AtomicU64,
     dropped_since_compact: Mutex<usize>,
+    filesystem: Mutex<()>,
+    compaction_pending: AtomicBool,
+    compaction_running: AtomicBool,
+    compaction_cutoff: AtomicU64,
+    compaction_generation: AtomicU64,
     boot_id: String,
     boot_t: u64,
     initial_capacity: CapacitySnapshot,
@@ -443,6 +443,8 @@ pub struct History {
 impl History {
     pub fn load(dir: Option<PathBuf>, days: u64, initial_capacity: CapacitySnapshot) -> Self {
         let started = std::time::Instant::now();
+        let boot_t = unix_now();
+        let cutoff = (days > 0).then(|| boot_t.saturating_sub(days.saturating_mul(86_400)));
         let mut source_bytes = 0;
         let mut diagnostics = HistoryDiagnostics::default();
         let mut records = Vec::new();
@@ -516,22 +518,24 @@ impl History {
             if normalized.inferred_reset {
                 diagnostics.legacy_resets_inferred += 1;
             }
-            indexed_points.push(IndexedPoint {
-                t: point.t,
-                deltas: normalized.deltas,
-                gauges: normalized.gauges,
-                capacity: point.capacity.clone(),
-            });
+            let retained = cutoff.is_none_or(|cutoff| point.t >= cutoff);
+            if retained {
+                indexed_points.push(IndexedPoint {
+                    t: point.t,
+                    deltas: normalized.deltas,
+                    gauges: normalized.gauges,
+                    capacity: point.capacity.clone(),
+                });
+                raw_points.push(point.clone());
+            }
             last_parsed = Some(current);
             last_sample_boot = point.boot.clone();
-            raw_points.push(point);
         }
 
         let available_from = indexed_points.first().map(|point| point.t);
         let available_to = indexed_points.last().map(|point| point.t);
         let revision = diagnostics.valid_samples as u64;
         let boot_id = new_boot_id();
-        let boot_t = unix_now();
         let history = Self {
             points: Mutex::new(raw_points),
             inner: Mutex::new(HistoryInner {
@@ -546,6 +550,11 @@ impl History {
             file,
             days: AtomicU64::new(days),
             dropped_since_compact: Mutex::new(0),
+            filesystem: Mutex::new(()),
+            compaction_pending: AtomicBool::new(false),
+            compaction_running: AtomicBool::new(false),
+            compaction_cutoff: AtomicU64::new(0),
+            compaction_generation: AtomicU64::new(0),
             boot_id,
             boot_t,
             initial_capacity,
@@ -572,9 +581,33 @@ impl History {
         history
     }
 
-    /// Retune retention live (settings-driven); applies on the next append.
-    pub fn set_days(&self, days: u64) {
+    /// Retune retention live. Visible queries prune synchronously; durable
+    /// compaction is serialized with appends and runs off the async executor.
+    pub fn reconfigure_retention(self: &Arc<Self>, days: u64, now: u64) {
         self.days.store(days, Ordering::Relaxed);
+        if days == 0 {
+            return;
+        }
+
+        let cutoff = now.saturating_sub(days.saturating_mul(86_400));
+        let mut inner = self.inner.lock().unwrap();
+        let before = inner.points.len();
+        let mut raw_points = self.points.lock().unwrap();
+        inner.points.retain(|point| point.t >= cutoff);
+        raw_points.retain(|point| point.t >= cutoff);
+        let removed = before - inner.points.len();
+        if removed > 0 {
+            *self.dropped_since_compact.lock().unwrap() += removed;
+            inner.revision = inner.revision.wrapping_add(1);
+        }
+        inner.available_from = inner.points.first().map(|point| point.t);
+        inner.available_to = inner.points.last().map(|point| point.t);
+        drop(raw_points);
+        drop(inner);
+
+        if self.file.is_some() {
+            self.request_compaction(cutoff);
+        }
     }
 
     pub fn revision(&self) -> u64 {
@@ -586,7 +619,7 @@ impl History {
             let inner = self.inner.lock().unwrap();
             (inner.available_from, inner.available_to)
         };
-        let compaction_pending = *self.dropped_since_compact.lock().unwrap() > 0;
+        let compaction_pending = self.compaction_pending.load(Ordering::SeqCst);
         let file_bytes = self
             .file
             .as_ref()
@@ -600,7 +633,7 @@ impl History {
         }
     }
 
-    pub fn append(&self, t: u64, snapshot: &str, capacity: CapacitySnapshot) {
+    pub fn append(self: &Arc<Self>, t: u64, snapshot: &str, capacity: CapacitySnapshot) {
         let current = parse_exposition(snapshot);
         let mut inner = self.inner.lock().unwrap();
         // Wall clocks can move backward, and a retained file can contain a
@@ -653,7 +686,16 @@ impl History {
             m: snapshot,
         })
         .expect("history sample record serializes");
-        self.persist_sample(line, &raw_points);
+        drop(raw_points);
+        self.persist_sample(&line);
+
+        if self.compaction_pending.load(Ordering::SeqCst) {
+            self.start_pending_compaction();
+        } else if days > 0
+            && *self.dropped_since_compact.lock().unwrap() > COMPACT_AFTER_EXPIRED_SAMPLES
+        {
+            self.request_compaction(t.saturating_sub(days.saturating_mul(86_400)));
+        }
     }
 
     pub fn rollup(&self, from: u64, to: u64, points: usize) -> Rollup {
@@ -797,36 +839,131 @@ impl History {
             capacity: &self.initial_capacity,
         })
         .expect("history boot record serializes");
+        let _filesystem = self.filesystem.lock().unwrap();
         if let Err(e) = append_line(path, &line) {
             tracing::warn!("history boot marker write failed: {e}");
         }
     }
 
-    fn persist_sample(&self, line: String, points: &[RawPoint]) {
+    fn persist_sample(&self, line: &str) {
         let Some(path) = &self.file else {
             return;
         };
-        let mut dropped = self.dropped_since_compact.lock().unwrap();
-        // Compact once a day's worth of expired snapshots has built up;
-        // otherwise just append.
-        let result = if *dropped > 288 {
-            *dropped = 0;
-            let mut lines = vec![serde_json::to_string(&BootRecord {
-                v: 2,
-                t: self.boot_t,
-                boot: &self.boot_id,
-                kind: "boot",
-                capacity: &self.initial_capacity,
-            })
-            .expect("history boot record serializes")];
-            lines.extend(points.iter().map(serialize_raw_point));
-            fs::write(path, lines.join("\n") + "\n")
-        } else {
-            append_line(path, &line)
-        };
-        if let Err(e) = result {
+        let _filesystem = self.filesystem.lock().unwrap();
+        if let Err(e) = append_line(path, line) {
             tracing::warn!("history write failed: {e}");
         }
+    }
+
+    fn request_compaction(self: &Arc<Self>, cutoff: u64) {
+        self.compaction_cutoff.store(cutoff, Ordering::SeqCst);
+        self.compaction_generation.fetch_add(1, Ordering::SeqCst);
+        self.compaction_pending.store(true, Ordering::SeqCst);
+        self.start_pending_compaction();
+    }
+
+    fn start_pending_compaction(self: &Arc<Self>) {
+        if !self.compaction_pending.load(Ordering::SeqCst)
+            || self
+                .compaction_running
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+        {
+            return;
+        }
+
+        let history = self.clone();
+        let generation = history.compaction_generation.load(Ordering::SeqCst);
+        let cutoff = history.compaction_cutoff.load(Ordering::SeqCst);
+        let claimed_drops = *history.dropped_since_compact.lock().unwrap();
+        tokio::task::spawn_blocking(move || {
+            let result = history.compact_file(cutoff);
+            if result.is_ok() {
+                let mut inner = history.inner.lock().unwrap();
+                inner.revision = inner.revision.wrapping_add(1);
+                drop(inner);
+                let mut dropped = history.dropped_since_compact.lock().unwrap();
+                *dropped = dropped.saturating_sub(claimed_drops);
+                drop(dropped);
+
+                if history.compaction_generation.load(Ordering::SeqCst) == generation {
+                    history.compaction_pending.store(false, Ordering::SeqCst);
+                    if history.compaction_generation.load(Ordering::SeqCst) != generation {
+                        history.compaction_pending.store(true, Ordering::SeqCst);
+                    }
+                }
+            } else if let Err(error) = &result {
+                tracing::warn!("history compaction failed: {error}");
+            }
+
+            history.compaction_running.store(false, Ordering::SeqCst);
+            if result.is_ok() && history.compaction_pending.load(Ordering::SeqCst) {
+                history.start_pending_compaction();
+            }
+        });
+    }
+
+    fn compact_file(&self, cutoff: u64) -> std::io::Result<()> {
+        let Some(path) = &self.file else {
+            return Ok(());
+        };
+        let _filesystem = self.filesystem.lock().unwrap();
+
+        let mut baseline: Option<(u64, String)> = None;
+        let mut boot: Option<(u64, String)> = None;
+        for line in std::io::BufReader::new(fs::File::open(path)?).lines() {
+            let line = line?;
+            let Ok(record) = serde_json::from_str::<StoredRecord>(&line) else {
+                continue;
+            };
+            let Some((t, kind)) = persisted_record_kind(&record) else {
+                continue;
+            };
+            if t >= cutoff {
+                continue;
+            }
+            let slot = match kind {
+                PersistedRecordKind::Sample => &mut baseline,
+                PersistedRecordKind::Boot => &mut boot,
+            };
+            if slot.as_ref().is_none_or(|(latest, _)| t >= *latest) {
+                *slot = Some((t, line));
+            }
+        }
+
+        let temporary = temporary_path(path);
+        match fs::remove_file(&temporary) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut output = options.open(&temporary)?;
+
+        let mut prefix = [baseline, boot].into_iter().flatten().collect::<Vec<_>>();
+        prefix.sort_by_key(|(t, _)| *t);
+        for (_, line) in prefix {
+            writeln!(output, "{line}")?;
+        }
+        for line in std::io::BufReader::new(fs::File::open(path)?).lines() {
+            let line = line?;
+            let Ok(record) = serde_json::from_str::<StoredRecord>(&line) else {
+                continue;
+            };
+            if persisted_record_kind(&record).is_some_and(|(t, _)| t >= cutoff) {
+                writeln!(output, "{line}")?;
+            }
+        }
+        output.sync_all()?;
+        fs::rename(&temporary, path)?;
+        sync_parent_directory(path)?;
+        Ok(())
     }
 }
 
@@ -932,27 +1069,59 @@ fn append_line(path: &PathBuf, line: &str) -> std::io::Result<()> {
         .and_then(|mut file| writeln!(file, "{line}"))
 }
 
-fn serialize_raw_point(point: &RawPoint) -> String {
-    match (&point.boot, &point.capacity) {
-        (Some(boot), Some(capacity)) => serde_json::to_string(&SampleRecord {
-            v: 2,
-            t: point.t,
-            boot,
-            capacity,
-            m: &point.m,
-        }),
-        _ => serde_json::to_string(&LegacySampleRecord {
-            t: point.t,
-            m: &point.m,
-        }),
+#[derive(Clone, Copy)]
+enum PersistedRecordKind {
+    Boot,
+    Sample,
+}
+
+fn persisted_record_kind(record: &StoredRecord) -> Option<(u64, PersistedRecordKind)> {
+    let t = record.t?;
+    match (record.v, record.kind.as_deref()) {
+        (Some(2), Some("boot"))
+            if record.boot.is_some() && record.capacity.is_some() && record.m.is_none() =>
+        {
+            Some((t, PersistedRecordKind::Boot))
+        }
+        (Some(2), None)
+            if record.boot.is_some() && record.capacity.is_some() && record.m.is_some() =>
+        {
+            Some((t, PersistedRecordKind::Sample))
+        }
+        (None, None)
+            if record.boot.is_none() && record.capacity.is_none() && record.m.is_some() =>
+        {
+            Some((t, PersistedRecordKind::Sample))
+        }
+        _ => None,
     }
-    .expect("history raw point serializes")
+}
+
+fn temporary_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".tmp");
+    PathBuf::from(name)
+}
+
+#[cfg(unix)]
+fn sync_parent_directory(path: &Path) -> std::io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("history file has no parent directory"))?;
+    fs::File::open(parent)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_parent_directory(_path: &Path) -> std::io::Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fmt::Write as _;
+    use std::sync::Arc;
+    use std::time::Duration;
 
     fn capacity(rpm: usize) -> CapacitySnapshot {
         CapacitySnapshot {
@@ -962,21 +1131,26 @@ mod tests {
         }
     }
 
-    fn memory_history(days: u64) -> History {
-        History::load(None, days, capacity(40))
+    fn memory_history(days: u64) -> Arc<History> {
+        Arc::new(History::load(None, days, capacity(40)))
     }
 
-    fn history_with_file(days: u64, file: PathBuf) -> History {
-        History {
+    fn history_with_file(days: u64, file: PathBuf) -> Arc<History> {
+        Arc::new(History {
             points: Mutex::new(Vec::new()),
             inner: Mutex::new(HistoryInner::default()),
             file: Some(file),
             days: AtomicU64::new(days),
             dropped_since_compact: Mutex::new(0),
+            filesystem: Mutex::new(()),
+            compaction_pending: AtomicBool::new(false),
+            compaction_running: AtomicBool::new(false),
+            compaction_cutoff: AtomicU64::new(0),
+            compaction_generation: AtomicU64::new(0),
             boot_id: "00000000000000000000000000000000".to_owned(),
             boot_t: 0,
             initial_capacity: capacity(40),
-        }
+        })
     }
 
     const SNAPSHOT: &str = r#"
@@ -1162,6 +1336,35 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         assert_eq!(r[0].1, "new");
     }
 
+    #[tokio::test]
+    async fn retention_reconfiguration_prunes_indexed_queries_immediately() {
+        let history = memory_history(0);
+        history.append(
+            1_000,
+            "# TYPE requests_total counter\nrequests_total 5\n",
+            capacity(40),
+        );
+        history.append(
+            120_000,
+            "# TYPE requests_total counter\nrequests_total 9\n",
+            capacity(40),
+        );
+        history.append(
+            200_000,
+            "# TYPE requests_total counter\nrequests_total 12\n",
+            capacity(40),
+        );
+        let before_revision = history.revision();
+
+        history.clone().reconfigure_retention(1, 200_000);
+
+        let rollup = history.rollup(0, u64::MAX, 100);
+        assert_eq!(rollup.available_from, Some(120_000));
+        assert_eq!(history.status().available_from, Some(120_000));
+        assert_eq!(value(&rollup.totals, "requests_total"), 7.0);
+        assert!(history.revision() > before_revision);
+    }
+
     #[test]
     fn append_clamps_clock_rollback_to_preserve_sorted_index() {
         let history = memory_history(0);
@@ -1286,7 +1489,7 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         assert_eq!(inner.diagnostics.legacy_resets_inferred, 1);
     }
 
-    fn history_with_points() -> History {
+    fn history_with_points() -> Arc<History> {
         let history = memory_history(0);
         history.append(
             100,
@@ -1512,41 +1715,136 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         let all = h.range(0, u64::MAX, 100);
         assert_eq!(all.len(), 3, "3 valid lines parsed, junk skipped");
         assert_eq!(all[0].0, 5, "snapshots sorted by timestamp on load");
-        // days > 0 exercises the "{days} days" retention log branch.
+        // Finite retention is also enforced while loading so a compacted
+        // pre-cutoff baseline stays hidden after restart.
         let h2 = History::load(Some(dir.0.clone()), 7, capacity(40));
-        assert_eq!(h2.range(0, u64::MAX, 100).len(), 3);
+        assert!(h2.range(0, u64::MAX, 100).is_empty());
+        assert_eq!(h2.status().available_from, None);
     }
 
-    #[test]
-    fn append_compacts_the_file_after_a_days_worth_of_expiry() {
+    #[tokio::test]
+    async fn compaction_preserves_hidden_baseline_boot_and_retained_totals() {
         let dir = TestDir::new();
         let path = dir.0.join("history.jsonl");
-        fs::write(&path, "{\"t\":1,\"m\":\"old\"}\n").unwrap();
-        let h = history_with_file(1, path.clone());
-        h.points.lock().unwrap().push(RawPoint {
-            t: 1,
-            m: "old".to_owned(),
-            boot: None,
-            capacity: None,
-        });
-        h.inner.lock().unwrap().points.push(IndexedPoint {
-            t: 1,
-            deltas: BTreeMap::new(),
-            gauges: BTreeMap::new(),
-            capacity: None,
-        });
-        // One more expiry crosses the >288 compaction threshold.
-        *h.dropped_since_compact.lock().unwrap() = 288;
-        // days = 1: cutoff = 200_000 - 86_400 = 113_600, so the t=1 snapshot
-        // expires; that pushes the drop count to 289 (>288) and triggers a full
-        // file rewrite rather than an append.
-        h.append(200_000, "new", capacity(40));
+        let now = unix_now();
+        let cutoff = now - 86_400;
+        let old = cutoff - 400;
+        let boot = cutoff - 300;
+        let baseline = cutoff - 200;
+        let retained_one = cutoff + 10;
+        let retained_two = now - 10;
+        fs::write(
+            &path,
+            format!(
+                "{{\"t\":{old},\"m\":\"# TYPE requests_total counter\\nrequests_total 5\\n\"}}\n\
+                 {{\"v\":2,\"t\":{boot},\"boot\":\"boot-a\",\"kind\":\"boot\",\"capacity\":{{\"enabled_lanes\":1,\"rpms\":[40],\"capacity_rpm\":40}}}}\n\
+                 {{\"v\":2,\"t\":{baseline},\"boot\":\"boot-a\",\"capacity\":{{\"enabled_lanes\":1,\"rpms\":[40],\"capacity_rpm\":40}},\"m\":\"# TYPE requests_total counter\\nrequests_total 50\\n\"}}\n\
+                 {{\"v\":2,\"t\":{retained_one},\"boot\":\"boot-a\",\"capacity\":{{\"enabled_lanes\":1,\"rpms\":[40],\"capacity_rpm\":40}},\"m\":\"# TYPE requests_total counter\\nrequests_total 60\\n\"}}\n\
+                 {{\"v\":2,\"t\":{retained_two},\"boot\":\"boot-a\",\"capacity\":{{\"enabled_lanes\":1,\"rpms\":[40],\"capacity_rpm\":40}},\"m\":\"# TYPE requests_total counter\\nrequests_total 70\\n\"}}\n"
+            ),
+        )
+        .unwrap();
+
+        let history = Arc::new(History::load(Some(dir.0.clone()), 30, capacity(40)));
+        let temporary = temporary_path(&path);
+        fs::write(&temporary, "stale partial rewrite").unwrap();
+        history.clone().reconfigure_retention(1, now);
+        let expected = history.rollup(0, u64::MAX, 100).totals;
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while history.status().compaction_pending {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "history compaction did not finish"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
         let contents = fs::read_to_string(&path).unwrap();
-        assert!(contents.contains("new"), "surviving snapshot rewritten");
+        let records: Vec<serde_json::Value> = contents
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(!records.iter().any(|record| record["t"] == old));
+        assert!(records.iter().any(|record| record["t"] == baseline));
+        assert!(records
+            .iter()
+            .any(|record| record["t"] == boot && record["kind"] == "boot"));
+        assert!(records.iter().any(|record| record["t"] == retained_one));
+        assert!(records.iter().any(|record| record["t"] == retained_two));
         assert!(
-            !contents.contains("old"),
-            "expired snapshot compacted out of the file"
+            !temporary.exists(),
+            "successful rename consumes the temp file"
         );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+
+        let reloaded = History::load(Some(dir.0.clone()), 1, capacity(40));
+        let after = reloaded.rollup(0, u64::MAX, 100);
+        assert_eq!(after.available_from, Some(retained_one));
+        assert_eq!(after.totals, expected);
+    }
+
+    #[tokio::test]
+    async fn compaction_failure_preserves_file_and_retries_on_append() {
+        let dir = TestDir::new();
+        let path = dir.0.join("history.jsonl");
+        fs::write(
+            &path,
+            "{\"t\":1,\"m\":\"# TYPE requests_total counter\\nrequests_total 5\\n\"}\n\
+             {\"t\":2,\"m\":\"# TYPE requests_total counter\\nrequests_total 8\\n\"}\n",
+        )
+        .unwrap();
+        let history = Arc::new(History::load(Some(dir.0.clone()), 30, capacity(40)));
+        let original = fs::read_to_string(&path).unwrap();
+        let temporary = temporary_path(&path);
+        fs::create_dir(&temporary).unwrap();
+
+        history.clone().reconfigure_retention(1, unix_now());
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while history.compaction_running.load(Ordering::SeqCst) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "failed compaction did not finish"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(
+            history.status().compaction_pending,
+            "a failed rewrite must remain pending for retry"
+        );
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            original,
+            "a temp-file failure must not replace or truncate durable history"
+        );
+
+        fs::remove_dir(&temporary).unwrap();
+        history.append(
+            unix_now(),
+            "# TYPE requests_total counter\nrequests_total 1\n",
+            capacity(40),
+        );
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while history.status().compaction_pending {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "history compaction retry did not finish"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        let compacted = fs::read_to_string(&path).unwrap();
+        assert!(!compacted.lines().any(|line| line.contains("\"t\":1,")));
+        assert!(compacted.lines().any(|line| line.contains("\"t\":2,")));
+        assert!(compacted
+            .lines()
+            .all(|line| { serde_json::from_str::<serde_json::Value>(line).is_ok() }));
     }
 
     #[test]

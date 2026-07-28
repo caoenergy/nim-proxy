@@ -1172,6 +1172,98 @@ async fn dashboard_now_contract_uses_current_pool_config_and_registry() {
 }
 
 #[tokio::test]
+async fn retention_change_prunes_queries_and_disk() {
+    let mock = start_mock().await;
+    let data_dir = scratch_data_dir();
+    std::fs::write(
+        data_dir.join("config.json"),
+        serde_json::to_string_pretty(&StoreOpts::default().json(&mock.url)).unwrap(),
+    )
+    .unwrap();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let cutoff = now - 86_400;
+    let old = cutoff - 400;
+    let boot = cutoff - 300;
+    let baseline = cutoff - 200;
+    let retained_one = cutoff + 10;
+    let retained_two = now - 10;
+    std::fs::write(
+        data_dir.join("history.jsonl"),
+        format!(
+            "{{\"t\":{old},\"m\":\"# TYPE fixture_requests_total counter\\nfixture_requests_total 5\\n\"}}\n\
+             {{\"v\":2,\"t\":{boot},\"boot\":\"boot-a\",\"kind\":\"boot\",\"capacity\":{{\"enabled_lanes\":3,\"rpms\":[40,40,40],\"capacity_rpm\":120}}}}\n\
+             {{\"v\":2,\"t\":{baseline},\"boot\":\"boot-a\",\"capacity\":{{\"enabled_lanes\":3,\"rpms\":[40,40,40],\"capacity_rpm\":120}},\"m\":\"# TYPE fixture_requests_total counter\\nfixture_requests_total 50\\n\"}}\n\
+             {{\"v\":2,\"t\":{retained_one},\"boot\":\"boot-a\",\"capacity\":{{\"enabled_lanes\":3,\"rpms\":[40,40,40],\"capacity_rpm\":120}},\"m\":\"# TYPE fixture_requests_total counter\\nfixture_requests_total 60\\n\"}}\n\
+             {{\"v\":2,\"t\":{retained_two},\"boot\":\"boot-a\",\"capacity\":{{\"enabled_lanes\":3,\"rpms\":[40,40,40],\"capacity_rpm\":120}},\"m\":\"# TYPE fixture_requests_total counter\\nfixture_requests_total 70\\n\"}}\n"
+        ),
+    )
+    .unwrap();
+
+    let proxy = start_proxy_in(data_dir, &[("HISTORY_SAMPLE_SECS", "3600")]).await;
+    let cookie = login(&proxy).await;
+    let (status, body) = post_json(
+        &proxy,
+        &cookie,
+        "/api/settings/history",
+        serde_json::json!({
+            "days": 1,
+            "default_window_days": 1,
+            "slo_target_percent": 99.9
+        }),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+
+    let query = |proxy: &support::Proxy, cookie: &str| {
+        let url = proxy.url("/api/dashboard?from=1&to=4102444800&points=100");
+        let cookie = cookie.to_owned();
+        async move {
+            client()
+                .get(url)
+                .header("cookie", cookie)
+                .send()
+                .await
+                .unwrap()
+                .json::<serde_json::Value>()
+                .await
+                .unwrap()
+        }
+    };
+    let metric = |body: &serde_json::Value| {
+        body["totals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["metric"] == "fixture_requests_total")
+            .and_then(|row| row["value"].as_f64())
+            .unwrap()
+    };
+
+    let pruned = query(&proxy, &cookie).await;
+    assert_eq!(pruned["window"]["available_from"], retained_one);
+    assert_eq!(metric(&pruned), 20.0);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while api_config(&proxy, &cookie).await["server"]["history"]["compaction_pending"] == true {
+        assert!(
+            Instant::now() < deadline,
+            "history compaction did not finish"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let proxy = restart(proxy, &[("HISTORY_SAMPLE_SECS", "3600")]).await;
+    let cookie = login(&proxy).await;
+    let reloaded = query(&proxy, &cookie).await;
+    assert_eq!(reloaded["window"]["available_from"], retained_one);
+    assert_eq!(metric(&reloaded), 20.0);
+}
+
+#[tokio::test]
 async fn sigterm_shuts_down_cleanly() {
     let mock = start_mock().await;
     let proxy = start_proxy(&mock.url, &[]).await;
