@@ -6,6 +6,12 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-28] ingest — prepare v0.6.5 maintenance release
+
+- Promoted the accumulated maintenance, dashboard-history corrections, and
+  security notes from Unreleased into v0.6.5; synchronized the crate/lockfile
+  version and changelog comparison links.
+
 ## [2026-07-28] lint — remove duplicate agent workflow documents
 
 - Removed `docs/superpowers`; durable design decisions and operational facts
