@@ -6,6 +6,44 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-28] ingest — prepare v0.6.5 maintenance release
+
+- Promoted the accumulated maintenance, dashboard-history corrections, and
+  security notes from Unreleased into v0.6.5; synchronized the crate/lockfile
+  version and changelog comparison links.
+
+## [2026-07-28] lint — remove duplicate planning and prototype documents
+
+- Removed `docs/superpowers` and the root `design/` prototype handoffs;
+  durable design decisions and operational facts remain in the project
+  knowledge graph instead of parallel planning archives.
+
+## [2026-07-28] decision — reset-aware dashboard history
+
+- Replaced browser-local lifetime and cross-boot subtraction with a
+  server-side reset-aware history index, one selected analytical window,
+  separately configured retention/default window, and lightweight current
+  polling.
+
+## [2026-07-28] ingest — bound capacity to observed history
+
+- Clarified that a partial default window keeps the first retained sample's
+  exact totals without inventing duration or capacity in the unavailable
+  prefix; saturated retention arithmetic also keeps extreme valid values safe.
+
+## [2026-07-28] ingest — synchronize dashboard history documentation
+
+- Updated the dashboard, metrics-history, configuration, retention, and auth
+  pages to match the typed range/current contracts, revision-bound tail,
+  sample-time capacity, live Settings behavior, boot-read file policy, and
+  atomic compaction boundary.
+
+## [2026-07-28] lint — correct history sizing premise
+
+- Corrected the disproven fixed snapshot-size estimate using the observed
+  235,598,655-byte production history as workload evidence, not a replacement
+  universal sizing formula.
+
 ## [2026-07-28] ingest — publish GitHub Releases with the runner CLI
 
 Replaced `softprops/action-gh-release` with the GitHub-hosted runner's

@@ -1,20 +1,20 @@
 ---
 type: Component
 title: Dashboard (src/dashboard.html)
-description: Single embedded HTML file; dark operator-console UI; live/range modes; color-follows-entity; hover charts and sortable tables.
+description: Single embedded operator console with one persisted analytical window, typed range/current contracts, and clearly scoped Now values.
 tags: [dashboard, dataviz, frontend]
 timestamp: 2026-07-03T00:00:00Z
 ---
 
 # Dashboard — `src/dashboard.html`
 
-One self-contained HTML file compiled into the binary (`include_str!`), no
-build step, no config, no external assets except optional CDN logos with an
-offline monogram fallback. A dark, NVIDIA-green "operator console": a 216px
-sticky sidebar (collapses to an icon-only rail below 860px) with the nav and
-live/uptime/version footer, a top bar with range pills + a custom date-range
-picker, and five persona-aligned tabs, each ordered **at-a-glance → trends →
-detail**:
+One self-contained HTML file compiled into the binary (`include_str!`), with
+no frontend build or Grafana and no required external assets. Optional CDN
+logos/fonts have offline fallbacks. A dark, NVIDIA-green "operator console":
+a 216px sticky sidebar (collapses to an icon-only rail below 860px) with the
+nav and follow-state/uptime/version footer, a top bar with range pills + a
+custom date-range picker, and five persona-aligned tabs, each ordered
+**at-a-glance → trends → detail**:
 
 - **Overview** (landing, balanced) — KPI cards + threshold ring gauges,
   request/token/savings sparklines, a health strip, a p50/p95 performance
@@ -47,6 +47,14 @@ see [client-auth](client-auth.md) and
 **Model pressure** card on Reliability (worker-exhaustion rate + per-model
 `inflight vs limit` rows) that appears only once the
 [governor](governor.md) has engaged.
+
+Every analytical tab shares one selected history window. **Default · Nd**
+(30d by default) follows now using the configured default, relative presets
+follow now over their duration, and **All retained** follows the server's
+current retained boundary. Custom ranges are fixed. Clicking the sidebar
+follow control freezes the currently rendered window; clicking again resumes
+its preset. Settings hides the range controller because it is
+configuration-driven rather than an analytical view.
 
 The former **Compare** tab (head-to-head scorecard + bar race) was folded
 into Models as a section — it never carried enough unique content to justify
@@ -112,43 +120,72 @@ values, axis labels, table cells) load from Google Fonts via
 logo CDN. The NIM Proxy logo mark itself is inlined as a base64 data URI
 (68×68 PNG, ~10KB) in the sidebar, so it never depends on the network.
 
-## Data flow (unchanged)
+## Data flow
 
-Live mode polls `/metrics` every 3s into a browser-side ring (~20 min); range
-mode fetches `/api/history` once and rebuilds the same `samples: [{t, rows}]`
-structure — every chart, tile, card, and table renders identically from
-either source. Range views report windowed (last − first) values; live views
-report lifetime totals. Pause suspends the live poll. Two small additions to
-the aggregate-math layer support the new UI: `wbuckets()` computes windowed
-histogram quantiles (lifetime in live mode, delta-over-view in range mode),
-and `avgSeries()` builds a pairwise average trend line from a histogram's
-`_sum`/`_count` pair (used for the Overview/Models KPI sparklines).
+Two authenticated typed endpoints replace browser parsing of raw exposition:
+
+- `GET /api/dashboard?from&to&points` returns exact totals, chart buckets,
+  latest gauges, effective/available bounds, sample-time capacity, diagnostics,
+  and both history/config revisions. Omitting `to` uses now and marks the
+  request as following; omitting `from` also selects
+  `now - default_window_days`.
+- `GET /api/dashboard/now` is lightweight current state: live metrics,
+  current capacity/config/SLO, retained bounds, revisions, and the
+  post-persistence counter tail.
+
+The retired `/api/history` and `/dash/config.json` routes are absent. Raw
+`/metrics` remains available to authenticated Prometheus scrapers, not as a
+dashboard transport.
+
+`rangeSamples()` adapts the normalized range contract back into the
+`samples: [{t, rows}]` cumulative structure the rendering primitives consume.
+Every selection begins with a synthetic zero-counter baseline, then applies
+server deltas; gauges are replaced rather than accumulated. The exact range
+totals overwrite the final historical point. A live tail is accepted only
+when its `base_history_revision` matches the selected range, and is replaced
+after persistence advances that revision.
+
+The browser polls `/api/dashboard/now` every three seconds. Only a
+following, unpaused window refetches history when its revision changes.
+Custom and paused totals remain fixed, while **Now** widgets—active requests,
+queue depth, current RPM/capacity, enabled lane slots, uptime, and header
+metadata—continue refreshing. A config-revision change updates pricing,
+capacity, auth state, default window, retention, and SLO without reloading
+the page; if the active preset is the default, its following bounds are
+recomputed.
 
 **Notable derivations, worth recording so they aren't rediscovered:**
 
 - **Delta chips** (the `+8.2%`-style pill on every KPI card) compare the
   second half of the visible window's average against the first half — an
-  honest trend computable from the sample buffer already in memory, with no
-  extra history fetch. Hidden below 4 samples.
+  honest trend computable from the selected sample buffer, with no extra
+  history fetch. Hidden below 4 samples.
 - **"Where time goes"** (Reliability hero) splits average end-to-end time
   into queue wait, first token, and generation, where **generation = avg
   `upstream_seconds` − avg `nimproxy_ttft_seconds`** — verified against
   `proxy.rs`: `upstream_seconds` spans send→stream-end, `ttft` spans
   send→first-byte, so the difference is genuinely token-generation time, not
   double-counted latency.
-- **Availability** (Reliability hero) is judged against a **hardcoded 99.9%
-  SLO constant** in the dashboard JS, not a config value — it's a display
-  reference with nothing else that needs it to be configurable yet.
+- **Availability** (Reliability hero) uses
+  `dashboard.slo_target_percent` from the current server config (99.9% by
+  default). HTTP 4xx and disconnect outcomes stay visible in outcome/error
+  views but do not consume the service-availability error budget. Capacity
+  history uses the contemporaneous value stored with each v2 sample; legacy
+  intervals explicitly show capacity unavailable. Active load, lane count,
+  current RPM, and utilization are labeled **Now**; selected-window lane
+  request and bench counts remain historical.
 
-Chart history in live mode does not survive refresh; range views do (server
-history). Model cards derive identity from the id namespace
+Following history survives refresh and process restart because it is rebuilt
+from the server index; only the adjacent-poll rate shown in **Now** widgets
+needs two current polls. Model cards derive identity from the id namespace
 ([schema research](../research/nim-models-endpoint-schema.md)): LobeHub CDN
 logo with brand-colored monogram fallback, ranked by completion tokens.
 
-## Security invariant (unchanged)
+## Security invariant
 
 Every dynamic string that reaches `innerHTML` — model/client names, tooltip
 and legend labels, table cells — passes through the `esc()` HTML-escaper.
-This redesign touched only markup, styling, and the two new interactions
-(hover, sort); it did not add a new `innerHTML` sink that skips `esc()`. See
+The typed history adapter preserves that rule for labels received from both
+dashboard endpoints, and scope/status text uses `textContent`. No range,
+current, Settings, hover, or sort path introduces an unescaped sink. See
 [input-sanitizing-and-xss](../decisions/input-sanitizing-and-xss.md).

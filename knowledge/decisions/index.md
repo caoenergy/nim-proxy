@@ -12,6 +12,7 @@ description: Lightweight ADRs — context, options, choice, consequences.
 - [sticky-affinity-with-spillover](sticky-affinity-with-spillover.md)
 - [sse-heartbeats-for-rate-waits](sse-heartbeats-for-rate-waits.md)
 - [history-retention-days-not-size](history-retention-days-not-size.md)
+- [reset-aware-dashboard-history](reset-aware-dashboard-history.md)
 - [distroless-scratch-image](distroless-scratch-image.md)
 - [usage-injection-auto-fallback](usage-injection-auto-fallback.md)
 - [auth-posture-and-dashboard-password](auth-posture-and-dashboard-password.md)

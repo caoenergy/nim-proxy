@@ -18,15 +18,17 @@ pub use config::fuzz as fuzz_config;
 pub use proxy::fuzz as fuzz_proxy;
 
 use std::collections::HashMap;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use axum::extract::{DefaultBodyLimit, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
 use axum::Router;
 use bytes::Bytes;
-use metrics_exporter_prometheus::{Matcher, PrometheusBuilder};
+use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use tokio::sync::Mutex;
 
 use auth::Admin;
@@ -104,6 +106,10 @@ pub struct AppState {
     /// Per-model worker-concurrency gate (runtime state, settings in Config).
     pub governor: Arc<governor::Governor>,
     pub history: Arc<history::History>,
+    /// Shared metrics registry rendered by both `/metrics` and dashboard-now.
+    pub prometheus: PrometheusHandle,
+    /// Monotonic settings generation for lightweight dashboard refreshes.
+    pub config_revision: AtomicU64,
     /// Unix time this process started (dashboard uptime).
     pub started: u64,
 }
@@ -167,41 +173,109 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
-/// Live dashboard bootstrap config — reflects the current pool and pricing
-/// even after a settings change swaps them.
-async fn dash_config(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
-    let cfg = state.cfg();
+fn capacity_snapshot(pool: &Pool) -> history::CapacitySnapshot {
+    history::CapacitySnapshot {
+        enabled_lanes: pool.len(),
+        rpms: pool.rpms(),
+        capacity_rpm: pool.capacity_rpm(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct DashboardQuery {
+    from: Option<u64>,
+    to: Option<u64>,
+    points: Option<usize>,
+}
+
+async fn api_dashboard(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(query): axum::extract::Query<DashboardQuery>,
+) -> Response {
+    let stored = state.store.lock().unwrap();
+    let config_revision = state
+        .config_revision
+        .load(std::sync::atomic::Ordering::SeqCst);
+    let now = unix_now();
+    let following_now = query.to.is_none();
+    let requested_from = query.from.unwrap_or_else(|| {
+        now.saturating_sub(stored.dashboard.default_window_days.saturating_mul(86_400))
+    });
+    let requested_to = query.to.unwrap_or(now);
+    if requested_from >= requested_to {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({
+                "error": {
+                    "message": "from must be less than to",
+                    "type": "proxy_error",
+                    "code": "invalid_time_window",
+                }
+            })),
+        )
+            .into_response();
+    }
+
+    let rollup = state.history.rollup(
+        requested_from,
+        requested_to,
+        query.points.unwrap_or(288).clamp(2, 1000),
+    );
+    axum::Json(serde_json::json!({
+        "history_revision": rollup.history_revision,
+        "config_revision": config_revision,
+        "window": {
+            "requested_from": requested_from,
+            "requested_to": requested_to,
+            "following_now": following_now,
+            "effective_from": rollup.effective_from,
+            "effective_to": rollup.effective_to,
+            "available_from": rollup.available_from,
+            "available_to": rollup.available_to,
+            "default_window_days": stored.dashboard.default_window_days,
+            "retention_days": stored.history.days,
+        },
+        "totals": rollup.totals,
+        "latest": rollup.latest,
+        "points": rollup.points,
+        "diagnostics": rollup.diagnostics,
+    }))
+    .into_response()
+}
+
+async fn api_dashboard_now(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
+    let stored = state.store.lock().unwrap();
+    let config_revision = state
+        .config_revision
+        .load(std::sync::atomic::Ordering::SeqCst);
     let pool = state.pool();
-    let rpms = pool.rpms();
+    let now = unix_now();
+    let current = state.history.current(now, || state.prometheus.render());
+    let history_revision = current.tail.base_history_revision;
     axum::Json(serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
-        "lanes": pool.len(),
-        // Uniform-rpm compatibility value; per-lane truth is in `rpms`.
-        "rpm": rpms.iter().copied().max().unwrap_or(0),
-        "rpms": rpms,
-        "capacity_rpm": pool.capacity_rpm(),
-        "price_in": cfg.price_in,
-        "price_out": cfg.price_out,
-        "auth": cfg.clients.is_some(),
+        "sampled_at": now,
         "started": state.started,
+        "price_in": stored.pricing.ref_price_in,
+        "price_out": stored.pricing.ref_price_out,
+        "auth": stored.client_auth.mode == config::Mode::Keyed,
+        "lanes": pool.len(),
+        "rpms": pool.rpms(),
+        "capacity_rpm": pool.capacity_rpm(),
+        "default_window_days": stored.dashboard.default_window_days,
+        "retention_days": stored.history.days,
+        "slo_target_percent": stored.dashboard.slo_target_percent,
+        "history_revision": history_revision,
+        "config_revision": config_revision,
+        "available_from": current.available_from,
+        "available_to": current.available_to,
+        "metrics": current.metrics,
+        "tail": current.tail,
     }))
 }
 
-async fn api_history(
-    State(state): State<Arc<AppState>>,
-    q: axum::extract::Query<HashMap<String, String>>,
-) -> axum::Json<Vec<serde_json::Value>> {
-    let now = unix_now();
-    let get = |k: &str, d: u64| q.get(k).and_then(|v| v.parse().ok()).unwrap_or(d);
-    let (from, to) = (get("from", now.saturating_sub(86400)), get("to", now));
-    axum::Json(
-        state
-            .history
-            .range(from, to, 288)
-            .into_iter()
-            .map(|(t, m)| serde_json::json!({"t": t, "m": m}))
-            .collect(),
-    )
+async fn metrics_text(State(state): State<Arc<AppState>>) -> String {
+    state.prometheus.render()
 }
 
 /// Add hardening headers to every response. The CSP allows the dashboard's
@@ -377,28 +451,35 @@ pub async fn run() {
     }
     let prometheus = builder.install_recorder().expect("prometheus recorder");
 
-    // Metrics history: 5-minute snapshots, store-configured retention,
-    // persisted next to the config store.
+    let pool: PoolHandle = Arc::new(RwLock::new(Arc::new(Pool::new(pool_specs))));
+
+    // Metrics history: finish indexing before the listener can report ready,
+    // then sample the registry with contemporaneous pool capacity.
     let hist = Arc::new(history::History::load(
         Some(data_dir.clone()),
         stored.history.days,
+        capacity_snapshot(&pool.read().unwrap()),
     ));
     {
         let hist = hist.clone();
         let prom = prometheus.clone();
+        let pool = pool.clone();
         // Undocumented test knob; the 5-minute default is the contract.
         let sample_secs: u64 = env_or("HISTORY_SAMPLE_SECS", &history::SAMPLE_SECS.to_string())
             .parse()
             .expect("HISTORY_SAMPLE_SECS");
         tokio::spawn(async move {
             loop {
-                hist.append(unix_now(), prom.render());
+                hist.append(
+                    unix_now(),
+                    &prom.render(),
+                    capacity_snapshot(&pool.read().unwrap()),
+                );
                 tokio::time::sleep(Duration::from_secs(sample_secs.max(1))).await;
             }
         });
     }
 
-    let pool: PoolHandle = Arc::new(RwLock::new(Arc::new(Pool::new(pool_specs))));
     let state = Arc::new(AppState {
         dispatch: Dispatcher::new(pool.clone()),
         pool,
@@ -414,6 +495,8 @@ pub async fn run() {
         inflight: AtomicUsize::new(0),
         governor: Arc::new(governor::Governor::default()),
         history: hist,
+        prometheus,
+        config_revision: AtomicU64::new(1),
         started: unix_now(),
         store: std::sync::Mutex::new(stored),
         data_dir,
@@ -434,8 +517,8 @@ pub async fn run() {
     let protected = Router::new()
         .route("/", get(dash))
         .route("/dash", get(dash))
-        .route("/dash/config.json", get(dash_config))
-        .route("/api/history", get(api_history))
+        .route("/api/dashboard", get(api_dashboard))
+        .route("/api/dashboard/now", get(api_dashboard_now))
         .route("/api/config", get(settings::api_config))
         .route("/api/settings/nim-keys", post(settings::nim_keys))
         .route("/api/settings/clients", post(settings::clients))
@@ -447,7 +530,7 @@ pub async fn run() {
         .route("/api/settings/users", post(settings::users))
         .route("/api/settings/account", post(settings::account))
         .route("/api/settings/validate-key", post(settings::validate_key))
-        .route("/metrics", get(move || async move { prometheus.render() }))
+        .route("/metrics", get(metrics_text))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_session,

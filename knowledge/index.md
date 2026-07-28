@@ -21,7 +21,8 @@ the chronology in [log.md](log.md).
 | [global-fifo-dispatcher](decisions/global-fifo-dispatcher.md) | One queue for all clients; polling races starve long waiters |
 | [sticky-affinity-with-spillover](decisions/sticky-affinity-with-spillover.md) | Conversations pin to one key for prefix cache; throughput beats locality when full |
 | [sse-heartbeats-for-rate-waits](decisions/sse-heartbeats-for-rate-waits.md) | Commit to 200 SSE + comment heartbeats so harnesses never see a 429 |
-| [history-retention-days-not-size](decisions/history-retention-days-not-size.md) | 5-min ~4KB snapshots make days the right knob; a size cap would never trigger |
+| [history-retention-days-not-size](decisions/history-retention-days-not-size.md) | Time-based retention matches report intent; real operation disproved the fixed snapshot-size estimate |
+| [reset-aware-dashboard-history](decisions/reset-aware-dashboard-history.md) | Generic startup index, explicit boot epochs, exact typed rollups, and one analytical window |
 | [distroless-scratch-image](decisions/distroless-scratch-image.md) | Static musl binary with baked-in TLS roots; FROM scratch, non-root, --health probe |
 | [usage-injection-auto-fallback](decisions/usage-injection-auto-fallback.md) | Inject stream_options for exact tokens; 400 → retry untouched and remember |
 | [auth-posture-and-dashboard-password](decisions/auth-posture-and-dashboard-password.md) | Fail closed without auth; API keys + a shared-password dashboard session |
@@ -48,8 +49,8 @@ the chronology in [log.md](log.md).
 | [dispatcher](architecture/dispatcher.md) | Global FIFO slot queue; abandoned-waiter slot return; affinity accounting |
 | [governor](architecture/governor.md) | Per-model concurrency gate; classifies worker exhaustion apart from 429s and backs off the model, adaptively |
 | [streaming-pipeline](architecture/streaming-pipeline.md) | Heartbeats, retry/failover, absolute deadlines, idle timeout, SSE usage scanning |
-| [metrics-history](architecture/metrics-history.md) | Prometheus registry + 5-min snapshot history replayed by the dashboard |
-| [dashboard](architecture/dashboard.md) | Single embedded HTML; dark operator console; 5 tabs; hover charts & sortable tables |
+| [metrics-history](architecture/metrics-history.md) | Prometheus registry + versioned JSONL, reset-aware startup index, exact rollups, and atomic retention |
+| [dashboard](architecture/dashboard.md) | Embedded operator console; one persisted window across 5 tabs plus clearly scoped Now values |
 | [client-auth](architecture/client-auth.md) | `/v1` client keys (open/keyed) + store-backed multi-user dashboard sessions; fail-closed posture |
 
 ## Operations — runbooks

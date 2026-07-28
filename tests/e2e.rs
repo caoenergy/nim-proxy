@@ -36,6 +36,84 @@ fn keyed(name: &str, secret: &str) -> StoreOpts {
     }
 }
 
+async fn send_successful_chats(proxy: &support::Proxy, count: usize) {
+    for request in 0..count {
+        let response = client()
+            .post(proxy.url("/v1/chat/completions"))
+            .json(&chat_body(&format!("history request {request}"), false))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+    }
+}
+
+async fn dashboard_range(
+    proxy: &support::Proxy,
+    cookie: &str,
+    from: u64,
+    to: u64,
+    points: usize,
+) -> serde_json::Value {
+    let response = client()
+        .get(proxy.url(&format!(
+            "/api/dashboard?from={from}&to={to}&points={points}"
+        )))
+        .header("cookie", cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    response.json().await.unwrap()
+}
+
+async fn dashboard_now(proxy: &support::Proxy, cookie: &str) -> serde_json::Value {
+    let response = client()
+        .get(proxy.url("/api/dashboard/now"))
+        .header("cookie", cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    response.json().await.unwrap()
+}
+
+fn successful_chat_requests(rows: &serde_json::Value) -> f64 {
+    rows.as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| {
+            row["metric"] == "nimproxy_requests_total"
+                && row["labels"]["path"] == "/v1/chat/completions"
+                && row["labels"]["status"] == "200"
+        })
+        .filter_map(|row| row["value"].as_f64())
+        .sum()
+}
+
+async fn wait_for_persisted_chat_total(
+    proxy: &support::Proxy,
+    cookie: &str,
+    after_revision: u64,
+    expected_total: f64,
+) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        let range = dashboard_range(proxy, cookie, 1, 4_102_444_800, 1000).await;
+        let revision = range["history_revision"].as_u64().unwrap();
+        if revision > after_revision && successful_chat_requests(&range["totals"]) == expected_total
+        {
+            return range;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "history did not reach revision > {after_revision} and request total \
+             {expected_total}: {range}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 #[tokio::test]
 async fn open_mode_admits_requests_without_a_client_key() {
     let mock = start_mock().await;
@@ -1018,19 +1096,36 @@ async fn history_records_snapshots_and_survives_restart() {
     let raw = std::fs::read_to_string(&jsonl).expect("history.jsonl written");
     let lines: Vec<&str> = raw.lines().filter(|l| !l.is_empty()).collect();
     assert!(lines.len() >= 2, "sampler ran: {} snapshots", lines.len());
+    let records: Vec<serde_json::Value> = lines
+        .iter()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
     assert!(
-        lines.last().unwrap().contains("nimproxy"),
-        "snapshots carry metrics: {}",
-        lines.last().unwrap()
+        records.iter().any(|value| value["kind"] == "boot"),
+        "process epoch is persisted"
     );
-    let before = lines.len();
+    assert!(
+        records.iter().any(|value| {
+            value["v"] == 2
+                && value["boot"].is_string()
+                && value["capacity"]["capacity_rpm"] == 120
+                && value["m"]
+                    .as_str()
+                    .is_some_and(|metrics| metrics.contains("nimproxy"))
+        }),
+        "v2 snapshots carry metrics and contemporaneous capacity: {raw}"
+    );
+    let before = records
+        .iter()
+        .filter(|value| value["m"].is_string())
+        .count();
 
-    // Restart on the SAME data dir: history reloads from disk and is served
-    // through the (now auth-gated) /api/history endpoint.
+    // Restart on the SAME data dir: history reloads into the normalized index
+    // and remains visible through the typed dashboard range contract.
     let proxy = restart(proxy, &[("HISTORY_SAMPLE_SECS", "1")]).await;
     let cookie = login(&proxy).await;
-    let points: Vec<serde_json::Value> = client()
-        .get(proxy.url("/api/history"))
+    let history: serde_json::Value = client()
+        .get(proxy.url("/api/dashboard?from=1&to=4102444800&points=1000"))
         .header("cookie", cookie)
         .send()
         .await
@@ -1039,10 +1134,396 @@ async fn history_records_snapshots_and_survives_restart() {
         .await
         .unwrap();
     assert!(
-        points.len() >= before,
-        "history persisted across restart ({} >= {before})",
-        points.len()
+        history["history_revision"].as_u64().unwrap() >= before as u64,
+        "history persisted across restart: {history}"
     );
+}
+
+#[tokio::test]
+async fn dashboard_history_combines_process_epochs() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[("HISTORY_SAMPLE_SECS", "1")]).await;
+    let cookie = login(&proxy).await;
+    let initial = dashboard_range(&proxy, &cookie, 1, 4_102_444_800, 1000).await;
+
+    send_successful_chats(&proxy, 2).await;
+    wait_for_persisted_chat_total(
+        &proxy,
+        &cookie,
+        initial["history_revision"].as_u64().unwrap(),
+        2.0,
+    )
+    .await;
+
+    let proxy = restart(proxy, &[("HISTORY_SAMPLE_SECS", "1")]).await;
+    let cookie = login(&proxy).await;
+    let second_epoch = dashboard_range(&proxy, &cookie, 1, 4_102_444_800, 1000).await;
+    assert_eq!(successful_chat_requests(&second_epoch["totals"]), 2.0);
+
+    send_successful_chats(&proxy, 3).await;
+    wait_for_persisted_chat_total(
+        &proxy,
+        &cookie,
+        second_epoch["history_revision"].as_u64().unwrap(),
+        5.0,
+    )
+    .await;
+
+    for points in [2, 1000] {
+        let range = dashboard_range(&proxy, &cookie, 1, 4_102_444_800, points).await;
+        assert_eq!(
+            successful_chat_requests(&range["totals"]),
+            5.0,
+            "exact total must not depend on points={points}: {range}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn dashboard_tail_rolls_into_persisted_history_once() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[("HISTORY_SAMPLE_SECS", "2")]).await;
+    let cookie = login(&proxy).await;
+    let initial = dashboard_range(&proxy, &cookie, 1, 4_102_444_800, 1000).await;
+
+    send_successful_chats(&proxy, 1).await;
+    let persisted = wait_for_persisted_chat_total(
+        &proxy,
+        &cookie,
+        initial["history_revision"].as_u64().unwrap(),
+        1.0,
+    )
+    .await;
+    let persisted_revision = persisted["history_revision"].as_u64().unwrap();
+
+    send_successful_chats(&proxy, 1).await;
+    let live = dashboard_now(&proxy, &cookie).await;
+    assert_eq!(
+        live["history_revision"], persisted_revision,
+        "the second request is still newer than persisted history: {live}"
+    );
+    assert_eq!(successful_chat_requests(&live["tail"]["totals"]), 1.0);
+
+    let refreshed = wait_for_persisted_chat_total(&proxy, &cookie, persisted_revision, 2.0).await;
+    assert!(
+        refreshed["history_revision"].as_u64().unwrap() > persisted_revision,
+        "{refreshed}"
+    );
+    assert_eq!(successful_chat_requests(&refreshed["totals"]), 2.0);
+
+    let rolled = dashboard_now(&proxy, &cookie).await;
+    assert!(
+        rolled["history_revision"].as_u64().unwrap() > persisted_revision,
+        "{rolled}"
+    );
+    assert_eq!(
+        successful_chat_requests(&rolled["tail"]["totals"]),
+        0.0,
+        "the persisted request must not remain in the live tail: {rolled}"
+    );
+}
+
+#[tokio::test]
+async fn legacy_history_infers_counter_reset() {
+    let mock = start_mock().await;
+    let data_dir = scratch_data_dir();
+    std::fs::write(
+        data_dir.join("config.json"),
+        serde_json::to_string_pretty(&StoreOpts::default().json(&mock.url)).unwrap(),
+    )
+    .unwrap();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    std::fs::write(
+        data_dir.join("history.jsonl"),
+        format!(
+            "{{\"t\":{},\"m\":\"# TYPE nimproxy_requests_total counter\\nnimproxy_requests_total{{client=\\\"local\\\",model=\\\"mock/model-a\\\",path=\\\"/v1/chat/completions\\\",status=\\\"200\\\"}} 10\\n\"}}\n\
+             {{\"t\":{},\"m\":\"# TYPE nimproxy_requests_total counter\\nnimproxy_requests_total{{client=\\\"local\\\",model=\\\"mock/model-a\\\",path=\\\"/v1/chat/completions\\\",status=\\\"200\\\"}} 15\\n\"}}\n\
+             {{\"t\":{},\"m\":\"# TYPE nimproxy_requests_total counter\\nnimproxy_requests_total{{client=\\\"local\\\",model=\\\"mock/model-a\\\",path=\\\"/v1/chat/completions\\\",status=\\\"200\\\"}} 4\\n\"}}\n",
+            now - 3,
+            now - 2,
+            now - 1,
+        ),
+    )
+    .unwrap();
+
+    let proxy = start_proxy_in(data_dir, &[("HISTORY_SAMPLE_SECS", "3600")]).await;
+    let cookie = login(&proxy).await;
+    let range = dashboard_range(&proxy, &cookie, 1, 4_102_444_800, 1000).await;
+    assert_eq!(
+        successful_chat_requests(&range["totals"]),
+        19.0,
+        "legacy epochs contribute 10 + 5 + 4 requests: {range}"
+    );
+    assert_eq!(range["diagnostics"]["legacy_resets_inferred"], 1);
+}
+
+#[tokio::test]
+async fn historical_capacity_uses_snapshot_configuration() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[("HISTORY_SAMPLE_SECS", "1")]).await;
+    let cookie = login(&proxy).await;
+    let initial = dashboard_range(&proxy, &cookie, 1, 4_102_444_800, 1000).await;
+
+    send_successful_chats(&proxy, 1).await;
+    let at_120 = wait_for_persisted_chat_total(
+        &proxy,
+        &cookie,
+        initial["history_revision"].as_u64().unwrap(),
+        1.0,
+    )
+    .await;
+    let at_120_revision = at_120["history_revision"].as_u64().unwrap();
+
+    let fingerprint = api_config(&proxy, &cookie).await["nim_keys"][0]["fingerprint"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (status, body) = post_json(
+        &proxy,
+        &cookie,
+        "/api/settings/nim-keys",
+        serde_json::json!({"set": {"fingerprint": fingerprint, "rpm": 20}}),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+
+    send_successful_chats(&proxy, 1).await;
+    let at_100 = wait_for_persisted_chat_total(&proxy, &cookie, at_120_revision, 2.0).await;
+    let available_from = at_100["window"]["available_from"].as_u64().unwrap();
+    let available_to = at_100["window"]["available_to"].as_u64().unwrap();
+    let range = dashboard_range(
+        &proxy,
+        &cookie,
+        available_from.saturating_sub(1),
+        available_to,
+        1000,
+    )
+    .await;
+    let capacities: Vec<f64> = range["points"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|point| point["capacity"]["average_rpm"].as_f64())
+        .collect();
+    assert!(
+        capacities.contains(&120.0),
+        "120 RPM snapshot capacity is retained: {range}"
+    );
+    assert!(
+        capacities.contains(&100.0),
+        "100 RPM snapshot capacity is retained: {range}"
+    );
+
+    let now = dashboard_now(&proxy, &cookie).await;
+    assert_eq!(now["capacity_rpm"], 100);
+}
+
+#[tokio::test]
+async fn dashboard_range_contract_defaults_validates_and_requires_auth() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[("HISTORY_SAMPLE_SECS", "1")]).await;
+    let cookie = login(&proxy).await;
+
+    let response = client()
+        .post(proxy.url("/v1/chat/completions"))
+        .json(&chat_body("dashboard range", false))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+
+    let response = client()
+        .get(proxy.url("/api/dashboard?from=1&to=4102444800&points=24"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert!(body["history_revision"].as_u64().is_some());
+    assert_eq!(body["window"]["requested_from"], 1);
+    assert_eq!(body["window"]["requested_to"], 4_102_444_800u64);
+    assert_eq!(body["window"]["following_now"], false);
+    assert!(body["config_revision"].as_u64().is_some());
+    assert!(body["window"]["available_from"].as_u64().is_some());
+    assert!(body["totals"].as_array().is_some());
+    assert!(body["latest"].as_array().is_some());
+    assert!(body["points"].as_array().is_some());
+
+    let response = client()
+        .get(proxy.url("/api/dashboard?from=99&to=99"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    let error: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(error["error"]["code"], "invalid_time_window");
+
+    let response = client()
+        .get(proxy.url("/api/dashboard"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let defaulted: serde_json::Value = response.json().await.unwrap();
+    let from = defaulted["window"]["requested_from"].as_u64().unwrap();
+    let to = defaulted["window"]["requested_to"].as_u64().unwrap();
+    assert_eq!(to - from, 30 * 86_400);
+    assert_eq!(defaulted["window"]["following_now"], true);
+    assert_eq!(defaulted["window"]["default_window_days"], 30);
+    assert_eq!(defaulted["window"]["retention_days"], 30);
+
+    let response = client()
+        .get(proxy.url("/api/dashboard"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+
+    let settings = api_config(&proxy, &cookie).await;
+    assert!(settings["server"]["history"]["available_from"]
+        .as_u64()
+        .is_some());
+    assert!(settings["server"]["history"]["file_bytes"]
+        .as_u64()
+        .is_some());
+    assert_eq!(settings["server"]["history"]["compaction_pending"], false);
+}
+
+#[tokio::test]
+async fn dashboard_now_contract_uses_current_pool_config_and_registry() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let cookie = login(&proxy).await;
+
+    let response = client()
+        .get(proxy.url("/api/dashboard/now"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["lanes"], 3);
+    assert_eq!(body["rpms"], serde_json::json!([40, 40, 40]));
+    assert_eq!(body["capacity_rpm"], 120);
+    assert_eq!(body["default_window_days"], 30);
+    assert_eq!(body["retention_days"], 30);
+    assert_eq!(body["slo_target_percent"], 99.9);
+    assert!(body["history_revision"].as_u64().is_some());
+    assert_eq!(
+        body["history_revision"],
+        body["tail"]["base_history_revision"]
+    );
+    assert!(body["config_revision"].as_u64().is_some());
+    assert!(body["tail"]["totals"].as_array().is_some());
+    assert!(body["metrics"].as_array().is_some());
+
+    let response = client()
+        .get(proxy.url("/api/dashboard/now"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+}
+
+#[tokio::test]
+async fn retention_change_prunes_queries_and_disk() {
+    let mock = start_mock().await;
+    let data_dir = scratch_data_dir();
+    std::fs::write(
+        data_dir.join("config.json"),
+        serde_json::to_string_pretty(&StoreOpts::default().json(&mock.url)).unwrap(),
+    )
+    .unwrap();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let cutoff = now - 86_400;
+    let old = cutoff - 400;
+    let boot = cutoff - 300;
+    let baseline = cutoff - 200;
+    let retained_one = cutoff + 10;
+    let retained_two = now - 10;
+    std::fs::write(
+        data_dir.join("history.jsonl"),
+        format!(
+            "{{\"t\":{old},\"m\":\"# TYPE fixture_requests_total counter\\nfixture_requests_total 5\\n\"}}\n\
+             {{\"v\":2,\"t\":{boot},\"boot\":\"boot-a\",\"kind\":\"boot\",\"capacity\":{{\"enabled_lanes\":3,\"rpms\":[40,40,40],\"capacity_rpm\":120}}}}\n\
+             {{\"v\":2,\"t\":{baseline},\"boot\":\"boot-a\",\"capacity\":{{\"enabled_lanes\":3,\"rpms\":[40,40,40],\"capacity_rpm\":120}},\"m\":\"# TYPE fixture_requests_total counter\\nfixture_requests_total 50\\n\"}}\n\
+             {{\"v\":2,\"t\":{retained_one},\"boot\":\"boot-a\",\"capacity\":{{\"enabled_lanes\":3,\"rpms\":[40,40,40],\"capacity_rpm\":120}},\"m\":\"# TYPE fixture_requests_total counter\\nfixture_requests_total 60\\n\"}}\n\
+             {{\"v\":2,\"t\":{retained_two},\"boot\":\"boot-a\",\"capacity\":{{\"enabled_lanes\":3,\"rpms\":[40,40,40],\"capacity_rpm\":120}},\"m\":\"# TYPE fixture_requests_total counter\\nfixture_requests_total 70\\n\"}}\n"
+        ),
+    )
+    .unwrap();
+
+    let proxy = start_proxy_in(data_dir, &[("HISTORY_SAMPLE_SECS", "3600")]).await;
+    let cookie = login(&proxy).await;
+    let (status, body) = post_json(
+        &proxy,
+        &cookie,
+        "/api/settings/history",
+        serde_json::json!({
+            "days": 1,
+            "default_window_days": 1,
+            "slo_target_percent": 99.9
+        }),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+
+    let query = |proxy: &support::Proxy, cookie: &str| {
+        let url = proxy.url("/api/dashboard?from=1&to=4102444800&points=100");
+        let cookie = cookie.to_owned();
+        async move {
+            client()
+                .get(url)
+                .header("cookie", cookie)
+                .send()
+                .await
+                .unwrap()
+                .json::<serde_json::Value>()
+                .await
+                .unwrap()
+        }
+    };
+    let metric = |body: &serde_json::Value| {
+        body["totals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["metric"] == "fixture_requests_total")
+            .and_then(|row| row["value"].as_f64())
+            .unwrap()
+    };
+
+    let pruned = query(&proxy, &cookie).await;
+    assert_eq!(pruned["window"]["available_from"], retained_one);
+    assert_eq!(metric(&pruned), 20.0);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while api_config(&proxy, &cookie).await["server"]["history"]["compaction_pending"] == true {
+        assert!(
+            Instant::now() < deadline,
+            "history compaction did not finish"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let proxy = restart(proxy, &[("HISTORY_SAMPLE_SECS", "3600")]).await;
+    let cookie = login(&proxy).await;
+    let reloaded = query(&proxy, &cookie).await;
+    assert_eq!(reloaded["window"]["available_from"], retained_one);
+    assert_eq!(metric(&reloaded), 20.0);
 }
 
 #[tokio::test]
@@ -1066,10 +1547,17 @@ async fn dashboard_and_config_are_served_to_authenticated_users() {
         .await
         .unwrap();
     assert_eq!(dash.status(), 200);
-    assert!(dash.text().await.unwrap().contains("NIM"));
+    let html = dash.text().await.unwrap();
+    assert!(html.contains("NIM"));
+    assert!(html.contains("/api/dashboard/now"));
+    assert!(html.contains("data-range=\"default\""));
+    assert!(html.contains("data-range=\"all-retained\""));
+    assert!(!html.contains("fetch('/metrics')"));
+    assert!(!html.contains("/api/history?"));
+    assert!(!html.contains("/dash/config.json"));
 
-    let cfg: serde_json::Value = client()
-        .get(proxy.url("/dash/config.json"))
+    let now: serde_json::Value = client()
+        .get(proxy.url("/api/dashboard/now"))
         .header("cookie", &cookie)
         .send()
         .await
@@ -1077,8 +1565,164 @@ async fn dashboard_and_config_are_served_to_authenticated_users() {
         .json()
         .await
         .unwrap();
-    assert_eq!(cfg["lanes"], 3);
-    assert_eq!(cfg["auth"], false, "open /v1 mode reports auth=false");
+    assert_eq!(now["lanes"], 3);
+    assert_eq!(now["auth"], false, "open /v1 mode reports auth=false");
+
+    for retired in ["/api/history", "/dash/config.json"] {
+        assert_eq!(
+            client()
+                .get(proxy.url(retired))
+                .header("cookie", &cookie)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            404,
+            "{retired} stays retired"
+        );
+    }
+}
+
+#[tokio::test]
+async fn dashboard_history_settings_markup() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let cookie = login(&proxy).await;
+
+    let html = client()
+        .get(proxy.url("/"))
+        .header("cookie", cookie)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("History &amp; dashboard"));
+    assert!(html.contains("sv-default-days"));
+    assert!(html.contains("sv-retention-days"));
+    assert!(html.contains("sv-slo"));
+    assert!(html.contains("/api/settings/history"));
+    assert!(!html.contains("Pricing &amp; history"));
+    assert!(!html.contains("const SLO = 0.999"));
+}
+
+#[tokio::test]
+async fn dashboard_range_state_guards_markup() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let cookie = login(&proxy).await;
+
+    let html = client()
+        .get(proxy.url("/"))
+        .header("cookie", cookie)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("let rangeRequestGeneration = 0"));
+    assert!(html.contains("const generation = ++rangeRequestGeneration"));
+    assert!(html.contains("generation !== rangeRequestGeneration"));
+    assert!(!html.contains("mode.kind === 'fixed' && historyChanged"));
+    assert!(html.contains("let frozenHasTraffic = false"));
+    assert!(
+        html.contains("if (mode.kind !== 'following' || !rangeData || !samples.length) return;")
+    );
+}
+
+#[tokio::test]
+async fn dashboard_pause_traffic_is_derived_from_rendered_samples() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let cookie = login(&proxy).await;
+
+    let html = client()
+        .get(proxy.url("/"))
+        .header("cookie", cookie)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("function hasSelectedRequestTraffic(selectedSamples)"));
+    assert!(html.contains("row => row.name === 'nimproxy_requests_total' && +row.value > 0"));
+    assert!(html.contains("frozenHasTraffic = hasSelectedRequestTraffic(samples);"));
+    assert!(html.contains(
+        "const hasTraffic = mode.paused ? frozenHasTraffic : hasSelectedRequestTraffic(samples);"
+    ));
+    assert!(!html.contains("const acceptedTail = nowData?.tail"));
+}
+
+#[tokio::test]
+async fn dashboard_historical_provisioning_has_no_guessed_lane_size() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let cookie = login(&proxy).await;
+
+    let html = client()
+        .get(proxy.url("/"))
+        .header("cookie", cookie)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("rpm short at peak"));
+    assert!(html.contains("vs contemporaneous capacity"));
+    assert!(html.contains("legacy interval"));
+    assert!(!html.contains("const moreKeys"));
+    assert!(!html.contains("MORE KEY"));
+}
+
+#[tokio::test]
+async fn dashboard_now_refreshes_after_settings_change() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let cookie = login(&proxy).await;
+
+    let before: serde_json::Value = client()
+        .get(proxy.url("/api/dashboard/now"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let fingerprint = api_config(&proxy, &cookie).await["nim_keys"][0]["fingerprint"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (status, body) = post_json(
+        &proxy,
+        &cookie,
+        "/api/settings/nim-keys",
+        serde_json::json!({"set": {"fingerprint": fingerprint, "rpm": 41}}),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+
+    let after: serde_json::Value = client()
+        .get(proxy.url("/api/dashboard/now"))
+        .header("cookie", cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        after["config_revision"].as_u64().unwrap() > before["config_revision"].as_u64().unwrap()
+    );
+    assert_ne!(after["capacity_rpm"], before["capacity_rpm"]);
+    assert_eq!(
+        after["history_revision"], before["history_revision"],
+        "current config changes do not rewrite retained history"
+    );
 }
 
 // ---------- boot posture & the setup wizard ----------
@@ -1233,7 +1877,7 @@ async fn setup_claim_survives_restart() {
     let cookie = login_as(&proxy, "admin").await;
     // The persisted store rehydrated: one lane (the setup key), keyed /v1.
     let cfg: serde_json::Value = client()
-        .get(proxy.url("/dash/config.json"))
+        .get(proxy.url("/api/dashboard/now"))
         .header("cookie", cookie)
         .send()
         .await
@@ -1379,16 +2023,14 @@ async fn operator_surface_always_requires_auth() {
         .unwrap();
     assert_eq!(ok.status(), 200);
 
-    // History requires creds too.
-    assert_eq!(
-        client()
-            .get(proxy.url("/api/history"))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        401
-    );
+    // Both dashboard data surfaces require credentials.
+    for path in ["/api/dashboard", "/api/dashboard/now"] {
+        assert_eq!(
+            client().get(proxy.url(path)).send().await.unwrap().status(),
+            401,
+            "{path} requires auth"
+        );
+    }
 
     // Browser hitting the dashboard without a session is redirected to /login.
     let nr = no_redirect_client();
@@ -1677,7 +2319,14 @@ async fn user_role_is_denied_server_settings_and_foreign_keys() {
             "/api/settings/upstream",
             serde_json::json!({"base_url": "http://x"}),
         ),
-        ("/api/settings/history", serde_json::json!({"days": 1})),
+        (
+            "/api/settings/history",
+            serde_json::json!({
+                "days": 30,
+                "default_window_days": 30,
+                "slo_target_percent": 99.9
+            }),
+        ),
         (
             "/api/settings/users",
             serde_json::json!({"add": {"username": "eve", "password": "long-enough-pw", "role": "user"}}),
@@ -2319,8 +2968,8 @@ async fn governor_settings_reflect_and_persist() {
     );
 }
 
-/// Pricing and history retention save through the same pipeline and reflect
-/// in /api/config; a negative reference price is refused.
+/// Pricing and dashboard history settings save through the same pipeline and
+/// reflect in /api/config; invalid candidates leave every value unchanged.
 #[tokio::test]
 async fn pricing_and_history_settings_reflect_in_api_config() {
     let mock = start_mock().await;
@@ -2339,7 +2988,11 @@ async fn pricing_and_history_settings_reflect_in_api_config() {
         &proxy,
         &root,
         "/api/settings/history",
-        serde_json::json!({"days": 7}),
+        serde_json::json!({
+            "days": 45,
+            "default_window_days": 30,
+            "slo_target_percent": 99.5
+        }),
     )
     .await;
     assert_eq!(status, 200, "{v}");
@@ -2347,7 +3000,26 @@ async fn pricing_and_history_settings_reflect_in_api_config() {
     let cfg = api_config(&proxy, &root).await;
     assert_eq!(cfg["server"]["pricing"]["ref_price_in"], 1.25);
     assert_eq!(cfg["server"]["pricing"]["ref_price_out"], 3.5);
-    assert_eq!(cfg["server"]["history"]["days"], 7);
+    assert_eq!(cfg["server"]["history"]["days"], 45);
+    assert_eq!(cfg["server"]["dashboard"]["default_window_days"], 30);
+    assert_eq!(cfg["server"]["dashboard"]["slo_target_percent"], 99.5);
+
+    let (status, v) = post_json(
+        &proxy,
+        &root,
+        "/api/settings/history",
+        serde_json::json!({
+            "days": 7,
+            "default_window_days": 30,
+            "slo_target_percent": 98.0
+        }),
+    )
+    .await;
+    assert_eq!(status, 400, "invalid window/retention pair accepted: {v}");
+    let cfg = api_config(&proxy, &root).await;
+    assert_eq!(cfg["server"]["history"]["days"], 45);
+    assert_eq!(cfg["server"]["dashboard"]["default_window_days"], 30);
+    assert_eq!(cfg["server"]["dashboard"]["slo_target_percent"], 99.5);
 
     let (status, v) = post_json(
         &proxy,

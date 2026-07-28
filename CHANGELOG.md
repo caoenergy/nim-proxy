@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-07-28
+
+### Fixed
+
+- Persisted dashboard traffic now appears immediately after login and remains
+  truthful across process/container restarts. Startup indexing normalizes
+  explicit v2 process epochs and legacy v1 counter resets; chart point limits
+  no longer change reported totals.
+- The existing dashboard time controls now apply one selected window across
+  Overview, Models, Clients, Reliability, and Capacity. The default follows
+  the retained 30-day window, fixed/paused ranges stay fixed, and **All
+  retained** reaches the earliest available sample.
+- Historical Capacity views now use the configuration recorded with each
+  sample instead of comparing past traffic with today's pool. Unavailable
+  pre-history time is no longer treated as observed capacity.
+
 ### Security
 
 - Moved release metadata and image digests from inline shell-template
@@ -22,6 +38,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Docker Compose's host-side publish address is now configurable with
   `PUBLISH_HOST` in `.env` while retaining `127.0.0.1` as the safe default.
+- Replaced browser parsing of raw `/metrics`, `/api/history`, and
+  `/dash/config.json` data with authenticated typed range/current dashboard
+  contracts, revision-aware live tails, and server-side exact rollups.
+- Default dashboard window, data retention, and availability target are
+  separate Server settings rather than hardcoded display assumptions. Window
+  and retention default to 30 days; retention `0` is unlimited and finite
+  retention cannot be shorter than the default view.
+- Current lane/load values use the live **Now** snapshot while selected-window
+  values stay historical.
+- History retention now trims the in-memory index immediately and compacts the
+  JSONL file atomically in the background while preserving the boundary
+  baseline and boot marker needed for exact retained totals. The old
+  fixed-size estimate was removed after a real 7,316-sample history measured
+  235,598,655 bytes; size remains workload-dependent.
 
 ## [0.6.4] - 2026-07-17
 
@@ -478,7 +508,8 @@ Initial rate-limit-aware proxy.
 - **Distroless image**: a static musl binary shipped `FROM scratch` (~3.5 MB,
   TLS roots compiled in), running non-root with hardened compose defaults.
 
-[Unreleased]: https://github.com/miztertea/nim-proxy/compare/v0.6.4...HEAD
+[Unreleased]: https://github.com/miztertea/nim-proxy/compare/v0.6.5...HEAD
+[0.6.5]: https://github.com/miztertea/nim-proxy/compare/v0.6.4...v0.6.5
 [0.6.4]: https://github.com/miztertea/nim-proxy/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/miztertea/nim-proxy/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/miztertea/nim-proxy/compare/v0.6.1...v0.6.2

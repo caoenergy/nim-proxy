@@ -56,10 +56,12 @@ own NIM key per lane.
 
 ## Dashboard gate — UI + observability (`src/auth.rs`)
 
-`require_session` gates `/`, `/dash`, `/dash/config.json`, `/api/*`, and
+`require_session` gates `/`, `/dash`, authenticated dashboard/config APIs, and
 `/metrics` for any logged-in user; server-setting and user-management endpoints
 additionally require `role != user`, and ownership checks compare the session
-username against a key's `owner` (admins bypass). `/health` stays public.
+username against a key's `owner` (admins bypass). The dashboard uses
+`/api/dashboard`, `/api/dashboard/now`, and `/api/config`;
+`/dash/config.json` and `/api/history` no longer exist. `/health` stays public.
 
 - **Login** is username + password. `POST /login` → an HMAC-signed, HttpOnly,
   SameSite=Strict cookie whose payload carries

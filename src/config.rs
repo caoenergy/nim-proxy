@@ -37,6 +37,8 @@ pub struct StoredConfig {
     #[serde(default)]
     pub history: HistoryCfg,
     #[serde(default)]
+    pub dashboard: DashboardCfg,
+    #[serde(default)]
     pub governor: GovernorCfg,
     #[serde(default)]
     pub users: Vec<User>,
@@ -164,6 +166,23 @@ impl Default for HistoryCfg {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DashboardCfg {
+    #[serde(default = "default_dashboard_window_days")]
+    pub default_window_days: u64,
+    #[serde(default = "default_slo_target_percent")]
+    pub slo_target_percent: f64,
+}
+
+impl Default for DashboardCfg {
+    fn default() -> Self {
+        Self {
+            default_window_days: default_dashboard_window_days(),
+            slo_target_percent: default_slo_target_percent(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct GovernorCfg {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -243,6 +262,12 @@ fn default_price_out() -> f64 {
 }
 fn default_history_days() -> u64 {
     30
+}
+fn default_dashboard_window_days() -> u64 {
+    30
+}
+fn default_slo_target_percent() -> f64 {
+    99.9
 }
 
 impl StoredConfig {
@@ -424,6 +449,18 @@ pub fn validate(sc: &StoredConfig) -> Result<(), String> {
         || sc.pricing.ref_price_out < 0.0
     {
         return Err("reference prices must be non-negative numbers".into());
+    }
+    if sc.dashboard.default_window_days == 0 {
+        return Err("default_window_days must be >= 1".into());
+    }
+    if sc.history.days != 0 && sc.history.days < sc.dashboard.default_window_days {
+        return Err("history days must be 0 or at least default_window_days".into());
+    }
+    if !(sc.dashboard.slo_target_percent.is_finite()
+        && 0.0 < sc.dashboard.slo_target_percent
+        && sc.dashboard.slo_target_percent <= 100.0)
+    {
+        return Err("slo_target_percent must be a number greater than 0 and at most 100".into());
     }
     check_base_url(&sc.upstream.base_url)?;
 
@@ -664,6 +701,45 @@ mod tests {
         assert_eq!(k.rpm, 40);
         let g: GovernorCfg = serde_json::from_str("{}").unwrap();
         assert!(g.enabled);
+    }
+
+    #[test]
+    fn dashboard_defaults_are_backward_compatible() {
+        let sc: StoredConfig = serde_json::from_str(r#"{"version":1}"#).unwrap();
+        assert_eq!(sc.history.days, 30);
+        assert_eq!(sc.dashboard.default_window_days, 30);
+        assert_eq!(sc.dashboard.slo_target_percent, 99.9);
+        validate(&sc).unwrap();
+    }
+
+    #[test]
+    fn dashboard_window_must_fit_finite_retention() {
+        let mut sc = StoredConfig::default();
+        sc.dashboard.default_window_days = 31;
+        assert_eq!(
+            validate(&sc).unwrap_err(),
+            "history days must be 0 or at least default_window_days"
+        );
+        sc.history.days = 0;
+        validate(&sc).unwrap();
+    }
+
+    #[test]
+    fn dashboard_and_slo_bounds_are_validated() {
+        let mut sc = StoredConfig::default();
+        sc.dashboard.default_window_days = 0;
+        assert_eq!(
+            validate(&sc).unwrap_err(),
+            "default_window_days must be >= 1"
+        );
+        sc.dashboard.default_window_days = 30;
+        for target in [0.0, -1.0, 100.1, f64::NAN] {
+            sc.dashboard.slo_target_percent = target;
+            assert_eq!(
+                validate(&sc).unwrap_err(),
+                "slo_target_percent must be a number greater than 0 and at most 100"
+            );
+        }
     }
 
     #[test]
