@@ -30,6 +30,7 @@ the chronology in [log.md](log.md).
 | [dashboard-operator-console-redesign](decisions/dashboard-operator-console-redesign.md) | 6→5 tabs (Compare merged in), dark-only palette, webfonts via Google Fonts CDN under CSP, window-halves delta chips |
 | [ui-managed-config-store](decisions/ui-managed-config-store.md) | App config moves from env into a JSON store edited from the dashboard; first-run wizard, multi-user + per-key ownership, no encryption at rest |
 | [explicit-request-deadline](decisions/explicit-request-deadline.md) | Opt-in wall-clock bound cancels queue/retry/generation work without weakening patient defaults |
+| [dependency-update-cooldown](decisions/dependency-update-cooldown.md) | Routine dependency updates wait seven days; security updates remain immediate |
 
 ## Research — validated external facts
 
@@ -56,7 +57,7 @@ the chronology in [log.md](log.md).
 | Page | One-liner |
 |---|---|
 | [deploy-docker](ops/deploy-docker.md) | Compose, volume, healthcheck, hardening flags |
-| [configure-env](ops/configure-env.md) | The 5 container env vars; everything else lives in the Settings UI; lockout recovery |
+| [configure-env](ops/configure-env.md) | Compose publishing, the 5 container env vars, Settings, and lockout recovery |
 | [sharing-with-friends](ops/sharing-with-friends.md) | Create-a-user multi-user setup, key etiquette, ToS positioning |
 | [capacity-math](ops/capacity-math.md) | What N clients on K keys actually does (the 50-clients/3-lanes analysis) |
 

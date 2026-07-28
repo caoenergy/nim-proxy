@@ -6,6 +6,10 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    cooldown:
+      # Version updates wait through the recommended observation window;
+      # Dependabot security updates bypass cooldowns.
+      default-days: 7
     open-pull-requests-limit: 5
     groups:
       cargo-minor-patch:
@@ -27,6 +31,8 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       actions:
         update-types: ["minor", "patch"]
@@ -36,3 +42,5 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7

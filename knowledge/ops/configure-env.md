@@ -1,7 +1,7 @@
 ---
 type: Runbook
 title: Configuration reference
-description: The 5 container-level env vars; everything else lives in the Settings UI; lockout recovery.
+description: Compose publishing, the 5 container-level env vars, Settings, and lockout recovery.
 tags: [configuration]
 timestamp: 2026-07-04T00:00:00Z
 ---
@@ -13,7 +13,16 @@ A first-run wizard claims a fresh install (create the superuser → add ≥1 NIM
 key, validated against the upstream → land on the dashboard, logged in); after
 that, Settings edits everything and persists it to `DATA_DIR/config.json`
 (atomic, 0600 — see [ui-managed-config-store](../decisions/ui-managed-config-store.md)).
-Env now covers **container-level concerns only**.
+Env now covers **deployment-level concerns only**.
+
+## Compose-only publish setting
+
+`PUBLISH_HOST` controls the host interface where Docker Compose publishes
+container port 8000. It defaults to `127.0.0.1`, keeping a bare deployment
+loopback-only. Set `PUBLISH_HOST=0.0.0.0` in `.env` only for intentional
+LAN/public exposure after the authentication and TLS posture is ready.
+Compose consumes this value while interpolating `docker-compose.yml`;
+nim-proxy itself does not read it.
 
 ## The 5 env vars
 

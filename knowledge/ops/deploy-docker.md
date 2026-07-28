@@ -9,7 +9,7 @@ timestamp: 2026-07-02T00:00:00Z
 # Deploy with Docker
 
 ```sh
-cp .env.example .env     # only container vars now (HOST/PORT/DATA_DIR/RUST_LOG/TRUST_PROXY)
+cp .env.example .env     # deployment vars; PUBLISH_HOST is Compose-only
 docker compose up -d     # pulls ghcr.io/miztertea/nim-proxy:latest (signed, multi-arch)
 docker ps                # STATUS shows (healthy) via the built-in probe
 docker logs nim-proxy-nim-proxy-1
@@ -40,16 +40,17 @@ Deployment patterns:
 - **Local**: keep the default loopback publish (`127.0.0.1:8000:8000`) so it
   can't leak; set the API mode to `open` in Settings if you don't want client
   keys. Reach it at `http://localhost:8000`.
-- **VPS / bare metal**: behind nginx/Caddy doing TLS; change the publish to
-  `8000:8000` (or bind the reverse proxy to the loopback port) and set
-  `TRUST_PROXY=true`. Keep the API `keyed`.
+- **VPS / bare metal**: behind nginx/Caddy doing TLS; set
+  `PUBLISH_HOST=0.0.0.0` in `.env` (or leave the reverse proxy on the
+  loopback port) and set `TRUST_PROXY=true`. Keep the API `keyed`.
 - **PaaS (ECS/Railway/Fly)**: platform edge terminates TLS; set
   `TRUST_PROXY=true`. Complete the wizard as soon as the instance is reachable.
 
 What the compose file gives you (see
 [distroless-scratch-image](../decisions/distroless-scratch-image.md) for why):
 
-- `FROM scratch` image (~3.5 MB), non-root UID 10001, loopback publish default.
+- `FROM scratch` image (~3.5 MB), non-root UID 10001, loopback publish default
+  with an ignored `.env` override (`PUBLISH_HOST`) for intentional exposure.
 - `read_only: true`, `cap_drop: [ALL]`, `no-new-privileges` — writes go only
   to the named `history` volume mounted at `/data`, which now holds both
   `history.jsonl` **and `config.json` (credentials, 0600)**. A volume backup

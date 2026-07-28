@@ -6,6 +6,22 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-28] ingest — harden workflow inputs and parameterize Compose publishing
+
+Moved release metadata and digest values out of shell-script template
+expansions and into step-scoped environment variables, preserving the release
+pipeline while removing seven template-injection findings. Added a
+`PUBLISH_HOST` Compose interpolation with a loopback default so intentional
+LAN exposure lives in ignored `.env` deployment state rather than a tracked
+`docker-compose.yml` edit.
+
+## [2026-07-28] decision — delay routine dependency updates for seven days
+
+Applied one seven-day Dependabot cooldown to Cargo, GitHub Actions, and Docker
+version updates. The explicit observation window follows zizmor's
+supply-chain recommendation without delaying security updates, which
+Dependabot exempts from cooldowns.
+
 ## [2026-07-28] ingest — repair Cosign v3 release asset signing
 
 The first v0.6.4 release attempt built and signed the multi-arch image but

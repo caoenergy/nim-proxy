@@ -147,9 +147,11 @@ jobs:
       # The documented multi-runner pattern: matrix job outputs clobber each
       # other, so each leg exports its digest as an artifact file instead.
       - name: Export digest
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           mkdir -p "$RUNNER_TEMP/digests"
-          digest="${{ steps.build.outputs.digest }}"
+          digest="$BUILD_DIGEST"
           touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -160,12 +162,17 @@ jobs:
       # Extract the exact static binary we just shipped — natively on this
       # runner: create (not run) a container and copy /nim-proxy out.
       - name: Extract release binary
+        env:
+          RELEASE_ARCH: ${{ matrix.arch }}
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
-          cid=$(docker create --platform "${{ matrix.platform }}" "${IMAGE}@${{ steps.build.outputs.digest }}")
-          docker cp "$cid:/nim-proxy" "nim-proxy-${{ matrix.arch }}"
+          cid=$(docker create --platform "$RELEASE_PLATFORM" "${IMAGE}@${BUILD_DIGEST}")
+          docker cp "$cid:/nim-proxy" "nim-proxy-${RELEASE_ARCH}"
           docker rm "$cid" >/dev/null
-          tar -czf "nim-proxy-${{ needs.prepare.outputs.version }}-linux-${{ matrix.arch }}.tar.gz" "nim-proxy-${{ matrix.arch }}"
+          tar -czf "nim-proxy-${RELEASE_VERSION}-linux-${RELEASE_ARCH}.tar.gz" "nim-proxy-${RELEASE_ARCH}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: binary-${{ matrix.arch }}
@@ -203,18 +210,21 @@ jobs:
       - id: manifest
         name: Stitch the multi-arch manifest and tag it
         working-directory: ${{ runner.temp }}/digests
+        env:
+          RELEASE_MINOR: ${{ needs.prepare.outputs.minor }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           # Each downloaded artifact file is named by its image digest hex.
           refs=()
           for d in *; do refs+=("${IMAGE}@sha256:${d}"); done
           docker buildx imagetools create \
-            -t "${IMAGE}:${{ needs.prepare.outputs.version }}" \
-            -t "${IMAGE}:${{ needs.prepare.outputs.minor }}" \
+            -t "${IMAGE}:${RELEASE_VERSION}" \
+            -t "${IMAGE}:${RELEASE_MINOR}" \
             -t "${IMAGE}:latest" \
             "${refs[@]}"
           digest=$(docker buildx imagetools inspect \
-            "${IMAGE}:${{ needs.prepare.outputs.version }}" \
+            "${IMAGE}:${RELEASE_VERSION}" \
             --format '{{json .Manifest.Digest}}' | tr -d '"')
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Install cosign
@@ -224,7 +234,9 @@ jobs:
           # default Cosign major and therefore its command-line contract.
           cosign-release: v3.1.2
       - name: Sign image (keyless)
-        run: cosign sign --yes "${IMAGE}@${{ steps.manifest.outputs.digest }}"
+        env:
+          MANIFEST_DIGEST: ${{ steps.manifest.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${MANIFEST_DIGEST}"
       - name: Attest build provenance
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:

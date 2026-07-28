@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Moved release metadata and image digests from inline shell-template
+  expansions into step-scoped environment variables, and added a seven-day
+  observation window for routine Cargo, GitHub Actions, and Docker dependency
+  updates. Dependabot security updates remain immediate.
+
+### Changed
+
+- Docker Compose's host-side publish address is now configurable with
+  `PUBLISH_HOST` in `.env` while retaining `127.0.0.1` as the safe default.
+
 ## [0.6.4] - 2026-07-17
 
 ### Added
