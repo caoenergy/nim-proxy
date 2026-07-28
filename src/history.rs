@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub const SAMPLE_SECS: u64 = 300;
 const MAX_EXPOSITION_LINE_BYTES: usize = 1024 * 1024;
@@ -211,15 +211,9 @@ fn parse_labels(input: &str) -> Option<BTreeMap<String, String>> {
     }
 }
 
-fn is_counter_like(
-    metric: &str,
-    types: &BTreeMap<String, PrometheusType>,
-) -> bool {
+fn is_counter_like(metric: &str, types: &BTreeMap<String, PrometheusType>) -> bool {
     if let Some(kind) = types.get(metric) {
-        return matches!(
-            kind,
-            PrometheusType::Counter | PrometheusType::Histogram
-        );
+        return matches!(kind, PrometheusType::Counter | PrometheusType::Histogram);
     }
     for suffix in ["_bucket", "_count", "_sum"] {
         if let Some(base) = metric.strip_suffix(suffix) {
@@ -249,9 +243,10 @@ fn normalize(
     let inferred_reset = !reset
         && previous.is_some_and(|previous| {
             current.counters.iter().any(|(key, current_value)| {
-                previous.counters.get(key).is_some_and(|previous_value| {
-                    current_value - previous_value < -f64::EPSILON
-                })
+                previous
+                    .counters
+                    .get(key)
+                    .is_some_and(|previous_value| current_value - previous_value < -f64::EPSILON)
             })
         });
     let reset_epoch = reset || inferred_reset;
@@ -282,18 +277,126 @@ fn normalize(
     }
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct CapacitySnapshot {
+    pub enabled_lanes: usize,
+    pub rpms: Vec<usize>,
+    pub capacity_rpm: usize,
+}
+
+struct IndexedPoint {
+    t: u64,
+    deltas: BTreeMap<MetricKey, f64>,
+    gauges: BTreeMap<MetricKey, f64>,
+    capacity: Option<CapacitySnapshot>,
+}
+
+#[derive(Default)]
+struct HistoryInner {
+    points: Vec<IndexedPoint>,
+    revision: u64,
+    available_from: Option<u64>,
+    available_to: Option<u64>,
+    diagnostics: HistoryDiagnostics,
+    last_parsed: Option<ParsedSnapshot>,
+    last_sample_boot: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct HistoryDiagnostics {
+    pub valid_samples: usize,
+    pub skipped_records: usize,
+    pub skipped_metric_lines: usize,
+    pub normalized_series: usize,
+    pub legacy_resets_inferred: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct HistoryStatus {
+    pub available_from: Option<u64>,
+    pub available_to: Option<u64>,
+    pub file_bytes: u64,
+    pub compaction_pending: bool,
+}
+
+#[derive(Clone)]
+struct RawPoint {
+    t: u64,
+    m: String,
+    boot: Option<String>,
+    capacity: Option<CapacitySnapshot>,
+}
+
+#[derive(Deserialize)]
+struct StoredRecord {
+    v: Option<u8>,
+    t: Option<u64>,
+    boot: Option<String>,
+    kind: Option<String>,
+    capacity: Option<CapacitySnapshot>,
+    m: Option<String>,
+}
+
+enum LoadedRecord {
+    Boot { t: u64 },
+    Sample(RawPoint),
+}
+
+impl LoadedRecord {
+    fn timestamp(&self) -> u64 {
+        match self {
+            Self::Boot { t, .. } => *t,
+            Self::Sample(point) => point.t,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct BootRecord<'a> {
+    v: u8,
+    t: u64,
+    boot: &'a str,
+    kind: &'static str,
+    capacity: &'a CapacitySnapshot,
+}
+
+#[derive(Serialize)]
+struct SampleRecord<'a> {
+    v: u8,
+    t: u64,
+    boot: &'a str,
+    capacity: &'a CapacitySnapshot,
+    m: &'a str,
+}
+
+#[derive(Serialize)]
+struct LegacySampleRecord<'a> {
+    t: u64,
+    m: &'a str,
+}
+
 pub struct History {
-    points: Mutex<Vec<(u64, String)>>,
+    /// Temporary raw compatibility storage for `/api/history`; Task 7 removes
+    /// it after the route switches to typed rollups.
+    points: Mutex<Vec<RawPoint>>,
+    inner: Mutex<HistoryInner>,
     file: Option<PathBuf>,
     /// Retention in days (0 = keep forever). Atomic so the settings layer can
     /// retune it live; the sampler reads it on every append.
     days: AtomicU64,
     dropped_since_compact: Mutex<usize>,
+    boot_id: String,
+    boot_t: u64,
+    initial_capacity: CapacitySnapshot,
 }
 
 impl History {
-    pub fn load(dir: Option<PathBuf>, days: u64) -> Self {
-        let mut points = Vec::new();
+    pub fn load(dir: Option<PathBuf>, days: u64, initial_capacity: CapacitySnapshot) -> Self {
+        let started = std::time::Instant::now();
+        let mut source_bytes = 0;
+        let mut diagnostics = HistoryDiagnostics::default();
+        let mut records = Vec::new();
+
         let file = dir.and_then(|d| {
             if let Err(e) = fs::create_dir_all(&d) {
                 tracing::warn!("history disabled: cannot create {}: {e}", d.display());
@@ -301,11 +404,19 @@ impl History {
             }
             let path = d.join("history.jsonl");
             if let Ok(f) = fs::File::open(&path) {
-                for line in std::io::BufReader::new(f).lines().map_while(Result::ok) {
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
-                        if let (Some(t), Some(m)) = (v["t"].as_u64(), v["m"].as_str()) {
-                            points.push((t, m.to_owned()));
-                        }
+                source_bytes = f.metadata().map_or(0, |metadata| metadata.len());
+                for line in std::io::BufReader::new(f).lines() {
+                    let Ok(line) = line else {
+                        diagnostics.skipped_records += 1;
+                        break;
+                    };
+                    let Ok(record) = serde_json::from_str::<StoredRecord>(&line) else {
+                        diagnostics.skipped_records += 1;
+                        continue;
+                    };
+                    match decode_record(record) {
+                        Some(record) => records.push(record),
+                        None => diagnostics.skipped_records += 1,
                     }
                 }
             }
@@ -322,22 +433,93 @@ impl History {
                 }
             }
         });
-        points.sort_by_key(|p| p.0);
+
+        records.sort_by_key(LoadedRecord::timestamp);
+        let mut raw_points = Vec::new();
+        let mut indexed_points = Vec::new();
+        let mut last_parsed: Option<ParsedSnapshot> = None;
+        let mut last_sample_boot: Option<String> = None;
+        for record in records {
+            let LoadedRecord::Sample(point) = record else {
+                continue;
+            };
+            let current = parse_exposition(&point.m);
+            let explicit_reset = last_parsed.is_some() && point.boot != last_sample_boot;
+            let legacy_empty_reset = !explicit_reset
+                && point.boot.is_none()
+                && last_sample_boot.is_none()
+                && last_parsed
+                    .as_ref()
+                    .is_some_and(|previous| previous.counters.is_empty())
+                && !current.counters.is_empty();
+            let mut normalized = normalize(
+                last_parsed.as_ref(),
+                &current,
+                explicit_reset || legacy_empty_reset,
+            );
+            if legacy_empty_reset {
+                normalized.inferred_reset = true;
+            }
+            diagnostics.valid_samples += 1;
+            diagnostics.skipped_metric_lines += current.skipped_lines;
+            diagnostics.normalized_series += normalized.deltas.len() + normalized.gauges.len();
+            if normalized.inferred_reset {
+                diagnostics.legacy_resets_inferred += 1;
+            }
+            indexed_points.push(IndexedPoint {
+                t: point.t,
+                deltas: normalized.deltas,
+                gauges: normalized.gauges,
+                capacity: point.capacity.clone(),
+            });
+            last_parsed = Some(current);
+            last_sample_boot = point.boot.clone();
+            raw_points.push(point);
+        }
+
+        let available_from = indexed_points.first().map(|point| point.t);
+        let available_to = indexed_points.last().map(|point| point.t);
+        let revision = diagnostics.valid_samples as u64;
+        let boot_id = new_boot_id();
+        let boot_t = unix_now();
+        let history = Self {
+            points: Mutex::new(raw_points),
+            inner: Mutex::new(HistoryInner {
+                points: indexed_points,
+                revision,
+                available_from,
+                available_to,
+                diagnostics,
+                last_parsed,
+                last_sample_boot,
+            }),
+            file,
+            days: AtomicU64::new(days),
+            dropped_since_compact: Mutex::new(0),
+            boot_id,
+            boot_t,
+            initial_capacity,
+        };
+        history.persist_boot_marker();
+        let inner = history.inner.lock().unwrap();
         tracing::info!(
-            "history           {} snapshots loaded, retention {}",
-            points.len(),
+            "history           {} bytes, {} samples, {} skipped records, {} skipped metric lines, \
+             {} normalized series, {} inferred resets, indexed in {:?}; retention {}",
+            source_bytes,
+            inner.diagnostics.valid_samples,
+            inner.diagnostics.skipped_records,
+            inner.diagnostics.skipped_metric_lines,
+            inner.diagnostics.normalized_series,
+            inner.diagnostics.legacy_resets_inferred,
+            started.elapsed(),
             if days == 0 {
                 "infinite".to_owned()
             } else {
                 format!("{days} days")
             }
         );
-        Self {
-            points: Mutex::new(points),
-            file,
-            days: AtomicU64::new(days),
-            dropped_since_compact: Mutex::new(0),
-        }
+        drop(inner);
+        history
     }
 
     /// Retune retention live (settings-driven); applies on the next append.
@@ -345,61 +527,232 @@ impl History {
         self.days.store(days, Ordering::Relaxed);
     }
 
-    pub fn append(&self, t: u64, snapshot: String) {
-        let mut points = self.points.lock().unwrap();
+    pub fn revision(&self) -> u64 {
+        self.inner.lock().unwrap().revision
+    }
+
+    pub fn status(&self) -> HistoryStatus {
+        let inner = self.inner.lock().unwrap();
+        HistoryStatus {
+            available_from: inner.available_from,
+            available_to: inner.available_to,
+            file_bytes: self
+                .file
+                .as_ref()
+                .and_then(|path| fs::metadata(path).ok())
+                .map_or(0, |metadata| metadata.len()),
+            compaction_pending: *self.dropped_since_compact.lock().unwrap() > 0,
+        }
+    }
+
+    pub fn append(&self, t: u64, snapshot: &str, capacity: CapacitySnapshot) {
+        let current = parse_exposition(snapshot);
+        let mut inner = self.inner.lock().unwrap();
+        let explicit_reset = inner.last_parsed.is_some()
+            && inner.last_sample_boot.as_deref() != Some(self.boot_id.as_str());
+        let normalized = normalize(inner.last_parsed.as_ref(), &current, explicit_reset);
+        inner.diagnostics.valid_samples += 1;
+        inner.diagnostics.skipped_metric_lines += current.skipped_lines;
+        inner.diagnostics.normalized_series += normalized.deltas.len() + normalized.gauges.len();
+        if normalized.inferred_reset {
+            inner.diagnostics.legacy_resets_inferred += 1;
+        }
+
         let days = self.days.load(Ordering::Relaxed);
+        let mut raw_points = self.points.lock().unwrap();
         if days > 0 {
             let cutoff = t.saturating_sub(days * 86400);
-            let before = points.len();
-            points.retain(|p| p.0 >= cutoff);
-            *self.dropped_since_compact.lock().unwrap() += before - points.len();
+            let before = inner.points.len();
+            inner.points.retain(|point| point.t >= cutoff);
+            raw_points.retain(|point| point.t >= cutoff);
+            *self.dropped_since_compact.lock().unwrap() += before - inner.points.len();
         }
-        let line = serde_json::json!({"t": t, "m": snapshot}).to_string();
-        points.push((t, snapshot));
+        inner.points.push(IndexedPoint {
+            t,
+            deltas: normalized.deltas,
+            gauges: normalized.gauges,
+            capacity: Some(capacity.clone()),
+        });
+        raw_points.push(RawPoint {
+            t,
+            m: snapshot.to_owned(),
+            boot: Some(self.boot_id.clone()),
+            capacity: Some(capacity.clone()),
+        });
+        inner.revision = inner.revision.wrapping_add(1);
+        inner.available_from = inner.points.first().map(|point| point.t);
+        inner.available_to = inner.points.last().map(|point| point.t);
+        inner.last_parsed = Some(current);
+        inner.last_sample_boot = Some(self.boot_id.clone());
+        drop(inner);
 
-        if let Some(path) = &self.file {
-            let mut dropped = self.dropped_since_compact.lock().unwrap();
-            // Compact once a day's worth of expired snapshots has built up;
-            // otherwise just append.
-            let result = if *dropped > 288 {
-                *dropped = 0;
-                let all = points
-                    .iter()
-                    .map(|(t, m)| serde_json::json!({"t": t, "m": m}).to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                fs::write(path, all + "\n")
-            } else {
-                fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(path)
-                    .and_then(|mut f| writeln!(f, "{line}"))
-            };
-            if let Err(e) = result {
-                tracing::warn!("history write failed: {e}");
-            }
-        }
+        let line = serde_json::to_string(&SampleRecord {
+            v: 2,
+            t,
+            boot: &self.boot_id,
+            capacity: &capacity,
+            m: snapshot,
+        })
+        .expect("history sample record serializes");
+        self.persist_sample(line, &raw_points);
     }
 
     /// Snapshots in [from, to], stride-sampled down to at most `max` plus the
-    /// range's endpoints.
+    /// range's endpoints. Temporary raw compatibility until Task 7.
     pub fn range(&self, from: u64, to: u64, max: usize) -> Vec<(u64, String)> {
         let points = self.points.lock().unwrap();
-        let hits: Vec<&(u64, String)> =
-            points.iter().filter(|p| p.0 >= from && p.0 <= to).collect();
+        let hits: Vec<&RawPoint> = points
+            .iter()
+            .filter(|point| point.t >= from && point.t <= to)
+            .collect();
         let stride = hits.len().div_ceil(max.max(2));
         hits.iter()
             .enumerate()
-            .filter(|(i, _)| i % stride == 0 || *i == hits.len() - 1)
-            .map(|(_, p)| (*p).clone())
+            .filter(|(index, _)| index % stride == 0 || *index == hits.len() - 1)
+            .map(|(_, point)| (point.t, point.m.clone()))
             .collect()
     }
+
+    fn persist_boot_marker(&self) {
+        let Some(path) = &self.file else {
+            return;
+        };
+        let line = serde_json::to_string(&BootRecord {
+            v: 2,
+            t: self.boot_t,
+            boot: &self.boot_id,
+            kind: "boot",
+            capacity: &self.initial_capacity,
+        })
+        .expect("history boot record serializes");
+        if let Err(e) = append_line(path, &line) {
+            tracing::warn!("history boot marker write failed: {e}");
+        }
+    }
+
+    fn persist_sample(&self, line: String, points: &[RawPoint]) {
+        let Some(path) = &self.file else {
+            return;
+        };
+        let mut dropped = self.dropped_since_compact.lock().unwrap();
+        // Compact once a day's worth of expired snapshots has built up;
+        // otherwise just append.
+        let result = if *dropped > 288 {
+            *dropped = 0;
+            let mut lines = vec![serde_json::to_string(&BootRecord {
+                v: 2,
+                t: self.boot_t,
+                boot: &self.boot_id,
+                kind: "boot",
+                capacity: &self.initial_capacity,
+            })
+            .expect("history boot record serializes")];
+            lines.extend(points.iter().map(serialize_raw_point));
+            fs::write(path, lines.join("\n") + "\n")
+        } else {
+            append_line(path, &line)
+        };
+        if let Err(e) = result {
+            tracing::warn!("history write failed: {e}");
+        }
+    }
+}
+
+fn decode_record(record: StoredRecord) -> Option<LoadedRecord> {
+    let t = record.t?;
+    match (record.v, record.kind.as_deref()) {
+        (Some(2), Some("boot")) => {
+            record.boot?;
+            record.capacity?;
+            Some(LoadedRecord::Boot { t })
+        }
+        (Some(2), None) => Some(LoadedRecord::Sample(RawPoint {
+            t,
+            m: record.m?,
+            boot: Some(record.boot?),
+            capacity: Some(record.capacity?),
+        })),
+        (None, None) => Some(LoadedRecord::Sample(RawPoint {
+            t,
+            m: record.m?,
+            boot: None,
+            capacity: None,
+        })),
+        _ => None,
+    }
+}
+
+fn new_boot_id() -> String {
+    let mut bytes = [0u8; 16];
+    getrandom::getrandom(&mut bytes).expect("OS RNG for history boot ID");
+    let mut id = String::with_capacity(32);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        write!(&mut id, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    id
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn append_line(path: &PathBuf, line: &str) -> std::io::Result<()> {
+    fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut file| writeln!(file, "{line}"))
+}
+
+fn serialize_raw_point(point: &RawPoint) -> String {
+    match (&point.boot, &point.capacity) {
+        (Some(boot), Some(capacity)) => serde_json::to_string(&SampleRecord {
+            v: 2,
+            t: point.t,
+            boot,
+            capacity,
+            m: &point.m,
+        }),
+        _ => serde_json::to_string(&LegacySampleRecord {
+            t: point.t,
+            m: &point.m,
+        }),
+    }
+    .expect("history raw point serializes")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn capacity(rpm: usize) -> CapacitySnapshot {
+        CapacitySnapshot {
+            enabled_lanes: usize::from(rpm > 0),
+            rpms: (rpm > 0).then_some(rpm).into_iter().collect(),
+            capacity_rpm: rpm,
+        }
+    }
+
+    fn memory_history(days: u64) -> History {
+        History::load(None, days, capacity(40))
+    }
+
+    fn history_with_file(days: u64, file: PathBuf) -> History {
+        History {
+            points: Mutex::new(Vec::new()),
+            inner: Mutex::new(HistoryInner::default()),
+            file: Some(file),
+            days: AtomicU64::new(days),
+            dropped_since_compact: Mutex::new(0),
+            boot_id: "00000000000000000000000000000000".to_owned(),
+            boot_t: 0,
+            initial_capacity: capacity(40),
+        }
+    }
 
     const SNAPSHOT: &str = r#"
 # TYPE nimproxy_requests_total counter
@@ -423,10 +776,8 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
 
     #[test]
     fn parses_escaped_label_values() {
-        let series =
-            r#"escaped_total{quote="say \"hi\"",path="c:\\tmp",line="a\nb"}"#;
-        let parsed =
-            parse_exposition(&format!("# TYPE escaped_total counter\n{series} 1\n"));
+        let series = r#"escaped_total{quote="say \"hi\"",path="c:\\tmp",line="a\nb"}"#;
+        let parsed = parse_exposition(&format!("# TYPE escaped_total counter\n{series} 1\n"));
         assert_eq!(parsed.skipped_lines, 0);
         let key = parsed.counters.keys().next().unwrap();
         assert_eq!(key.labels["quote"], "say \"hi\"");
@@ -466,10 +817,8 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
 
     #[test]
     fn explicit_boot_change_counts_new_process_values() {
-        let first =
-            parse_exposition("# TYPE requests_total counter\nrequests_total 100\n");
-        let second =
-            parse_exposition("# TYPE requests_total counter\nrequests_total 7\n");
+        let first = parse_exposition("# TYPE requests_total counter\nrequests_total 100\n");
+        let second = parse_exposition("# TYPE requests_total counter\nrequests_total 7\n");
         let normalized = normalize(Some(&first), &second, true);
         assert_eq!(metric(&normalized.deltas, "requests_total"), 7.0);
     }
@@ -492,10 +841,8 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
 
     #[test]
     fn normalize_subtracts_counters_without_a_reset() {
-        let first =
-            parse_exposition("# TYPE requests_total counter\nrequests_total 100\n");
-        let second =
-            parse_exposition("# TYPE requests_total counter\nrequests_total 107\n");
+        let first = parse_exposition("# TYPE requests_total counter\nrequests_total 100\n");
+        let second = parse_exposition("# TYPE requests_total counter\nrequests_total 107\n");
         let normalized = normalize(Some(&first), &second, false);
         assert!(!normalized.inferred_reset);
         assert_eq!(metric(&normalized.deltas, "requests_total"), 7.0);
@@ -530,16 +877,11 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
 
     #[test]
     fn retention_prunes_and_range_filters() {
-        let h = History {
-            points: Mutex::new(Vec::new()),
-            file: None,
-            days: AtomicU64::new(1),
-            dropped_since_compact: Mutex::new(0),
-        };
-        h.append(1_000, "old".into());
-        h.append(200_000, "new".into()); // 1-day cutoff drops t=1000
+        let h = memory_history(1);
+        h.append(1_000, "old", capacity(40));
+        h.append(200_000, "new", capacity(40)); // 1-day cutoff drops t=1000
         assert_eq!(h.range(0, u64::MAX, 100).len(), 1);
-        h.append(200_300, "newer".into());
+        h.append(200_300, "newer", capacity(40));
         let r = h.range(200_000, 200_100, 100);
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].1, "new");
@@ -547,12 +889,10 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
 
     #[test]
     fn range_downsamples_to_max() {
-        let h = History {
-            points: Mutex::new((0..1000u64).map(|i| (i, i.to_string())).collect()),
-            file: None,
-            days: AtomicU64::new(0),
-            dropped_since_compact: Mutex::new(0),
-        };
+        let h = memory_history(0);
+        for i in 0..1000u64 {
+            h.append(i, &i.to_string(), capacity(40));
+        }
         let r = h.range(0, 999, 100);
         assert!(r.len() <= 101, "got {}", r.len());
         assert_eq!(r.last().unwrap().0, 999, "endpoint kept");
@@ -579,6 +919,42 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
     }
 
     #[test]
+    fn load_reads_v1_and_v2_boot_epochs() {
+        let dir = TestDir::new();
+        let path = dir.0.join("history.jsonl");
+        fs::write(
+            &path,
+            "{\"t\":10,\"m\":\"# TYPE requests_total counter\\nrequests_total 5\\n\"}\n\
+             {\"t\":20,\"m\":\"# TYPE requests_total counter\\nrequests_total 8\\n\"}\n\
+             {\"v\":2,\"t\":21,\"boot\":\"boot-b\",\"kind\":\"boot\",\"capacity\":{\"enabled_lanes\":2,\"rpms\":[40,30],\"capacity_rpm\":70}}\n\
+             {\"v\":2,\"t\":30,\"boot\":\"boot-b\",\"capacity\":{\"enabled_lanes\":2,\"rpms\":[40,30],\"capacity_rpm\":70},\"m\":\"# TYPE requests_total counter\\nrequests_total 2\\n\"}\n",
+        )
+        .unwrap();
+
+        let h = History::load(
+            Some(dir.0.clone()),
+            0,
+            CapacitySnapshot {
+                enabled_lanes: 1,
+                rpms: vec![40],
+                capacity_rpm: 40,
+            },
+        );
+        let inner = h.inner.lock().unwrap();
+        assert_eq!(inner.points.len(), 3, "boot marker is not a metric sample");
+        assert_eq!(
+            inner
+                .points
+                .iter()
+                .map(|point| metric(&point.deltas, "requests_total"))
+                .sum::<f64>(),
+            10.0
+        );
+        assert_eq!(inner.points[2].capacity.as_ref().unwrap().rpms, [40, 30]);
+        assert_eq!(inner.diagnostics.legacy_resets_inferred, 0);
+    }
+
+    #[test]
     fn load_reads_existing_snapshots_and_skips_junk() {
         let dir = TestDir::new();
         let path = dir.0.join("history.jsonl");
@@ -589,12 +965,12 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         )
         .unwrap();
         // days = 0 exercises the "infinite" retention log branch.
-        let h = History::load(Some(dir.0.clone()), 0);
+        let h = History::load(Some(dir.0.clone()), 0, capacity(40));
         let all = h.range(0, u64::MAX, 100);
         assert_eq!(all.len(), 3, "3 valid lines parsed, junk skipped");
         assert_eq!(all[0].0, 5, "snapshots sorted by timestamp on load");
         // days > 0 exercises the "{days} days" retention log branch.
-        let h2 = History::load(Some(dir.0.clone()), 7);
+        let h2 = History::load(Some(dir.0.clone()), 7, capacity(40));
         assert_eq!(h2.range(0, u64::MAX, 100).len(), 3);
     }
 
@@ -603,17 +979,25 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         let dir = TestDir::new();
         let path = dir.0.join("history.jsonl");
         fs::write(&path, "{\"t\":1,\"m\":\"old\"}\n").unwrap();
-        let h = History {
-            points: Mutex::new(vec![(1, "old".into())]),
-            file: Some(path.clone()),
-            days: AtomicU64::new(1),
-            // One more expiry crosses the >288 compaction threshold.
-            dropped_since_compact: Mutex::new(288),
-        };
+        let h = history_with_file(1, path.clone());
+        h.points.lock().unwrap().push(RawPoint {
+            t: 1,
+            m: "old".to_owned(),
+            boot: None,
+            capacity: None,
+        });
+        h.inner.lock().unwrap().points.push(IndexedPoint {
+            t: 1,
+            deltas: BTreeMap::new(),
+            gauges: BTreeMap::new(),
+            capacity: None,
+        });
+        // One more expiry crosses the >288 compaction threshold.
+        *h.dropped_since_compact.lock().unwrap() = 288;
         // days = 1: cutoff = 200_000 - 86_400 = 113_600, so the t=1 snapshot
         // expires; that pushes the drop count to 289 (>288) and triggers a full
         // file rewrite rather than an append.
-        h.append(200_000, "new".into());
+        h.append(200_000, "new", capacity(40));
         let contents = fs::read_to_string(&path).unwrap();
         assert!(contents.contains("new"), "surviving snapshot rewritten");
         assert!(
@@ -629,7 +1013,7 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         // fails and persistence falls back to in-memory only.
         let blocker = dir.0.join("blocker");
         fs::write(&blocker, b"x").unwrap();
-        let h = History::load(Some(blocker.join("sub")), 1);
+        let h = History::load(Some(blocker.join("sub")), 1, capacity(40));
         assert!(
             h.file.is_none(),
             "persistence disabled on dir-create failure"
@@ -642,7 +1026,7 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         // A directory sits where history.jsonl should be, so opening it for
         // append fails (EISDIR) and persistence stays in-memory.
         fs::create_dir_all(dir.0.join("history.jsonl")).unwrap();
-        let h = History::load(Some(dir.0.clone()), 1);
+        let h = History::load(Some(dir.0.clone()), 1, capacity(40));
         assert!(
             h.file.is_none(),
             "persistence disabled when the path isn't a file"
@@ -654,13 +1038,8 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         let dir = TestDir::new();
         // `file` points at a directory: the append write errors and is logged,
         // but the in-memory record still updates and nothing panics.
-        let h = History {
-            points: Mutex::new(Vec::new()),
-            file: Some(dir.0.clone()),
-            days: AtomicU64::new(0),
-            dropped_since_compact: Mutex::new(0),
-        };
-        h.append(1, "snap".into());
+        let h = history_with_file(0, dir.0.clone());
+        h.append(1, "snap", capacity(40));
         assert_eq!(
             h.range(0, u64::MAX, 10).len(),
             1,

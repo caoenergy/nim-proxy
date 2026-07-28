@@ -1018,12 +1018,29 @@ async fn history_records_snapshots_and_survives_restart() {
     let raw = std::fs::read_to_string(&jsonl).expect("history.jsonl written");
     let lines: Vec<&str> = raw.lines().filter(|l| !l.is_empty()).collect();
     assert!(lines.len() >= 2, "sampler ran: {} snapshots", lines.len());
+    let records: Vec<serde_json::Value> = lines
+        .iter()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
     assert!(
-        lines.last().unwrap().contains("nimproxy"),
-        "snapshots carry metrics: {}",
-        lines.last().unwrap()
+        records.iter().any(|value| value["kind"] == "boot"),
+        "process epoch is persisted"
     );
-    let before = lines.len();
+    assert!(
+        records.iter().any(|value| {
+            value["v"] == 2
+                && value["boot"].is_string()
+                && value["capacity"]["capacity_rpm"] == 120
+                && value["m"]
+                    .as_str()
+                    .is_some_and(|metrics| metrics.contains("nimproxy"))
+        }),
+        "v2 snapshots carry metrics and contemporaneous capacity: {raw}"
+    );
+    let before = records
+        .iter()
+        .filter(|value| value["m"].is_string())
+        .count();
 
     // Restart on the SAME data dir: history reloads from disk and is served
     // through the (now auth-gated) /api/history endpoint.

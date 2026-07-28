@@ -169,6 +169,14 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
+fn capacity_snapshot(pool: &Pool) -> history::CapacitySnapshot {
+    history::CapacitySnapshot {
+        enabled_lanes: pool.len(),
+        rpms: pool.rpms(),
+        capacity_rpm: pool.capacity_rpm(),
+    }
+}
+
 /// Live dashboard bootstrap config — reflects the current pool and pricing
 /// even after a settings change swaps them.
 async fn dash_config(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
@@ -379,28 +387,35 @@ pub async fn run() {
     }
     let prometheus = builder.install_recorder().expect("prometheus recorder");
 
-    // Metrics history: 5-minute snapshots, store-configured retention,
-    // persisted next to the config store.
+    let pool: PoolHandle = Arc::new(RwLock::new(Arc::new(Pool::new(pool_specs))));
+
+    // Metrics history: finish indexing before the listener can report ready,
+    // then sample the registry with contemporaneous pool capacity.
     let hist = Arc::new(history::History::load(
         Some(data_dir.clone()),
         stored.history.days,
+        capacity_snapshot(&pool.read().unwrap()),
     ));
     {
         let hist = hist.clone();
         let prom = prometheus.clone();
+        let pool = pool.clone();
         // Undocumented test knob; the 5-minute default is the contract.
         let sample_secs: u64 = env_or("HISTORY_SAMPLE_SECS", &history::SAMPLE_SECS.to_string())
             .parse()
             .expect("HISTORY_SAMPLE_SECS");
         tokio::spawn(async move {
             loop {
-                hist.append(unix_now(), prom.render());
+                hist.append(
+                    unix_now(),
+                    &prom.render(),
+                    capacity_snapshot(&pool.read().unwrap()),
+                );
                 tokio::time::sleep(Duration::from_secs(sample_secs.max(1))).await;
             }
         });
     }
 
-    let pool: PoolHandle = Arc::new(RwLock::new(Arc::new(Pool::new(pool_specs))));
     let state = Arc::new(AppState {
         dispatch: Dispatcher::new(pool.clone()),
         pool,
