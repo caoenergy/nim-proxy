@@ -1,7 +1,7 @@
 # Reset-aware dashboard history and time semantics
 
-**Date:** 2026-07-28  
-**Issue:** [#67 — Make dashboard history reset-aware and time-window consistent](https://github.com/miztertea/nim-proxy/issues/67)  
+**Date:** 2026-07-28
+**Issue:** [#67 — Make dashboard history reset-aware and time-window consistent](https://github.com/miztertea/nim-proxy/issues/67)
 **Status:** Draft for user review; conceptual direction approved
 
 ## Summary
