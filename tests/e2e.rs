@@ -1088,6 +1088,8 @@ async fn dashboard_range_contract_defaults_validates_and_requires_auth() {
     assert!(body["history_revision"].as_u64().is_some());
     assert_eq!(body["window"]["requested_from"], 1);
     assert_eq!(body["window"]["requested_to"], 4_102_444_800u64);
+    assert_eq!(body["window"]["following_now"], false);
+    assert!(body["config_revision"].as_u64().is_some());
     assert!(body["window"]["available_from"].as_u64().is_some());
     assert!(body["totals"].as_array().is_some());
     assert!(body["latest"].as_array().is_some());
@@ -1114,6 +1116,7 @@ async fn dashboard_range_contract_defaults_validates_and_requires_auth() {
     let from = defaulted["window"]["requested_from"].as_u64().unwrap();
     let to = defaulted["window"]["requested_to"].as_u64().unwrap();
     assert_eq!(to - from, 30 * 86_400);
+    assert_eq!(defaulted["window"]["following_now"], true);
     assert_eq!(defaulted["window"]["default_window_days"], 30);
     assert_eq!(defaulted["window"]["retention_days"], 30);
 

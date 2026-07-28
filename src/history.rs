@@ -366,6 +366,8 @@ pub struct Tail {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct CurrentMetrics {
+    pub available_from: Option<u64>,
+    pub available_to: Option<u64>,
     pub metrics: Vec<MetricValue>,
     pub tail: Tail,
 }
@@ -418,6 +420,11 @@ struct SampleRecord<'a> {
     boot: &'a str,
     capacity: &'a CapacitySnapshot,
     m: &'a str,
+}
+
+enum CompactionOutcome {
+    Durable,
+    CommittedSyncPending(std::io::Error),
 }
 
 pub struct History {
@@ -491,6 +498,7 @@ impl History {
         let mut indexed_points = Vec::new();
         let mut last_parsed: Option<ParsedSnapshot> = None;
         let mut last_sample_boot: Option<String> = None;
+        let mut filtered_by_retention = 0;
         for record in records {
             let LoadedRecord::Sample(point) = record else {
                 continue;
@@ -527,6 +535,8 @@ impl History {
                     capacity: point.capacity.clone(),
                 });
                 raw_points.push(point.clone());
+            } else {
+                filtered_by_retention += 1;
             }
             last_parsed = Some(current);
             last_sample_boot = point.boot.clone();
@@ -536,6 +546,7 @@ impl History {
         let available_to = indexed_points.last().map(|point| point.t);
         let revision = diagnostics.valid_samples as u64;
         let boot_id = new_boot_id();
+        let compaction_pending = file.is_some() && filtered_by_retention > 0;
         let history = Self {
             points: Mutex::new(raw_points),
             inner: Mutex::new(HistoryInner {
@@ -549,12 +560,12 @@ impl History {
             }),
             file,
             days: AtomicU64::new(days),
-            dropped_since_compact: Mutex::new(0),
+            dropped_since_compact: Mutex::new(filtered_by_retention),
             filesystem: Mutex::new(()),
-            compaction_pending: AtomicBool::new(false),
+            compaction_pending: AtomicBool::new(compaction_pending),
             compaction_running: AtomicBool::new(false),
-            compaction_cutoff: AtomicU64::new(0),
-            compaction_generation: AtomicU64::new(0),
+            compaction_cutoff: AtomicU64::new(cutoff.unwrap_or(0)),
+            compaction_generation: AtomicU64::new(u64::from(compaction_pending)),
             boot_id,
             boot_t,
             initial_capacity,
@@ -791,9 +802,10 @@ impl History {
         }
     }
 
-    pub fn current(&self, t: u64, current_exposition: &str) -> CurrentMetrics {
-        let current = parse_exposition(current_exposition);
+    pub fn current(&self, t: u64, render: impl FnOnce() -> String) -> CurrentMetrics {
         let inner = self.inner.lock().unwrap();
+        let current_exposition = render();
+        let current = parse_exposition(&current_exposition);
         let reset = inner.last_parsed.is_some()
             && inner.last_sample_boot.as_deref() != Some(self.boot_id.as_str());
         let normalized = normalize(inner.last_parsed.as_ref(), &current, reset);
@@ -801,6 +813,8 @@ impl History {
         metrics.extend(current.gauges);
 
         CurrentMetrics {
+            available_from: inner.available_from,
+            available_to: inner.available_to,
             metrics: metric_values(metrics),
             tail: Tail {
                 base_history_revision: inner.revision,
@@ -878,34 +892,47 @@ impl History {
         let claimed_drops = *history.dropped_since_compact.lock().unwrap();
         tokio::task::spawn_blocking(move || {
             let result = history.compact_file(cutoff);
-            if result.is_ok() {
-                let mut inner = history.inner.lock().unwrap();
-                inner.revision = inner.revision.wrapping_add(1);
-                drop(inner);
-                let mut dropped = history.dropped_since_compact.lock().unwrap();
-                *dropped = dropped.saturating_sub(claimed_drops);
-                drop(dropped);
+            let durable = matches!(&result, Ok(CompactionOutcome::Durable));
+            match result {
+                Ok(CompactionOutcome::Durable) => {
+                    let mut inner = history.inner.lock().unwrap();
+                    inner.revision = inner.revision.wrapping_add(1);
+                    drop(inner);
+                    let mut dropped = history.dropped_since_compact.lock().unwrap();
+                    *dropped = dropped.saturating_sub(claimed_drops);
+                    drop(dropped);
 
-                if history.compaction_generation.load(Ordering::SeqCst) == generation {
-                    history.compaction_pending.store(false, Ordering::SeqCst);
-                    if history.compaction_generation.load(Ordering::SeqCst) != generation {
-                        history.compaction_pending.store(true, Ordering::SeqCst);
+                    if history.compaction_generation.load(Ordering::SeqCst) == generation {
+                        history.compaction_pending.store(false, Ordering::SeqCst);
+                        if history.compaction_generation.load(Ordering::SeqCst) != generation {
+                            history.compaction_pending.store(true, Ordering::SeqCst);
+                        }
                     }
                 }
-            } else if let Err(error) = &result {
-                tracing::warn!("history compaction failed: {error}");
+                Ok(CompactionOutcome::CommittedSyncPending(error)) => {
+                    tracing::warn!(
+                        "history compaction was atomically renamed, but directory sync failed; \
+                         durability is uncertain and cleanup remains pending: {error}"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        "history compaction failed before replacement; original path is unchanged: \
+                         {error}"
+                    );
+                }
             }
 
             history.compaction_running.store(false, Ordering::SeqCst);
-            if result.is_ok() && history.compaction_pending.load(Ordering::SeqCst) {
+            if durable && history.compaction_pending.load(Ordering::SeqCst) {
                 history.start_pending_compaction();
             }
         });
     }
 
-    fn compact_file(&self, cutoff: u64) -> std::io::Result<()> {
+    fn compact_file(&self, cutoff: u64) -> std::io::Result<CompactionOutcome> {
         let Some(path) = &self.file else {
-            return Ok(());
+            return Ok(CompactionOutcome::Durable);
         };
         let _filesystem = self.filesystem.lock().unwrap();
 
@@ -962,8 +989,7 @@ impl History {
         }
         output.sync_all()?;
         fs::rename(&temporary, path)?;
-        sync_parent_directory(path)?;
-        Ok(())
+        Ok(directory_sync_outcome(sync_parent_directory(path)))
     }
 }
 
@@ -1101,6 +1127,13 @@ fn temporary_path(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(".tmp");
     PathBuf::from(name)
+}
+
+fn directory_sync_outcome(result: std::io::Result<()>) -> CompactionOutcome {
+    match result {
+        Ok(()) => CompactionOutcome::Durable,
+        Err(error) => CompactionOutcome::CommittedSyncPending(error),
+    }
 }
 
 #[cfg(unix)]
@@ -1666,13 +1699,13 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
     #[test]
     fn tail_reports_only_metrics_since_the_latest_indexed_sample() {
         let history = history_with_points();
-        let current = history.current(
-            350,
+        let current = history.current(350, || {
             "# TYPE requests_total counter\n\
-             requests_total 43\n\
-             # TYPE active gauge\n\
-             active 7\n",
-        );
+                 requests_total 43\n\
+                 # TYPE active gauge\n\
+                 active 7\n"
+                .to_owned()
+        });
         assert_eq!(value(&current.tail.totals, "requests_total"), 3.0);
         assert_eq!(value(&current.metrics, "requests_total"), 43.0);
         assert_eq!(value(&current.metrics, "active"), 7.0);
@@ -1685,7 +1718,9 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
     fn tail_counts_a_new_process_value_from_zero() {
         let history = history_with_points();
         history.inner.lock().unwrap().last_sample_boot = Some("previous-process".to_owned());
-        let current = history.current(350, "# TYPE requests_total counter\nrequests_total 2\n");
+        let current = history.current(350, || {
+            "# TYPE requests_total counter\nrequests_total 2\n".to_owned()
+        });
         assert_eq!(value(&current.tail.totals, "requests_total"), 2.0);
     }
 
@@ -1693,11 +1728,62 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
     fn tail_polling_does_not_accumulate_previous_polls() {
         let history = history_with_points();
         let exposition = "# TYPE requests_total counter\nrequests_total 43\n";
-        let first = history.current(350, exposition);
-        let second = history.current(351, exposition);
+        let first = history.current(350, || exposition.to_owned());
+        let second = history.current(351, || exposition.to_owned());
         assert_eq!(value(&first.tail.totals, "requests_total"), 3.0);
         assert_eq!(value(&second.tail.totals, "requests_total"), 3.0);
         assert_eq!(history.revision(), 3);
+    }
+
+    #[test]
+    fn current_render_holds_history_generation_through_bounds_and_baseline() {
+        let history = memory_history(0);
+        history.append(
+            100,
+            "# TYPE requests_total counter\nrequests_total 10\n",
+            capacity(40),
+        );
+        let (render_started_tx, render_started_rx) = std::sync::mpsc::channel();
+        let (release_render_tx, release_render_rx) = std::sync::mpsc::channel();
+        let current_history = history.clone();
+        let current_thread = std::thread::spawn(move || {
+            current_history.current(150, || {
+                render_started_tx.send(()).unwrap();
+                release_render_rx.recv().unwrap();
+                "# TYPE requests_total counter\nrequests_total 13\n".to_owned()
+            })
+        });
+        render_started_rx.recv().unwrap();
+
+        let (append_started_tx, append_started_rx) = std::sync::mpsc::channel();
+        let (append_done_tx, append_done_rx) = std::sync::mpsc::channel();
+        let append_history = history.clone();
+        let append_thread = std::thread::spawn(move || {
+            append_started_tx.send(()).unwrap();
+            append_history.append(
+                200,
+                "# TYPE requests_total counter\nrequests_total 14\n",
+                capacity(40),
+            );
+            append_done_tx.send(()).unwrap();
+        });
+        append_started_rx.recv().unwrap();
+        assert!(
+            append_done_rx
+                .recv_timeout(Duration::from_millis(250))
+                .is_err(),
+            "append advanced while current metrics were rendering"
+        );
+
+        release_render_tx.send(()).unwrap();
+        let current = current_thread.join().unwrap();
+        assert_eq!(current.available_from, Some(100));
+        assert_eq!(current.available_to, Some(100));
+        assert_eq!(current.tail.from, Some(100));
+        assert_eq!(current.tail.base_history_revision, 1);
+        assert_eq!(value(&current.tail.totals, "requests_total"), 3.0);
+        append_done_rx.recv().unwrap();
+        append_thread.join().unwrap();
     }
 
     #[test]
@@ -1720,6 +1806,60 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         let h2 = History::load(Some(dir.0.clone()), 7, capacity(40));
         assert!(h2.range(0, u64::MAX, 100).is_empty());
         assert_eq!(h2.status().available_from, None);
+    }
+
+    #[tokio::test]
+    async fn retention_load_marks_stale_file_pending_until_next_append_compacts() {
+        let dir = TestDir::new();
+        let path = dir.0.join("history.jsonl");
+        let now = unix_now();
+        let cutoff = now - 86_400;
+        let old = cutoff - 200;
+        let baseline = cutoff - 100;
+        let retained = cutoff + 10;
+        fs::write(
+            &path,
+            format!(
+                "{{\"t\":{old},\"m\":\"# TYPE requests_total counter\\nrequests_total 5\\n\"}}\n\
+                 {{\"t\":{baseline},\"m\":\"# TYPE requests_total counter\\nrequests_total 8\\n\"}}\n\
+                 {{\"t\":{retained},\"m\":\"# TYPE requests_total counter\\nrequests_total 10\\n\"}}\n"
+            ),
+        )
+        .unwrap();
+
+        let history = Arc::new(History::load(Some(dir.0.clone()), 1, capacity(40)));
+        assert_eq!(history.status().available_from, Some(retained));
+        assert!(
+            history.status().compaction_pending,
+            "startup-filtered records are durable cleanup debt"
+        );
+        assert_eq!(*history.dropped_since_compact.lock().unwrap(), 2);
+        assert!((cutoff..=cutoff + 1).contains(&history.compaction_cutoff.load(Ordering::SeqCst)));
+
+        history.append(
+            now,
+            "# TYPE requests_total counter\nrequests_total 1\n",
+            capacity(40),
+        );
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while history.status().compaction_pending {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "startup retention debt did not compact on the next append"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        let compacted = fs::read_to_string(path).unwrap();
+        assert!(!compacted
+            .lines()
+            .any(|line| line.contains(&format!("\"t\":{old},"))));
+        assert!(compacted
+            .lines()
+            .any(|line| line.contains(&format!("\"t\":{baseline},"))));
+        assert!(compacted
+            .lines()
+            .any(|line| line.contains(&format!("\"t\":{retained},"))));
     }
 
     #[tokio::test]
@@ -1845,6 +1985,21 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         assert!(compacted
             .lines()
             .all(|line| { serde_json::from_str::<serde_json::Value>(line).is_ok() }));
+    }
+
+    #[test]
+    fn compaction_directory_sync_error_is_committed_but_pending() {
+        let outcome = directory_sync_outcome(Err(std::io::Error::other(
+            "injected directory sync failure",
+        )));
+        assert!(
+            matches!(outcome, CompactionOutcome::CommittedSyncPending(_)),
+            "a post-rename sync error is not a pre-commit failure"
+        );
+        assert!(matches!(
+            directory_sync_outcome(Ok(())),
+            CompactionOutcome::Durable
+        ));
     }
 
     #[test]

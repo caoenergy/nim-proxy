@@ -229,8 +229,12 @@ async fn api_dashboard(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(query): axum::extract::Query<DashboardQuery>,
 ) -> Response {
-    let stored = state.store.lock().unwrap().clone();
+    let stored = state.store.lock().unwrap();
+    let config_revision = state
+        .config_revision
+        .load(std::sync::atomic::Ordering::SeqCst);
     let now = unix_now();
+    let following_now = query.to.is_none();
     let requested_from = query.from.unwrap_or_else(|| {
         now.saturating_sub(stored.dashboard.default_window_days.saturating_mul(86_400))
     });
@@ -256,9 +260,11 @@ async fn api_dashboard(
     );
     axum::Json(serde_json::json!({
         "history_revision": rollup.history_revision,
+        "config_revision": config_revision,
         "window": {
             "requested_from": requested_from,
             "requested_to": requested_to,
+            "following_now": following_now,
             "effective_from": rollup.effective_from,
             "effective_to": rollup.effective_to,
             "available_from": rollup.available_from,
@@ -275,12 +281,14 @@ async fn api_dashboard(
 }
 
 async fn api_dashboard_now(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
-    let stored = state.store.lock().unwrap().clone();
+    let stored = state.store.lock().unwrap();
+    let config_revision = state
+        .config_revision
+        .load(std::sync::atomic::Ordering::SeqCst);
     let pool = state.pool();
     let now = unix_now();
-    let current = state.history.current(now, &state.prometheus.render());
+    let current = state.history.current(now, || state.prometheus.render());
     let history_revision = current.tail.base_history_revision;
-    let status = state.history.status();
     axum::Json(serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
         "sampled_at": now,
@@ -295,9 +303,9 @@ async fn api_dashboard_now(State(state): State<Arc<AppState>>) -> axum::Json<ser
         "retention_days": stored.history.days,
         "slo_target_percent": stored.dashboard.slo_target_percent,
         "history_revision": history_revision,
-        "config_revision": state.config_revision.load(std::sync::atomic::Ordering::SeqCst),
-        "available_from": status.available_from,
-        "available_to": status.available_to,
+        "config_revision": config_revision,
+        "available_from": current.available_from,
+        "available_to": current.available_to,
         "metrics": current.metrics,
         "tail": current.tail,
     }))
