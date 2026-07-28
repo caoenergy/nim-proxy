@@ -708,6 +708,11 @@ function rangeSamples(range, tail) {
   return out;
 }
 
+function hasSelectedRequestTraffic(selectedSamples) {
+  return selectedSamples.some(sample => sample.rows.some(
+    row => row.metric === 'nimproxy_requests_total' && +row.value > 0));
+}
+
 /* pool capacity from per-lane rpms when the server provides them (keys can
    have different limits); the uniform `rpm` field is the fallback */
 const poolCapacity = () => Math.max(0, cfg.capacity_rpm ?? cfg.lanes * cfg.rpm);
@@ -1734,10 +1739,8 @@ function renderCapacity(c) {
     const shortfall = knownCapacity.reduce((best, point) =>
       point.rpm - point.capacity > best.rpm - best.capacity ? point : best);
     const shortRpm = Math.max(0, Math.ceil(shortfall.rpm - shortfall.capacity));
-    const moreKeys = Math.ceil(shortRpm / 40);
     $('k-prov').innerHTML =
-      `<div style="display:flex;justify-content:space-between;align-items:center"><span class="hlabel">Historical provisioning</span>
-      ${shortRpm > 0 ? `<span style="font:600 10px var(--mono);color:#0A0A0A;background:var(--amber);border-radius:99px;padding:2px 8px">≈ ${moreKeys} MORE KEY${moreKeys === 1 ? '' : 'S'} @ 40</span>` : ''}</div>
+      `<div class="hlabel">Historical provisioning</div>
       <div style="display:flex;align-items:baseline;gap:8px;margin-top:12px">
         <span style="font-size:34px;font-weight:600;letter-spacing:-1px;color:${shortRpm > 0 ? 'var(--amber)' : 'var(--ink-1)'}">${fmt(shortRpm)}</span>
         <span style="font:400 12px var(--mono);color:var(--ink-3)">rpm short at peak</span></div>
@@ -2324,9 +2327,7 @@ function updateScope() {
   if (!rangeData) return;
   const tail = mode.kind === 'following' && !mode.paused &&
     nowData?.tail?.base_history_revision === rangeData.history_revision ? nowData.tail : null;
-  const hasTraffic = mode.paused ? frozenHasTraffic :
-    (rangeData.totals || []).some(r => +r.value > 0) ||
-      (tail?.totals || []).some(r => +r.value > 0);
+  const hasTraffic = mode.paused ? frozenHasTraffic : hasSelectedRequestTraffic(samples);
   if (!hasTraffic) {
     $('rangeinfo').textContent = 'No traffic in selected window';
     return;
@@ -2459,10 +2460,7 @@ $('live').addEventListener('click', async () => {
   mode.paused = !mode.paused;
   if (mode.paused && samples.length) {
     rangeRequestGeneration++;
-    const acceptedTail = nowData?.tail?.base_history_revision === rangeData?.history_revision
-      ? nowData.tail : null;
-    frozenHasTraffic = (rangeData?.totals || []).some(r => +r.value > 0) ||
-      (acceptedTail?.totals || []).some(r => +r.value > 0);
+    frozenHasTraffic = hasSelectedRequestTraffic(samples);
     mode.from = samples[0].t / 1000;
     mode.to = samples[samples.length - 1].t / 1000;
     updateScope();

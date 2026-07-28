@@ -1372,6 +1372,51 @@ async fn dashboard_range_state_guards_markup() {
 }
 
 #[tokio::test]
+async fn dashboard_pause_traffic_is_derived_from_rendered_samples() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let cookie = login(&proxy).await;
+
+    let html = client()
+        .get(proxy.url("/"))
+        .header("cookie", cookie)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("function hasSelectedRequestTraffic(selectedSamples)"));
+    assert!(html.contains("frozenHasTraffic = hasSelectedRequestTraffic(samples);"));
+    assert!(html.contains(
+        "const hasTraffic = mode.paused ? frozenHasTraffic : hasSelectedRequestTraffic(samples);"
+    ));
+    assert!(!html.contains("const acceptedTail = nowData?.tail"));
+}
+
+#[tokio::test]
+async fn dashboard_historical_provisioning_has_no_guessed_lane_size() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let cookie = login(&proxy).await;
+
+    let html = client()
+        .get(proxy.url("/"))
+        .header("cookie", cookie)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("rpm short at peak"));
+    assert!(html.contains("vs contemporaneous capacity"));
+    assert!(html.contains("legacy interval"));
+    assert!(!html.contains("const moreKeys"));
+    assert!(!html.contains("MORE KEY"));
+}
+
+#[tokio::test]
 async fn dashboard_now_refreshes_after_settings_change() {
     let mock = start_mock().await;
     let proxy = start_proxy(&mock.url, &[]).await;
