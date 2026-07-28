@@ -51,6 +51,10 @@ fn parse_exposition(exposition: &str) -> ParsedSnapshot {
     let mut series = 0;
 
     for line in exposition.lines() {
+        if line.len() > MAX_EXPOSITION_LINE_BYTES {
+            parsed.skipped_lines += 1;
+            continue;
+        }
         if line.is_empty() {
             continue;
         }
@@ -67,7 +71,11 @@ fn parse_exposition(exposition: &str) -> ParsedSnapshot {
                 };
                 if let (Some(name), Some(kind)) = (name, kind) {
                     if valid_metric_name(name) {
-                        types.insert(name.to_owned(), kind);
+                        if types.len() < MAX_EXPOSITION_SERIES || types.contains_key(name) {
+                            types.insert(name.to_owned(), kind);
+                        } else {
+                            parsed.skipped_lines += 1;
+                        }
                     }
                 }
             }
@@ -76,7 +84,7 @@ fn parse_exposition(exposition: &str) -> ParsedSnapshot {
         if line.starts_with('#') {
             continue;
         }
-        if line.len() > MAX_EXPOSITION_LINE_BYTES || series >= MAX_EXPOSITION_SERIES {
+        if series >= MAX_EXPOSITION_SERIES {
             parsed.skipped_lines += 1;
             continue;
         }
@@ -574,22 +582,31 @@ impl History {
     }
 
     pub fn status(&self) -> HistoryStatus {
-        let inner = self.inner.lock().unwrap();
+        let (available_from, available_to) = {
+            let inner = self.inner.lock().unwrap();
+            (inner.available_from, inner.available_to)
+        };
+        let compaction_pending = *self.dropped_since_compact.lock().unwrap() > 0;
+        let file_bytes = self
+            .file
+            .as_ref()
+            .and_then(|path| fs::metadata(path).ok())
+            .map_or(0, |metadata| metadata.len());
         HistoryStatus {
-            available_from: inner.available_from,
-            available_to: inner.available_to,
-            file_bytes: self
-                .file
-                .as_ref()
-                .and_then(|path| fs::metadata(path).ok())
-                .map_or(0, |metadata| metadata.len()),
-            compaction_pending: *self.dropped_since_compact.lock().unwrap() > 0,
+            available_from,
+            available_to,
+            file_bytes,
+            compaction_pending,
         }
     }
 
     pub fn append(&self, t: u64, snapshot: &str, capacity: CapacitySnapshot) {
         let current = parse_exposition(snapshot);
         let mut inner = self.inner.lock().unwrap();
+        // Wall clocks can move backward, and a retained file can contain a
+        // future-dated point. Keep ingestion order without fabricating time:
+        // equal timestamps preserve binary-search ordering and exact deltas.
+        let t = inner.available_to.map_or(t, |latest| latest.max(t));
         let explicit_reset = inner.last_parsed.is_some()
             && inner.last_sample_boot.as_deref() != Some(self.boot_id.as_str());
         let normalized = normalize(inner.last_parsed.as_ref(), &current, explicit_reset);
@@ -935,6 +952,7 @@ fn serialize_raw_point(point: &RawPoint) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write as _;
 
     fn capacity(rpm: usize) -> CapacitySnapshot {
         CapacitySnapshot {
@@ -1013,6 +1031,56 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         assert_eq!(*value, 9.0);
         assert!(parsed.gauges.is_empty());
         assert_eq!(parsed.skipped_lines, 0);
+    }
+
+    #[test]
+    fn parse_counts_oversized_comments_as_skipped() {
+        let exposition = format!(
+            "#{}\nrequests_total 1\n",
+            "x".repeat(MAX_EXPOSITION_LINE_BYTES)
+        );
+        let parsed = parse_exposition(&exposition);
+        assert_eq!(parsed.skipped_lines, 1);
+        assert_eq!(metric(&parsed.counters, "requests_total"), 1.0);
+    }
+
+    #[test]
+    fn parse_rejects_oversized_type_metadata_before_classification() {
+        let exposition = format!(
+            "# TYPE forced_total{}gauge\nforced_total 1\n",
+            " ".repeat(MAX_EXPOSITION_LINE_BYTES)
+        );
+        let parsed = parse_exposition(&exposition);
+        assert_eq!(parsed.skipped_lines, 1);
+        assert_eq!(metric(&parsed.counters, "forced_total"), 1.0);
+        assert!(parsed.gauges.is_empty());
+    }
+
+    #[test]
+    fn parse_caps_the_number_of_retained_series() {
+        let mut exposition = String::new();
+        for value in 0..=MAX_EXPOSITION_SERIES {
+            writeln!(&mut exposition, "capped_total {value}").unwrap();
+        }
+        let parsed = parse_exposition(&exposition);
+        assert_eq!(parsed.skipped_lines, 1);
+        assert_eq!(
+            metric(&parsed.counters, "capped_total"),
+            (MAX_EXPOSITION_SERIES - 1) as f64
+        );
+    }
+
+    #[test]
+    fn parse_caps_retained_type_metadata() {
+        let mut exposition = String::new();
+        for value in 0..MAX_EXPOSITION_SERIES {
+            writeln!(&mut exposition, "# TYPE metric_{value} gauge").unwrap();
+        }
+        exposition.push_str("# TYPE overflow_total gauge\noverflow_total 1\n");
+        let parsed = parse_exposition(&exposition);
+        assert_eq!(parsed.skipped_lines, 1);
+        assert_eq!(metric(&parsed.counters, "overflow_total"), 1.0);
+        assert!(parsed.gauges.is_empty());
     }
 
     fn metric(values: &BTreeMap<MetricKey, f64>, name: &str) -> f64 {
@@ -1095,6 +1163,35 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
     }
 
     #[test]
+    fn append_clamps_clock_rollback_to_preserve_sorted_index() {
+        let history = memory_history(0);
+        history.append(
+            300,
+            "# TYPE requests_total counter\nrequests_total 10\n",
+            capacity(40),
+        );
+        history.append(
+            200,
+            "# TYPE requests_total counter\nrequests_total 15\n",
+            capacity(40),
+        );
+
+        let timestamps = history
+            .inner
+            .lock()
+            .unwrap()
+            .points
+            .iter()
+            .map(|point| point.t)
+            .collect::<Vec<_>>();
+        assert_eq!(timestamps, [300, 300]);
+        assert!(timestamps.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert_eq!(history.status().available_to, Some(300));
+        let rollup = history.rollup(299, 300, 20);
+        assert_eq!(value(&rollup.totals, "requests_total"), 15.0);
+    }
+
+    #[test]
     fn range_downsamples_to_max() {
         let h = memory_history(0);
         for i in 0..1000u64 {
@@ -1159,6 +1256,34 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         );
         assert_eq!(inner.points[2].capacity.as_ref().unwrap().rpms, [40, 30]);
         assert_eq!(inner.diagnostics.legacy_resets_inferred, 0);
+    }
+
+    #[test]
+    fn load_infers_reset_when_legacy_counters_empty_then_reappear() {
+        let dir = TestDir::new();
+        let path = dir.0.join("history.jsonl");
+        fs::write(
+            &path,
+            "{\"t\":10,\"m\":\"# TYPE requests_total counter\\nrequests_total 5\\n\"}\n\
+             {\"t\":20,\"m\":\"# TYPE active gauge\\nactive 1\\n\"}\n\
+             {\"t\":30,\"m\":\"# TYPE requests_total counter\\nrequests_total 2\\n\"}\n",
+        )
+        .unwrap();
+
+        let history = History::load(Some(dir.0.clone()), 0, capacity(40));
+        let inner = history.inner.lock().unwrap();
+        let total = inner
+            .points
+            .iter()
+            .filter_map(|point| {
+                point
+                    .deltas
+                    .iter()
+                    .find_map(|(key, value)| (key.metric == "requests_total").then_some(*value))
+            })
+            .sum::<f64>();
+        assert_eq!(total, 7.0);
+        assert_eq!(inner.diagnostics.legacy_resets_inferred, 1);
     }
 
     fn history_with_points() -> History {
