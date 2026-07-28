@@ -551,7 +551,7 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
     </div>
     <div class="grid2">
       <div class="card">
-        <h2>Lane utilization <span class="note">trailing 60s</span></h2>
+        <h2>Lane utilization <span class="tag">Now</span></h2>
         <div id="meters"></div>
       </div>
       <div class="card">
@@ -561,7 +561,7 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
       </div>
     </div>
     <div class="card">
-      <h2>Per lane <span class="note">click a column to sort</span></h2>
+      <h2>Per lane <span class="tag">Now</span><span class="note">click a column to sort</span></h2>
       <div id="table-lanes"></div>
     </div>
   </section>
@@ -654,7 +654,7 @@ let cfg = {
   started: Date.now()/1000, version: '', auth: false, default_window_days: 30,
   retention_days: 30, slo_target_percent: 99.9,
 };
-let previousNow = null, nowRpm = 0;
+let previousNow = null, nowRpm = 0, nowLaneRates = new Map();
 
 /* Adapt normalized counter deltas back into the cumulative rows all existing
    renderers consume. Gauges are replaced, never accumulated; the final
@@ -708,7 +708,7 @@ function rangeSamples(range, tail) {
 
 /* pool capacity from per-lane rpms when the server provides them (keys can
    have different limits); the uniform `rpm` field is the fallback */
-const poolCapacity = () => Math.max(1, cfg.capacity_rpm ?? cfg.lanes * cfg.rpm);
+const poolCapacity = () => Math.max(0, cfg.capacity_rpm ?? cfg.lanes * cfg.rpm);
 const laneRpm = i => (cfg.rpms && cfg.rpms[i]) ?? cfg.rpm;
 
 function rate(cur, prev, curT, prevT) {
@@ -1190,12 +1190,22 @@ function render() {
 
   /* ----- shared proxy / capacity aggregates ----- */
   const reqPts = rateSeries(s => sum(s.rows, 'nimproxy_requests_total'));
+  const capacityPoints = (rangeData?.points || []).map(point => {
+    const duration = +point.duration_seconds || 0;
+    const requestDelta = sum((point.values || []).map(asRow), 'nimproxy_requests_total');
+    const rpm = duration > 0 ? requestDelta / duration * 60 : 0;
+    const historicalCapacity = point.capacity?.average_rpm;
+    return {
+      t: +point.to * 1000, duration, rpm,
+      capacity: isFinite(historicalCapacity) && historicalCapacity > 0 ? +historicalCapacity : null,
+    };
+  });
   const curRpm = nowRpm;
   const avgRpm = reqPts.length ? reqPts.reduce((a,p) => a+p.v, 0) / reqPts.length : 0;
   const peakRpm = reqPts.length ? Math.max(...reqPts.map(p => p.v)) : 0;
   const capacity = poolCapacity();
   const rpmNow = curRpm;
-  const capRatio = rpmNow / capacity;
+  const capRatio = capacity > 0 ? rpmNow / capacity : 0;
   // Green while there's headroom, amber approaching the cap, red once saturated.
   const capColor = capRatio >= 0.9 ? css('--red') : capRatio >= 0.7 ? css('--amber') : MED;
   const wreq = windowed(s => sum(s.rows, 'nimproxy_requests_total'));
@@ -1234,7 +1244,7 @@ function render() {
     okByModel, errByModel, ttftMS, ttftMC, tpsMS, tpsMC, errRate, errPct,
     tpotMS, tpotMC, finTotal, finLen, reasoningByModel, tpotAvg, truncPct, reasonPct, pct, modelSaved,
     savedAt,
-    reqPts, curRpm, avgRpm, peakRpm, capacity, rpmNow, capRatio, capColor, wreq, wok, okRatio, okColor,
+    reqPts, capacityPoints, curRpm, avgRpm, peakRpm, capacity, rpmNow, capRatio, capColor, wreq, wok, okRatio, okColor,
     cReq, cP, cC, clients, streamT, streamF, toolReqs, totStreamT, totStreamF, totGen, totToolReq, clientSaved,
     shed, unauth, logins, bench429, benchOther, qwS, qwN, upS, upN, statusG,
   };
@@ -1272,7 +1282,7 @@ function renderOverview(c) {
 
   $('o-rings').innerHTML = '<div class="ringwrap" id="o-ring-cap"></div><div class="ringwrap" id="o-ring-ok"></div>';
   ringGauge($('o-ring-cap'), capRatio, Math.round(capRatio * 100) + '%', capColor,
-    'Capacity used', `${fmt(rpmNow)} / ${fmt(capacity)} rpm · ${cfg.lanes} key${cfg.lanes === 1 ? '' : 's'}`);
+    'Capacity used · Now', `${fmt(rpmNow)} / ${fmt(capacity)} rpm · ${cfg.lanes} lane${cfg.lanes === 1 ? '' : 's'}`);
   const errShare = wreq ? (wreq - wok) / wreq * 100 : 0;
   ringGauge($('o-ring-ok'), okRatio, wreq ? Math.round(okRatio * 100) + '%' : '–', okColor,
     'Success rate', `errors ${errShare.toFixed(errShare && errShare < 10 ? 1 : 0)}% · ${fmt(bench429)} benched`);
@@ -1498,20 +1508,31 @@ function renderClients(c) {
 }
 
 /* ===== reliability (was Proxy) ===== */
-const SLO = 0.999;
 function renderReliability(c) {
   const { rows, windowLabel, reqPts, wreq, wok, okRatio, clients, cReq, cP, cC, clientSaved,
     shed, unauth, logins, bench429, benchOther, qwS, qwN, upS, upN, ttftS, ttftN, statusG,
     totStreamT, totStreamF, totGen, totToolReq, wsum } = c;
 
   /* hero: availability vs SLO + error budget */
-  const availTxt = wreq ? (okRatio * 100).toFixed(okRatio < 0.9995 ? 2 : 3).replace(/\.?0+$/, '') + '%' : '–';
-  const met = okRatio >= SLO;
-  const budget = wreq ? Math.min(100, (1 - okRatio) / (1 - SLO) * 100) : 0;
+  const success = [...statusG.entries()]
+    .filter(([status]) => /^2\d\d$/.test(status))
+    .reduce((n, [, value]) => n + value, 0);
+  const eligible = [...statusG.entries()]
+    .filter(([status]) => status !== 'disconnect' && !/^4\d\d$/.test(status))
+    .reduce((n, [, value]) => n + value, 0);
+  const slo = (nowData?.slo_target_percent ?? 99.9) / 100;
+  const availability = eligible ? success / eligible : NaN;
+  const availTxt = isFinite(availability)
+    ? (availability * 100).toFixed(availability < 0.9995 ? 2 : 3).replace(/\.?0+$/, '') + '%'
+    : '–';
+  const met = isFinite(availability) && availability >= slo;
+  const budget = !isFinite(availability) ? 0
+    : slo >= 1 ? (availability >= 1 ? 0 : 100)
+    : Math.min(100, (1 - availability) / (1 - slo) * 100);
   $('r-avail').innerHTML =
     `<div class="hlabel">Availability <span class="note">${windowLabel}</span></div>
     <div class="hbig" style="color:${met ? 'var(--green-lt)' : 'var(--red)'};margin-top:8px">${availTxt}</div>
-    <div style="font:400 11px var(--mono);color:var(--ink-3);margin-top:2px">SLO ${(SLO * 100).toFixed(1)}% · ${wreq ? (met ? 'met' : 'missed') : 'no traffic'}</div>
+    <div style="font:400 11px var(--mono);color:var(--ink-3);margin-top:2px">SLO ${(slo * 100).toFixed(1)}% · ${eligible ? (met ? 'met' : 'missed') : 'no eligible traffic'}</div>
     <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink-25);margin:16px 0 6px">error budget<span style="font:500 11px var(--mono);color:var(--ink-2)">${budget.toFixed(0)}% used</span></div>
     <div class="htrack"><span style="width:${budget.toFixed(0)}%;background:${budget >= 100 ? 'var(--red)' : 'var(--amber)'}"></span></div>`;
 
@@ -1675,38 +1696,54 @@ function renderReliability(c) {
 /* ===== capacity (was Keys) ===== */
 const LANE_COLORS = ['#76B900', '#4D6BFE', '#D9A521', '#16B8C0', '#615CED', '#EE6002'];
 function renderCapacity(c) {
-  const { last, rows, capacity, rpmNow, peakRpm, capColor, bench429, benchOther } = c;
+  const { capacity, rpmNow, capRatio, capColor, bench429, capacityPoints } = c;
 
-  /* hero: saturation bar with peak marker */
-  const satPct = Math.min(1, rpmNow / capacity), peakPct = Math.min(1, peakRpm / capacity);
+  /* hero: current saturation uses only the current `/now` rate and config */
+  const satPct = Math.min(1, capRatio);
   const headroom = Math.max(0, capacity - rpmNow);
   $('k-sat').innerHTML =
-    `<div style="display:flex;align-items:baseline;gap:10px"><span class="hlabel">Saturation</span>
-    <span class="note" style="font:400 10px var(--mono);color:var(--ink-3)">current load vs aggregate capacity</span>
+    `<div style="display:flex;align-items:baseline;gap:10px"><span class="hlabel">Saturation</span><span class="tag">Now</span>
+    <span class="note" style="font:400 10px var(--mono);color:var(--ink-3)">current load vs current aggregate capacity</span>
     <span style="margin-left:auto;font-size:30px;font-weight:600;letter-spacing:-1px;color:${capColor}">${Math.round(satPct * 100)}%</span></div>
     <div style="position:relative;height:20px;background:var(--track);border-radius:6px;overflow:hidden;margin:16px 0 8px">
       <div style="position:absolute;inset:0;width:${(satPct * 100).toFixed(1)}%;background:linear-gradient(90deg,var(--green-dk),var(--green));border-radius:6px"></div>
-      ${peakRpm > 0 ? `<div style="position:absolute;top:0;bottom:0;left:${(peakPct * 100).toFixed(1)}%;width:2px;background:var(--ink-1)" title="peak ${fmt(peakRpm)} rpm"></div>` : ''}
     </div>
     <div style="display:flex;justify-content:space-between;font:400 11px var(--mono);color:var(--ink-3)">
       <span style="color:var(--ink-2)">${fmt(rpmNow)} / ${fmt(capacity)} rpm</span>
-      <span>▏peak ${fmt(peakRpm)}</span>
+      <span>${cfg.lanes} enabled lane${cfg.lanes === 1 ? '' : 's'}</span>
       <span style="color:var(--green-lt)">${fmt(headroom)} rpm free</span>
     </div>`;
 
-  /* hero: provisioning — rpm shortfall at the observed peak, translated to
-     keys at NIM's default 40 rpm */
-  const shortRpm = Math.max(0, Math.ceil(peakRpm - capacity));
-  const moreKeys = Math.ceil(shortRpm / 40);
-  $('k-prov').innerHTML =
-    `<div style="display:flex;justify-content:space-between;align-items:center"><span class="hlabel">Provisioning</span>
-    ${shortRpm > 0 ? `<span style="font:600 10px var(--mono);color:#0A0A0A;background:var(--amber);border-radius:99px;padding:2px 8px">≈ ${moreKeys} MORE KEY${moreKeys === 1 ? '' : 'S'} @ 40</span>` : ''}</div>
-    <div style="display:flex;align-items:baseline;gap:8px;margin-top:12px">
-      <span style="font-size:34px;font-weight:600;letter-spacing:-1px;color:${shortRpm > 0 ? 'var(--amber)' : 'var(--ink-1)'}">${fmt(shortRpm)}</span>
-      <span style="font:400 12px var(--mono);color:var(--ink-3)">rpm short at peak</span></div>
-    <div style="font:400 11.5px var(--mono);color:var(--ink-25);margin-top:6px">${shortRpm > 0
-      ? `peak ${fmt(peakRpm)} vs ${fmt(capacity)} rpm capacity — <span style="color:var(--amber)">≈ ${moreKeys} more key${moreKeys === 1 ? '' : 's'} @ 40</span>`
-      : `<span style="color:var(--green-lt)">${cfg.lanes} key${cfg.lanes === 1 ? '' : 's'} · ${fmt(capacity)} rpm covers the peak</span>`}</div>`;
+  /* Historical comparisons use each bucket's contemporaneous capacity.
+     Legacy buckets without metadata never inherit today's configuration. */
+  const knownCapacity = capacityPoints.filter(point => point.capacity != null);
+  const unknownCapacity = capacityPoints.length - knownCapacity.length;
+  if (!knownCapacity.length) {
+    $('k-prov').innerHTML =
+      `<div class="hlabel">Historical provisioning</div>
+      <div class="empty">Capacity unavailable for selected legacy intervals</div>`;
+  } else {
+    const weightedSeconds = knownCapacity.reduce((n, point) => n + point.duration, 0);
+    const averageUtil = weightedSeconds
+      ? knownCapacity.reduce((n, point) => n + point.rpm / point.capacity * point.duration, 0) / weightedSeconds
+      : NaN;
+    const peak = knownCapacity.reduce((best, point) =>
+      point.rpm / point.capacity > best.rpm / best.capacity ? point : best);
+    const shortfall = knownCapacity.reduce((best, point) =>
+      point.rpm - point.capacity > best.rpm - best.capacity ? point : best);
+    const shortRpm = Math.max(0, Math.ceil(shortfall.rpm - shortfall.capacity));
+    const moreKeys = Math.ceil(shortRpm / 40);
+    $('k-prov').innerHTML =
+      `<div style="display:flex;justify-content:space-between;align-items:center"><span class="hlabel">Historical provisioning</span>
+      ${shortRpm > 0 ? `<span style="font:600 10px var(--mono);color:#0A0A0A;background:var(--amber);border-radius:99px;padding:2px 8px">≈ ${moreKeys} MORE KEY${moreKeys === 1 ? '' : 'S'} @ 40</span>` : ''}</div>
+      <div style="display:flex;align-items:baseline;gap:8px;margin-top:12px">
+        <span style="font-size:34px;font-weight:600;letter-spacing:-1px;color:${shortRpm > 0 ? 'var(--amber)' : 'var(--ink-1)'}">${fmt(shortRpm)}</span>
+        <span style="font:400 12px var(--mono);color:var(--ink-3)">rpm short at peak</span></div>
+      <div style="font:400 11.5px var(--mono);color:var(--ink-25);margin-top:6px">
+        avg ${isFinite(averageUtil) ? Math.round(averageUtil * 100) + '%' : '–'} · peak ${Math.round(peak.rpm / peak.capacity * 100)}%
+        vs contemporaneous capacity${unknownCapacity ? ` · ${unknownCapacity} legacy interval${unknownCapacity === 1 ? '' : 's'} unavailable` : ''}
+      </div>`;
+  }
 
   /* hero: rate-limit pressure */
   const sticky = windowed(s => sum(s.rows, 'nimproxy_affinity_total', l => l.result === 'sticky'));
@@ -1717,23 +1754,22 @@ function renderCapacity(c) {
     `<div class="hlabel" style="margin-bottom:12px">Rate-limit pressure</div>` +
     prow('429s this window', fmt(bench429), bench429 > 0 ? 'var(--amber)' : 'var(--ink-3)') +
     prow('Conversation stickiness', stickyTxt) +
-    prow('Key lanes', cfg.lanes);
+    prow('Lane slots · Now', cfg.lanes);
 
-  /* lane utilization, trailing 60s */
-  const cutoff = last.t - 60000;
-  const base60 = samples.find(s => s.t >= cutoff) || samples[0];
-  const laneBase = groups(base60.rows, 'nimproxy_lane_requests_total', 'lane');
-  const laneCum = groups(rows, 'nimproxy_lane_requests_total', 'lane');
-  const laneNow = wgroups('nimproxy_lane_requests_total', 'lane');
+  /* Current per-slot utilization comes from adjacent `/now` polls. Selected
+     window counts remain selected-window values; neither domain is subtracted
+     from the other. Slot numbers are explicitly not durable key identities. */
+  const laneWindow = wgroups('nimproxy_lane_requests_total', 'lane');
   const lane429 = wgroups('nimproxy_lane_benched_total', 'lane', l => l.status === '429');
   const laneOther = wgroups('nimproxy_lane_benched_total', 'lane', l => l.status !== '429');
-  const totalLane = [...laneNow.values()].reduce((a, b) => a + b, 0) || 1;
+  const totalLane = [...laneWindow.values()].reduce((a, b) => a + b, 0) || 1;
   const laneColor = i => LANE_COLORS[i % LANE_COLORS.length];
   const lanes = Array.from({ length: cfg.lanes }, (_, i) => {
     const k = String(i);
-    const inWindow = Math.max(0, (laneCum.get(k) || 0) - (laneBase.get(k) || 0));
-    return { i, name: `Key ${i + 1}`, cur: laneNow.get(k) || 0, inWindow,
-      util: Math.min(1, inWindow / laneRpm(i)), b429: lane429.get(k) || 0, bOther: laneOther.get(k) || 0 };
+    const currentRpm = nowLaneRates.get(k) || 0;
+    return { i, name: `Lane slot ${i + 1}`, cur: laneWindow.get(k) || 0, currentRpm,
+      util: Math.min(1, currentRpm / Math.max(1, laneRpm(i))),
+      b429: lane429.get(k) || 0, bOther: laneOther.get(k) || 0 };
   });
   if (!lanes.length) $('meters').innerHTML = '<div class="empty">No lanes configured</div>';
   else barList($('meters'), lanes.map(l => ({
@@ -1749,11 +1785,11 @@ function renderCapacity(c) {
 
   sortTable($('table-lanes'), 'lanes', [
     { label: 'Lane', align: 'l', str: true }, { label: 'Requests' }, { label: 'Share' },
-    { label: 'Last 60s' }, { label: '429s' }, { label: 'Other benches' },
+    { label: 'Now rpm' }, { label: '429s' }, { label: 'Other benches' },
   ], lanes.map(l => ({
-    vals: [l.name, l.cur, l.cur / totalLane * 100, l.inWindow, l.b429, l.bOther],
+    vals: [l.name, l.cur, l.cur / totalLane * 100, l.currentRpm, l.b429, l.bOther],
     cells: [`<i class="sw" style="background:${laneColor(l.i)}"></i>${esc(l.name)}`,
-      fmt(l.cur), (l.cur / totalLane * 100).toFixed(0) + '%', `${fmt(l.inWindow)} / ${laneRpm(l.i)}`,
+      fmt(l.cur), (l.cur / totalLane * 100).toFixed(0) + '%', `${fmt(l.currentRpm)} / ${laneRpm(l.i)}`,
       `<span class="${l.b429 ? 'warnc' : 'dim'}">${fmt(l.b429)}</span>`,
       `<span class="${l.bOther ? 'critc' : 'dim'}">${fmt(l.bOther)}</span>`],
   })), { defaultIdx: 1, maxH: 360, minW: 560, empty: 'No lanes configured' });
@@ -1964,6 +2000,10 @@ function renderServer() {
   const num = (id, label, val, unit, step) => `<div><div class="slabel">${label}</div>
     <span class="rpmwrap" style="display:flex"><input id="${id}" class="sin" style="width:100%;text-align:right" type="number" min="0"${step ? ` step="${step}"` : ''} value="${+val}">${unit ? `<span class="unitl">${unit}</span>` : ''}</span></div>`;
   const ovr = Object.entries(sv.governor.overrides || {});
+  const retainedFrom = sv.history.available_from == null
+    ? 'No retained snapshots yet'
+    : new Date(+sv.history.available_from * 1000).toLocaleString();
+  const historyBytes = new Intl.NumberFormat().format(+sv.history.file_bytes || 0);
   $('setbody').innerHTML = `
     <div class="card mb">
       <h2>API access mode
@@ -2008,14 +2048,30 @@ function renderServer() {
       </div>
       <div class="serr" id="gov-err"></div>
     </div>
-    <div class="card">
-      <h2>Pricing &amp; history <button class="pbtn" id="save-pricing" style="margin-left:auto">Save</button></h2>
+    <div class="card mb">
+      <h2>Pricing <button class="pbtn" id="save-pricing" style="margin-left:auto">Save</button></h2>
       <div class="limgrid" style="margin-top:6px">
         ${num('sv-pin', 'Reference $ / 1M in', sv.pricing.ref_price_in, '', '0.01')}
         ${num('sv-pout', 'Reference $ / 1M out', sv.pricing.ref_price_out, '', '0.01')}
-        ${num('sv-days', 'History retention · 0 = forever', sv.history.days, 'days')}
       </div>
       <div class="serr" id="pricing-err"></div>
+    </div>
+    <div class="card">
+      <h2>History &amp; dashboard <button class="pbtn" id="save-history" style="margin-left:auto">Save</button></h2>
+      <div class="limgrid" style="margin-top:6px">
+        <div><div class="slabel">Default dashboard window</div>
+          <span class="rpmwrap" style="display:flex"><input id="sv-default-days" class="sin" style="width:100%;text-align:right" type="number" min="1" step="1" value="${+sv.dashboard.default_window_days}"><span class="unitl">days</span></span></div>
+        <div><div class="slabel">History retention · 0 = unlimited</div>
+          <span class="rpmwrap" style="display:flex"><input id="sv-retention-days" class="sin" style="width:100%;text-align:right" type="number" min="0" step="1" value="${+sv.history.days}"><span class="unitl">days</span></span></div>
+        <div><div class="slabel">Availability SLO</div>
+          <span class="rpmwrap" style="display:flex"><input id="sv-slo" class="sin" style="width:100%;text-align:right" type="number" min="0.1" max="100" step="0.1" value="${+sv.dashboard.slo_target_percent}"><span class="unitl">%</span></span></div>
+      </div>
+      <div class="congrid" style="margin-top:16px">
+        <div class="conbox"><div class="slabel">Earliest retained snapshot</div><div class="kmeta" style="display:block">${esc(retainedFrom)}</div></div>
+        <div class="conbox"><div class="slabel">History file</div><div class="kmeta" style="display:block">${esc(historyBytes)} bytes</div></div>
+      </div>
+      ${sv.history.compaction_pending ? '<p class="shint" style="color:var(--amber-lt)">compaction pending</p>' : ''}
+      <div class="serr" id="history-err"></div>
     </div>`;
   for (const b of $('setbody').querySelectorAll('[data-mode]')) b.addEventListener('click', async () => {
     if (b.dataset.mode === SET.mode) return;
@@ -2058,18 +2114,33 @@ function renderServer() {
     catch (e) { note('gov-err', e.message); }
   });
   $('save-pricing').addEventListener('click', async () => {
-    const pin = +$('sv-pin').value, pout = +$('sv-pout').value, days = Math.round(+$('sv-days').value);
-    if (!isFinite(pin) || !isFinite(pout) || !(days >= 0)) return note('pricing-err', 'Prices and retention need numeric values.');
+    const pin = +$('sv-pin').value, pout = +$('sv-pout').value;
+    if (!isFinite(pin) || !isFinite(pout)) return note('pricing-err', 'Prices need numeric values.');
     try {
       await sPost('/api/settings/pricing', { ref_price_in: pin, ref_price_out: pout });
-      await sPost('/api/settings/history', {
-        days,
-        default_window_days: sv.dashboard.default_window_days,
-        slo_target_percent: sv.dashboard.slo_target_percent,
-      });
       await loadSettings();
       note('pricing-err', 'Saved.', true);
     } catch (e) { note('pricing-err', e.message); }
+  });
+  $('save-history').addEventListener('click', async () => {
+    const defaultDays = Math.round(+$('sv-default-days').value);
+    const retention = Math.round(+$('sv-retention-days').value);
+    const slo = +$('sv-slo').value;
+    if (!isFinite(defaultDays) || defaultDays < 1)
+      return note('history-err', 'Default dashboard window must be at least 1 day.');
+    if (!isFinite(retention) || retention < 0)
+      return note('history-err', 'History retention must be 0 or more days.');
+    if (!isFinite(slo) || slo <= 0 || slo > 100)
+      return note('history-err', 'SLO target must be greater than 0 and at most 100.');
+    try {
+      await sPost('/api/settings/history', {
+        days: retention,
+        default_window_days: defaultDays,
+        slo_target_percent: slo,
+      });
+      await loadSettings();
+      note('history-err', 'Saved.', true);
+    } catch (e) { note('history-err', e.message); }
   });
 }
 
@@ -2247,8 +2318,8 @@ function updateScope() {
     $('rangeinfo').textContent = 'No traffic in selected window';
     return;
   }
-  const from = rangeData.window.effective_from ?? mode.from;
-  const to = tail?.to ?? rangeData.window.effective_to ?? mode.to;
+  const from = mode.paused ? mode.from : rangeData.window.effective_from ?? mode.from;
+  const to = mode.paused ? mode.to : tail?.to ?? rangeData.window.effective_to ?? mode.to;
   if (mode.kind === 'following' && !mode.paused) {
     $('rangeinfo').textContent = `● Following now    ${presetLabel()}    ${scopeDate(from)} – ${scopeDate(to)}`;
   } else {
@@ -2297,10 +2368,20 @@ async function pollNow() {
     const historyChanged = rangeData && next.history_revision !== rangeData.history_revision;
     const configChanged = nowData && next.config_revision !== nowData.config_revision;
 
-    if (previousNow)
+    if (previousNow) {
       nowRpm = rate(sum(nextRows, 'nimproxy_requests_total'),
         sum(previousNow.rows, 'nimproxy_requests_total'),
         next.sampled_at * 1000, previousNow.t);
+      if (configChanged) {
+        nowLaneRates = new Map();
+      } else {
+        const currentLanes = groups(nextRows, 'nimproxy_lane_requests_total', 'lane');
+        const previousLanes = groups(previousNow.rows, 'nimproxy_lane_requests_total', 'lane');
+        nowLaneRates = new Map([...new Set([...currentLanes.keys(), ...previousLanes.keys()])].map(lane =>
+          [lane, rate(currentLanes.get(lane) || 0, previousLanes.get(lane) || 0,
+            next.sampled_at * 1000, previousNow.t)]));
+      }
+    }
     previousNow = { t: next.sampled_at * 1000, rows: nextRows };
     nowData = next;
     nowRows = nextRows;
@@ -2317,6 +2398,8 @@ async function pollNow() {
         mode.to = bounds.to;
         rebuildSamples();
       }
+    } else if (mode.kind === 'fixed' && historyChanged) {
+      await refreshSelectedRange();
     }
     render();
     syncFollowControl();

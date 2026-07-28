@@ -1322,6 +1322,78 @@ async fn dashboard_and_config_are_served_to_authenticated_users() {
     }
 }
 
+#[tokio::test]
+async fn dashboard_history_settings_markup() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let cookie = login(&proxy).await;
+
+    let html = client()
+        .get(proxy.url("/"))
+        .header("cookie", cookie)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("History &amp; dashboard"));
+    assert!(html.contains("sv-default-days"));
+    assert!(html.contains("sv-retention-days"));
+    assert!(html.contains("sv-slo"));
+    assert!(html.contains("/api/settings/history"));
+    assert!(!html.contains("Pricing &amp; history"));
+    assert!(!html.contains("const SLO = 0.999"));
+}
+
+#[tokio::test]
+async fn dashboard_now_refreshes_after_settings_change() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let cookie = login(&proxy).await;
+
+    let before: serde_json::Value = client()
+        .get(proxy.url("/api/dashboard/now"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let fingerprint = api_config(&proxy, &cookie).await["nim_keys"][0]["fingerprint"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (status, body) = post_json(
+        &proxy,
+        &cookie,
+        "/api/settings/nim-keys",
+        serde_json::json!({"set": {"fingerprint": fingerprint, "rpm": 41}}),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+
+    let after: serde_json::Value = client()
+        .get(proxy.url("/api/dashboard/now"))
+        .header("cookie", cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        after["config_revision"].as_u64().unwrap()
+            > before["config_revision"].as_u64().unwrap()
+    );
+    assert_ne!(after["capacity_rpm"], before["capacity_rpm"]);
+    assert_eq!(
+        after["history_revision"], before["history_revision"],
+        "current config changes do not rewrite retained history"
+    );
+}
+
 // ---------- boot posture & the setup wizard ----------
 
 /// With no store, the proxy boots healthy but claimably closed: /v1 answers
