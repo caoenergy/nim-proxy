@@ -174,6 +174,11 @@ App-level configuration lives in the dashboard (Settings) and persists to `DATA_
 | `TRUST_PROXY` | `false` | Trust `X-Forwarded-Proto` and mark the session cookie `Secure` (set behind a TLS-terminating reverse proxy) |
 | `RUST_LOG` | `nim_proxy=info` | Log filter |
 
+Docker Compose also reads `PUBLISH_HOST` from `.env` for the host-side port
+publish. It defaults to `127.0.0.1`; set `PUBLISH_HOST=0.0.0.0` only when the
+deployment is ready for LAN/public reachability. This is a Compose setting,
+not an environment variable consumed by nim-proxy.
+
 Everything else is a Settings control: NIM keys (per-key rpm, enable/disable, ownership), the upstream base URL, client API keys and the open/keyed API mode, limits (`max_wait`, `heartbeat`, `stream_idle`, `request_timeout`, `models_ttl`, `max_inflight`, `strict_passthrough`), reference pricing, history retention, the model-pressure governor, and users & roles.
 
 ## Security & deployment
@@ -197,7 +202,9 @@ Login is username + password → a signed, HttpOnly, SameSite=Strict session coo
 - **`keyed`** (default) — clients send `Authorization: Bearer <npk_…>`. Each user mints their own client keys; a key's 128-bit secret is shown **exactly once** (only its SHA-256 digest + last-4 are stored). Keyed with zero keys rejects everything (fail closed). Unknown keys get an OpenAI-style 401; comparison is constant-time.
 - **`open`** — `/v1` is unauthenticated. Only for loopback or a fully private network. This toggle affects **only `/v1`** — the dashboard is never open.
 
-The compose file publishes `127.0.0.1:8000:8000` by default so a bare bring-up can't leak.
+The compose file publishes `127.0.0.1:8000:8000` by default so a bare
+bring-up can't leak. Set `PUBLISH_HOST=0.0.0.0` in `.env` when intentional
+LAN/public exposure is protected appropriately.
 
 ### Scrapers
 
