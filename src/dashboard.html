@@ -655,6 +655,8 @@ let cfg = {
   retention_days: 30, slo_target_percent: 99.9,
 };
 let previousNow = null, nowRpm = 0, nowLaneRates = new Map();
+let rangeRequestGeneration = 0;
+let frozenHasTraffic = false;
 
 /* Adapt normalized counter deltas back into the cumulative rows all existing
    renderers consume. Gauges are replaced, never accumulated; the final
@@ -2264,10 +2266,20 @@ const RENDERERS = { overview: renderOverview, models: renderModels, clients: ren
 
 /* ---------- data sources ---------- */
 async function fetchRange(from, to) {
+  const generation = ++rangeRequestGeneration;
   const url = `/api/dashboard?from=${from}&to=${to}&points=288`;
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`range ${response.status}`);
-  rangeData = await response.json();
+  try {
+    const response = await fetch(url);
+    if (generation !== rangeRequestGeneration) return false;
+    if (!response.ok) throw new Error(`range ${response.status}`);
+    const next = await response.json();
+    if (generation !== rangeRequestGeneration) return false;
+    rangeData = next;
+    return true;
+  } catch (error) {
+    if (generation !== rangeRequestGeneration) return false;
+    throw error;
+  }
 }
 
 function applyNowConfig(next) {
@@ -2312,8 +2324,9 @@ function updateScope() {
   if (!rangeData) return;
   const tail = mode.kind === 'following' && !mode.paused &&
     nowData?.tail?.base_history_revision === rangeData.history_revision ? nowData.tail : null;
-  const hasTraffic = (rangeData.totals || []).some(r => +r.value > 0) ||
-    (tail?.totals || []).some(r => +r.value > 0);
+  const hasTraffic = mode.paused ? frozenHasTraffic :
+    (rangeData.totals || []).some(r => +r.value > 0) ||
+      (tail?.totals || []).some(r => +r.value > 0);
   if (!hasTraffic) {
     $('rangeinfo').textContent = 'No traffic in selected window';
     return;
@@ -2352,8 +2365,10 @@ async function refreshSelectedRange() {
     mode.from = bounds.from;
     mode.to = bounds.to;
   }
-  await fetchRange(mode.from, mode.to);
+  const loaded = await fetchRange(mode.from, mode.to);
+  if (!loaded) return false;
   rebuildSamples();
+  return true;
 }
 
 let pollingNow = false;
@@ -2398,8 +2413,6 @@ async function pollNow() {
         mode.to = bounds.to;
         rebuildSamples();
       }
-    } else if (mode.kind === 'fixed' && historyChanged) {
-      await refreshSelectedRange();
     }
     render();
     syncFollowControl();
@@ -2419,10 +2432,10 @@ for (const b of document.querySelectorAll('#ranges button')) {
     $('custom').classList.toggle('show', r === 'custom');
     if (r !== 'custom') {
       mode = { kind: 'following', preset: r, paused: false, from: 0, to: 0 };
+      frozenHasTraffic = false;
       syncFollowControl();
       try {
-        await refreshSelectedRange();
-        render();
+        if (await refreshSelectedRange()) render();
       } catch {
         $('rangeinfo').textContent = 'failed to load selected window';
       }
@@ -2433,26 +2446,31 @@ $('applyRange').addEventListener('click', async () => {
   const f = new Date($('from').value).getTime()/1000, t = new Date($('to').value).getTime()/1000;
   if (!isFinite(f) || !isFinite(t) || t <= f) return;
   mode = { kind: 'fixed', preset: 'custom', paused: false, from: Math.floor(f), to: Math.floor(t) };
+  frozenHasTraffic = false;
   syncFollowControl();
   try {
-    await refreshSelectedRange();
-    render();
+    if (await refreshSelectedRange()) render();
   } catch {
     $('rangeinfo').textContent = 'failed to load selected window';
   }
 });
 $('live').addEventListener('click', async () => {
-  if (mode.kind !== 'following') return;
+  if (mode.kind !== 'following' || !rangeData || !samples.length) return;
   mode.paused = !mode.paused;
   if (mode.paused && samples.length) {
+    rangeRequestGeneration++;
+    const acceptedTail = nowData?.tail?.base_history_revision === rangeData?.history_revision
+      ? nowData.tail : null;
+    frozenHasTraffic = (rangeData?.totals || []).some(r => +r.value > 0) ||
+      (acceptedTail?.totals || []).some(r => +r.value > 0);
     mode.from = samples[0].t / 1000;
     mode.to = samples[samples.length - 1].t / 1000;
     updateScope();
     render();
   } else if (!mode.paused) {
+    frozenHasTraffic = false;
     try {
-      await refreshSelectedRange();
-      render();
+      if (await refreshSelectedRange()) render();
     } catch {
       $('rangeinfo').textContent = 'failed to resume selected window';
     }

@@ -1347,6 +1347,31 @@ async fn dashboard_history_settings_markup() {
 }
 
 #[tokio::test]
+async fn dashboard_range_state_guards_markup() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let cookie = login(&proxy).await;
+
+    let html = client()
+        .get(proxy.url("/"))
+        .header("cookie", cookie)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("let rangeRequestGeneration = 0"));
+    assert!(html.contains("const generation = ++rangeRequestGeneration"));
+    assert!(html.contains("generation !== rangeRequestGeneration"));
+    assert!(!html.contains("mode.kind === 'fixed' && historyChanged"));
+    assert!(html.contains("let frozenHasTraffic = false"));
+    assert!(
+        html.contains("if (mode.kind !== 'following' || !rangeData || !samples.length) return;")
+    );
+}
+
+#[tokio::test]
 async fn dashboard_now_refreshes_after_settings_change() {
     let mock = start_mock().await;
     let proxy = start_proxy(&mock.url, &[]).await;
