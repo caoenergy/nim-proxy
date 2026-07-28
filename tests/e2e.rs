@@ -1384,8 +1384,7 @@ async fn dashboard_now_refreshes_after_settings_change() {
         .await
         .unwrap();
     assert!(
-        after["config_revision"].as_u64().unwrap()
-            > before["config_revision"].as_u64().unwrap()
+        after["config_revision"].as_u64().unwrap() > before["config_revision"].as_u64().unwrap()
     );
     assert_ne!(after["capacity_rpm"], before["capacity_rpm"]);
     assert_eq!(
@@ -1695,12 +1694,7 @@ async fn operator_surface_always_requires_auth() {
     // Both dashboard data surfaces require credentials.
     for path in ["/api/dashboard", "/api/dashboard/now"] {
         assert_eq!(
-            client()
-                .get(proxy.url(path))
-                .send()
-                .await
-                .unwrap()
-                .status(),
+            client().get(proxy.url(path)).send().await.unwrap().status(),
             401,
             "{path} requires auth"
         );
