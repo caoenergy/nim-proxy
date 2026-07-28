@@ -377,11 +377,17 @@ pub async fn api_config(
         "client_keys": client_keys,
     });
     if admin_view {
+        let history = state.history.status();
         body["server"] = serde_json::json!({
             "base_url": sc.upstream.base_url,
             "limits": sc.limits,
             "pricing": sc.pricing,
-            "history": sc.history,
+            "history": {
+                "days": sc.history.days,
+                "available_from": history.available_from,
+                "file_bytes": history.file_bytes,
+                "compaction_pending": history.compaction_pending,
+            },
             "dashboard": sc.dashboard,
             "governor": sc.governor,
         });

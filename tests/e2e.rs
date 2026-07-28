@@ -1063,6 +1063,115 @@ async fn history_records_snapshots_and_survives_restart() {
 }
 
 #[tokio::test]
+async fn dashboard_range_contract_defaults_validates_and_requires_auth() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[("HISTORY_SAMPLE_SECS", "1")]).await;
+    let cookie = login(&proxy).await;
+
+    let response = client()
+        .post(proxy.url("/v1/chat/completions"))
+        .json(&chat_body("dashboard range", false))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+
+    let response = client()
+        .get(proxy.url("/api/dashboard?from=1&to=4102444800&points=24"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert!(body["history_revision"].as_u64().is_some());
+    assert_eq!(body["window"]["requested_from"], 1);
+    assert_eq!(body["window"]["requested_to"], 4_102_444_800u64);
+    assert!(body["window"]["available_from"].as_u64().is_some());
+    assert!(body["totals"].as_array().is_some());
+    assert!(body["latest"].as_array().is_some());
+    assert!(body["points"].as_array().is_some());
+
+    let response = client()
+        .get(proxy.url("/api/dashboard?from=99&to=99"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    let error: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(error["error"]["code"], "invalid_time_window");
+
+    let response = client()
+        .get(proxy.url("/api/dashboard"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let defaulted: serde_json::Value = response.json().await.unwrap();
+    let from = defaulted["window"]["requested_from"].as_u64().unwrap();
+    let to = defaulted["window"]["requested_to"].as_u64().unwrap();
+    assert_eq!(to - from, 30 * 86_400);
+    assert_eq!(defaulted["window"]["default_window_days"], 30);
+    assert_eq!(defaulted["window"]["retention_days"], 30);
+
+    let response = client()
+        .get(proxy.url("/api/dashboard"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+
+    let settings = api_config(&proxy, &cookie).await;
+    assert!(settings["server"]["history"]["available_from"]
+        .as_u64()
+        .is_some());
+    assert!(settings["server"]["history"]["file_bytes"]
+        .as_u64()
+        .is_some());
+    assert_eq!(settings["server"]["history"]["compaction_pending"], false);
+}
+
+#[tokio::test]
+async fn dashboard_now_contract_uses_current_pool_config_and_registry() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let cookie = login(&proxy).await;
+
+    let response = client()
+        .get(proxy.url("/api/dashboard/now"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["lanes"], 3);
+    assert_eq!(body["rpms"], serde_json::json!([40, 40, 40]));
+    assert_eq!(body["capacity_rpm"], 120);
+    assert_eq!(body["default_window_days"], 30);
+    assert_eq!(body["retention_days"], 30);
+    assert_eq!(body["slo_target_percent"], 99.9);
+    assert!(body["history_revision"].as_u64().is_some());
+    assert_eq!(
+        body["history_revision"],
+        body["tail"]["base_history_revision"]
+    );
+    assert!(body["config_revision"].as_u64().is_some());
+    assert!(body["tail"]["totals"].as_array().is_some());
+    assert!(body["metrics"].as_array().is_some());
+
+    let response = client()
+        .get(proxy.url("/api/dashboard/now"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+}
+
+#[tokio::test]
 async fn sigterm_shuts_down_cleanly() {
     let mock = start_mock().await;
     let proxy = start_proxy(&mock.url, &[]).await;

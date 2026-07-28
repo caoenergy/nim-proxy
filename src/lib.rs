@@ -23,10 +23,12 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use axum::extract::{DefaultBodyLimit, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
 use axum::Router;
 use bytes::Bytes;
-use metrics_exporter_prometheus::{Matcher, PrometheusBuilder};
+use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use tokio::sync::Mutex;
 
 use auth::Admin;
@@ -104,6 +106,8 @@ pub struct AppState {
     /// Per-model worker-concurrency gate (runtime state, settings in Config).
     pub governor: Arc<governor::Governor>,
     pub history: Arc<history::History>,
+    /// Shared metrics registry rendered by both `/metrics` and dashboard-now.
+    pub prometheus: PrometheusHandle,
     /// Monotonic settings generation for lightweight dashboard refreshes.
     pub config_revision: AtomicU64,
     /// Unix time this process started (dashboard uptime).
@@ -212,6 +216,95 @@ async fn api_history(
             .map(|(t, m)| serde_json::json!({"t": t, "m": m}))
             .collect(),
     )
+}
+
+#[derive(serde::Deserialize)]
+struct DashboardQuery {
+    from: Option<u64>,
+    to: Option<u64>,
+    points: Option<usize>,
+}
+
+async fn api_dashboard(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(query): axum::extract::Query<DashboardQuery>,
+) -> Response {
+    let stored = state.store.lock().unwrap().clone();
+    let now = unix_now();
+    let requested_from = query.from.unwrap_or_else(|| {
+        now.saturating_sub(stored.dashboard.default_window_days.saturating_mul(86_400))
+    });
+    let requested_to = query.to.unwrap_or(now);
+    if requested_from >= requested_to {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({
+                "error": {
+                    "message": "from must be less than to",
+                    "type": "proxy_error",
+                    "code": "invalid_time_window",
+                }
+            })),
+        )
+            .into_response();
+    }
+
+    let rollup = state.history.rollup(
+        requested_from,
+        requested_to,
+        query.points.unwrap_or(288).clamp(2, 1000),
+    );
+    axum::Json(serde_json::json!({
+        "history_revision": rollup.history_revision,
+        "window": {
+            "requested_from": requested_from,
+            "requested_to": requested_to,
+            "effective_from": rollup.effective_from,
+            "effective_to": rollup.effective_to,
+            "available_from": rollup.available_from,
+            "available_to": rollup.available_to,
+            "default_window_days": stored.dashboard.default_window_days,
+            "retention_days": stored.history.days,
+        },
+        "totals": rollup.totals,
+        "latest": rollup.latest,
+        "points": rollup.points,
+        "diagnostics": rollup.diagnostics,
+    }))
+    .into_response()
+}
+
+async fn api_dashboard_now(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
+    let stored = state.store.lock().unwrap().clone();
+    let pool = state.pool();
+    let now = unix_now();
+    let current = state.history.current(now, &state.prometheus.render());
+    let history_revision = current.tail.base_history_revision;
+    let status = state.history.status();
+    axum::Json(serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "sampled_at": now,
+        "started": state.started,
+        "price_in": stored.pricing.ref_price_in,
+        "price_out": stored.pricing.ref_price_out,
+        "auth": stored.client_auth.mode == config::Mode::Keyed,
+        "lanes": pool.len(),
+        "rpms": pool.rpms(),
+        "capacity_rpm": pool.capacity_rpm(),
+        "default_window_days": stored.dashboard.default_window_days,
+        "retention_days": stored.history.days,
+        "slo_target_percent": stored.dashboard.slo_target_percent,
+        "history_revision": history_revision,
+        "config_revision": state.config_revision.load(std::sync::atomic::Ordering::SeqCst),
+        "available_from": status.available_from,
+        "available_to": status.available_to,
+        "metrics": current.metrics,
+        "tail": current.tail,
+    }))
+}
+
+async fn metrics_text(State(state): State<Arc<AppState>>) -> String {
+    state.prometheus.render()
 }
 
 /// Add hardening headers to every response. The CSP allows the dashboard's
@@ -431,6 +524,7 @@ pub async fn run() {
         inflight: AtomicUsize::new(0),
         governor: Arc::new(governor::Governor::default()),
         history: hist,
+        prometheus,
         config_revision: AtomicU64::new(1),
         started: unix_now(),
         store: std::sync::Mutex::new(stored),
@@ -454,6 +548,8 @@ pub async fn run() {
         .route("/dash", get(dash))
         .route("/dash/config.json", get(dash_config))
         .route("/api/history", get(api_history))
+        .route("/api/dashboard", get(api_dashboard))
+        .route("/api/dashboard/now", get(api_dashboard_now))
         .route("/api/config", get(settings::api_config))
         .route("/api/settings/nim-keys", post(settings::nim_keys))
         .route("/api/settings/clients", post(settings::clients))
@@ -465,7 +561,7 @@ pub async fn run() {
         .route("/api/settings/users", post(settings::users))
         .route("/api/settings/account", post(settings::account))
         .route("/api/settings/validate-key", post(settings::validate_key))
-        .route("/metrics", get(move || async move { prometheus.render() }))
+        .route("/metrics", get(metrics_text))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_session,
