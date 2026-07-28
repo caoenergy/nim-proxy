@@ -30,9 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Refreshed runtime and supply-chain dependencies: Tokio 1.53.0, bytes 1.12.1,
-  the pinned Rust builder image, eight pinned GitHub Actions, and
-  `sigstore/cosign-installer` 4.1.2.
+- Refreshed runtime and supply-chain dependencies: Tokio 1.53.1, bytes 1.12.1,
+  serde 1.0.229, serde_json 1.0.151, futures-util 0.3.33, tokio-stream 0.1.19,
+  the pinned Rust builder image and toolchain action, pinned GitHub Actions,
+  and `sigstore/cosign-installer` 4.1.2.
+- Migrated downloadable-asset signing to Cosign v3 Sigstore bundles, pinned
+  the Cosign CLI independently of its installer action, and added a real
+  sign/verify contract smoke test to CI.
 - Internal cleanup (no behavior change): dropped a redundant `async` on the
   streaming handler (all `.await`s live inside its spawned task, so the
   function itself never awaited — this avoids wrapping it in a needless
