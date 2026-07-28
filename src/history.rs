@@ -319,6 +319,48 @@ pub struct HistoryStatus {
     pub compaction_pending: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CapacityRollup {
+    pub average_rpm: f64,
+    pub latest_rpms: Vec<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RollupPoint {
+    pub from: u64,
+    pub to: u64,
+    pub duration_seconds: u64,
+    pub values: Vec<MetricValue>,
+    pub capacity: Option<CapacityRollup>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Rollup {
+    pub available_from: Option<u64>,
+    pub available_to: Option<u64>,
+    pub effective_from: Option<u64>,
+    pub effective_to: Option<u64>,
+    pub totals: Vec<MetricValue>,
+    pub latest: Vec<MetricValue>,
+    pub points: Vec<RollupPoint>,
+    pub diagnostics: HistoryDiagnostics,
+    pub history_revision: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Tail {
+    pub base_history_revision: u64,
+    pub from: Option<u64>,
+    pub to: u64,
+    pub totals: Vec<MetricValue>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CurrentMetrics {
+    pub metrics: Vec<MetricValue>,
+    pub tail: Tail,
+}
+
 #[derive(Clone)]
 struct RawPoint {
     t: u64,
@@ -597,6 +639,119 @@ impl History {
         self.persist_sample(line, &raw_points);
     }
 
+    pub fn rollup(&self, from: u64, to: u64, points: usize) -> Rollup {
+        let inner = self.inner.lock().unwrap();
+        let empty = || Rollup {
+            available_from: inner.available_from,
+            available_to: inner.available_to,
+            effective_from: None,
+            effective_to: None,
+            totals: Vec::new(),
+            latest: Vec::new(),
+            points: Vec::new(),
+            diagnostics: inner.diagnostics.clone(),
+            history_revision: inner.revision,
+        };
+        if from >= to {
+            return empty();
+        }
+
+        let first = inner.points.partition_point(|point| point.t <= from);
+        let end = inner.points.partition_point(|point| point.t <= to);
+        if first == end {
+            return empty();
+        }
+
+        let point_budget = points.clamp(2, 1000);
+        let mut totals = BTreeMap::new();
+        let mut latest = BTreeMap::new();
+        let mut buckets: Vec<BucketAccumulator> = (0..point_budget)
+            .map(|_| BucketAccumulator::default())
+            .collect();
+
+        for index in first..end {
+            let point = &inner.points[index];
+            add_metrics(&mut totals, &point.deltas);
+            latest.extend(point.gauges.clone());
+
+            let offset = point.t.saturating_sub(from) as u128;
+            let width = to.saturating_sub(from) as u128;
+            let bucket_index = ((offset * point_budget as u128) / width) as usize;
+            let bucket_index = bucket_index.min(point_budget - 1);
+            let bucket = &mut buckets[bucket_index];
+            add_metrics(&mut bucket.deltas, &point.deltas);
+            bucket.gauges.extend(point.gauges.clone());
+
+            let interval_start = if index == 0 {
+                from
+            } else {
+                inner.points[index - 1].t.max(from)
+            };
+            let interval_end = point.t.min(to);
+            let duration = interval_end.saturating_sub(interval_start);
+            bucket.from = Some(
+                bucket
+                    .from
+                    .map_or(interval_start, |current| current.min(interval_start)),
+            );
+            bucket.to = Some(
+                bucket
+                    .to
+                    .map_or(interval_end, |current| current.max(interval_end)),
+            );
+            bucket.duration_seconds += duration;
+            bucket.capacity_duration += duration;
+            if let Some(capacity) = &point.capacity {
+                bucket.capacity_weight += capacity.capacity_rpm as f64 * duration as f64;
+                bucket.known_capacity_duration += duration;
+                bucket.latest_rpms = capacity.rpms.clone();
+            }
+        }
+
+        let effective_from = if first == 0 {
+            Some(inner.points[first].t)
+        } else {
+            Some(from.max(inner.points[first - 1].t))
+        };
+        let effective_to = Some(inner.points[end - 1].t);
+        let points = buckets
+            .into_iter()
+            .filter_map(BucketAccumulator::finish)
+            .collect();
+
+        Rollup {
+            available_from: inner.available_from,
+            available_to: inner.available_to,
+            effective_from,
+            effective_to,
+            totals: metric_values(totals),
+            latest: metric_values(latest),
+            points,
+            diagnostics: inner.diagnostics.clone(),
+            history_revision: inner.revision,
+        }
+    }
+
+    pub fn current(&self, t: u64, current_exposition: &str) -> CurrentMetrics {
+        let current = parse_exposition(current_exposition);
+        let inner = self.inner.lock().unwrap();
+        let reset = inner.last_parsed.is_some()
+            && inner.last_sample_boot.as_deref() != Some(self.boot_id.as_str());
+        let normalized = normalize(inner.last_parsed.as_ref(), &current, reset);
+        let mut metrics = current.counters.clone();
+        metrics.extend(current.gauges);
+
+        CurrentMetrics {
+            metrics: metric_values(metrics),
+            tail: Tail {
+                base_history_revision: inner.revision,
+                from: inner.available_to,
+                to: t,
+                totals: metric_values(normalized.deltas),
+            },
+        }
+    }
+
     /// Snapshots in [from, to], stride-sampled down to at most `max` plus the
     /// range's endpoints. Temporary raw compatibility until Task 7.
     pub fn range(&self, from: u64, to: u64, max: usize) -> Vec<(u64, String)> {
@@ -656,6 +811,58 @@ impl History {
             tracing::warn!("history write failed: {e}");
         }
     }
+}
+
+#[derive(Default)]
+struct BucketAccumulator {
+    deltas: BTreeMap<MetricKey, f64>,
+    gauges: BTreeMap<MetricKey, f64>,
+    from: Option<u64>,
+    to: Option<u64>,
+    duration_seconds: u64,
+    capacity_weight: f64,
+    capacity_duration: u64,
+    known_capacity_duration: u64,
+    latest_rpms: Vec<usize>,
+}
+
+impl BucketAccumulator {
+    fn finish(self) -> Option<RollupPoint> {
+        let from = self.from?;
+        let to = self.to?;
+        let capacity = (self.capacity_duration > 0
+            && self.known_capacity_duration == self.capacity_duration)
+            .then(|| CapacityRollup {
+                average_rpm: self.capacity_weight / self.capacity_duration as f64,
+                latest_rpms: self.latest_rpms,
+            });
+        let mut values = self.deltas;
+        values.extend(self.gauges);
+        Some(RollupPoint {
+            from,
+            to,
+            duration_seconds: self.duration_seconds,
+            values: metric_values(values),
+            capacity,
+        })
+    }
+}
+
+fn add_metrics(totals: &mut BTreeMap<MetricKey, f64>, values: &BTreeMap<MetricKey, f64>) {
+    for (key, value) in values {
+        *totals.entry(key.clone()).or_default() += value;
+    }
+}
+
+fn metric_values(values: BTreeMap<MetricKey, f64>) -> Vec<MetricValue> {
+    values
+        .into_iter()
+        .map(|(key, value)| MetricValue {
+            metric: key.metric,
+            labels: key.labels,
+            value,
+        })
+        .collect()
 }
 
 fn decode_record(record: StoredRecord) -> Option<LoadedRecord> {
@@ -952,6 +1159,217 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         );
         assert_eq!(inner.points[2].capacity.as_ref().unwrap().rpms, [40, 30]);
         assert_eq!(inner.diagnostics.legacy_resets_inferred, 0);
+    }
+
+    fn history_with_points() -> History {
+        let history = memory_history(0);
+        history.append(
+            100,
+            "# TYPE requests_total counter\n\
+             requests_total 10\n\
+             # TYPE prompt_tokens_total counter\n\
+             prompt_tokens_total{model=\"alpha\"} 100\n\
+             prompt_tokens_total{model=\"beta\"} 50\n\
+             # TYPE latency_seconds histogram\n\
+             latency_seconds_bucket{le=\"0.5\"} 3\n\
+             latency_seconds_bucket{le=\"+Inf\"} 10\n\
+             latency_seconds_sum 4\n\
+             latency_seconds_count 10\n\
+             # TYPE active gauge\n\
+             active 1\n",
+            capacity(40),
+        );
+        history.append(
+            200,
+            "# TYPE requests_total counter\n\
+             requests_total 25\n\
+             # TYPE prompt_tokens_total counter\n\
+             prompt_tokens_total{model=\"alpha\"} 150\n\
+             prompt_tokens_total{model=\"beta\"} 80\n\
+             # TYPE latency_seconds histogram\n\
+             latency_seconds_bucket{le=\"0.5\"} 8\n\
+             latency_seconds_bucket{le=\"+Inf\"} 25\n\
+             latency_seconds_sum 11\n\
+             latency_seconds_count 25\n\
+             # TYPE active gauge\n\
+             active 2\n",
+            CapacitySnapshot {
+                enabled_lanes: 2,
+                rpms: vec![40, 40],
+                capacity_rpm: 80,
+            },
+        );
+        history.append(
+            300,
+            "# TYPE requests_total counter\n\
+             requests_total 40\n\
+             # TYPE prompt_tokens_total counter\n\
+             prompt_tokens_total{model=\"alpha\"} 240\n\
+             prompt_tokens_total{model=\"beta\"} 110\n\
+             # TYPE latency_seconds histogram\n\
+             latency_seconds_bucket{le=\"0.5\"} 12\n\
+             latency_seconds_bucket{le=\"+Inf\"} 40\n\
+             latency_seconds_sum 18\n\
+             latency_seconds_count 40\n\
+             # TYPE active gauge\n\
+             active 3\n",
+            CapacitySnapshot {
+                enabled_lanes: 2,
+                rpms: vec![40, 40],
+                capacity_rpm: 80,
+            },
+        );
+        history
+    }
+
+    fn value(values: &[MetricValue], name: &str) -> f64 {
+        values
+            .iter()
+            .find_map(|metric| (metric.metric == name).then_some(metric.value))
+            .unwrap()
+    }
+
+    fn labeled_value(values: &[MetricValue], name: &str, label: &str, label_value: &str) -> f64 {
+        values
+            .iter()
+            .find_map(|metric| {
+                (metric.metric == name
+                    && metric.labels.get(label).map(String::as_str) == Some(label_value))
+                .then_some(metric.value)
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn rollup_totals_do_not_change_with_point_budget() {
+        let h = history_with_points();
+        let coarse = h.rollup(99, 300, 2);
+        let fine = h.rollup(99, 300, 1000);
+        assert_eq!(coarse.totals, fine.totals);
+        assert_eq!(value(&coarse.totals, "requests_total"), 40.0);
+        assert!(coarse.points.len() <= 2);
+    }
+
+    #[test]
+    fn rollup_uses_open_closed_sample_boundaries() {
+        let h = history_with_points();
+        let rollup = h.rollup(100, 200, 20);
+        assert_eq!(value(&rollup.totals, "requests_total"), 15.0);
+    }
+
+    #[test]
+    fn rollup_preserves_grouped_labels() {
+        let rollup = history_with_points().rollup(99, 300, 20);
+        assert_eq!(
+            labeled_value(&rollup.totals, "prompt_tokens_total", "model", "alpha"),
+            240.0
+        );
+        assert_eq!(
+            labeled_value(&rollup.totals, "prompt_tokens_total", "model", "beta"),
+            110.0
+        );
+    }
+
+    #[test]
+    fn rollup_keeps_latest_gauges_and_histogram_buckets() {
+        let rollup = history_with_points().rollup(99, 300, 20);
+        assert_eq!(value(&rollup.latest, "active"), 3.0);
+        assert_eq!(
+            labeled_value(&rollup.totals, "latency_seconds_bucket", "le", "0.5"),
+            12.0
+        );
+        assert_eq!(
+            labeled_value(&rollup.totals, "latency_seconds_bucket", "le", "+Inf"),
+            40.0
+        );
+    }
+
+    #[test]
+    fn rollup_empty_window_retains_only_available_bounds() {
+        let rollup = history_with_points().rollup(300, 400, 20);
+        assert_eq!(rollup.available_from, Some(100));
+        assert_eq!(rollup.available_to, Some(300));
+        assert_eq!(rollup.effective_from, None);
+        assert_eq!(rollup.effective_to, None);
+        assert!(rollup.totals.is_empty());
+        assert!(rollup.latest.is_empty());
+        assert!(rollup.points.is_empty());
+    }
+
+    #[test]
+    fn rollup_reports_effective_and_available_bounds() {
+        let rollup = history_with_points().rollup(0, 250, 20);
+        assert_eq!(rollup.available_from, Some(100));
+        assert_eq!(rollup.available_to, Some(300));
+        assert_eq!(rollup.effective_from, Some(100));
+        assert_eq!(rollup.effective_to, Some(200));
+    }
+
+    #[test]
+    fn rollup_time_weights_capacity() {
+        let rollup = history_with_points().rollup(99, 300, 2);
+        let weighted_rpm = rollup
+            .points
+            .iter()
+            .map(|point| {
+                point.capacity.as_ref().unwrap().average_rpm * point.duration_seconds as f64
+            })
+            .sum::<f64>();
+        let duration = rollup
+            .points
+            .iter()
+            .map(|point| point.duration_seconds)
+            .sum::<u64>();
+        assert_eq!(duration, 201);
+        assert!((weighted_rpm / duration as f64 - 16040.0 / 201.0).abs() < 1e-12);
+        assert_eq!(
+            rollup
+                .points
+                .last()
+                .unwrap()
+                .capacity
+                .as_ref()
+                .unwrap()
+                .latest_rpms,
+            [40, 40]
+        );
+    }
+
+    #[test]
+    fn tail_reports_only_metrics_since_the_latest_indexed_sample() {
+        let history = history_with_points();
+        let current = history.current(
+            350,
+            "# TYPE requests_total counter\n\
+             requests_total 43\n\
+             # TYPE active gauge\n\
+             active 7\n",
+        );
+        assert_eq!(value(&current.tail.totals, "requests_total"), 3.0);
+        assert_eq!(value(&current.metrics, "requests_total"), 43.0);
+        assert_eq!(value(&current.metrics, "active"), 7.0);
+        assert_eq!(current.tail.from, Some(300));
+        assert_eq!(current.tail.to, 350);
+        assert_eq!(current.tail.base_history_revision, history.revision());
+    }
+
+    #[test]
+    fn tail_counts_a_new_process_value_from_zero() {
+        let history = history_with_points();
+        history.inner.lock().unwrap().last_sample_boot = Some("previous-process".to_owned());
+        let current = history.current(350, "# TYPE requests_total counter\nrequests_total 2\n");
+        assert_eq!(value(&current.tail.totals, "requests_total"), 2.0);
+    }
+
+    #[test]
+    fn tail_polling_does_not_accumulate_previous_polls() {
+        let history = history_with_points();
+        let exposition = "# TYPE requests_total counter\nrequests_total 43\n";
+        let first = history.current(350, exposition);
+        let second = history.current(351, exposition);
+        assert_eq!(value(&first.tail.totals, "requests_total"), 3.0);
+        assert_eq!(value(&second.tail.totals, "requests_total"), 3.0);
+        assert_eq!(history.revision(), 3);
     }
 
     #[test]
