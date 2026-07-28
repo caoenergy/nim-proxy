@@ -290,37 +290,42 @@ jobs:
               "$f"
           done
       - name: Publish release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
-        with:
-          # Explicit: on the dispatch path the triggering ref is a branch, so
-          # the action must not derive the release tag from it.
-          tag_name: ${{ needs.prepare.outputs.tag }}
-          generate_release_notes: true
-          files: |
-            nim-proxy-*.tar.gz
-            nim-proxy-*.tar.gz.sigstore.json
-            nim-proxy-sbom.spdx.json
-            nim-proxy-sbom.spdx.json.sigstore.json
-          body: |
-            Container image (multi-arch, signed, with SBOM + provenance):
+        # GitHub-hosted runners include gh. Keeping publication in a script
+        # removes a third-party action while preserving the release contract.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          {
+            printf '%s\n\n' 'Container image (multi-arch, signed, with SBOM + provenance):'
+            printf '%s\n' '```sh'
+            printf 'docker pull ghcr.io/%s:%s\n' "$REPOSITORY" "$RELEASE_VERSION"
+            printf '%s\n\n' '```'
+            printf '%s\n\n' 'Verify the image signature:'
+            printf '%s\n' '```sh'
+            printf 'cosign verify ghcr.io/%s:%s \\\n' "$REPOSITORY" "$RELEASE_VERSION"
+            printf "  --certificate-identity-regexp 'https://github.com/%s/.github/workflows/release.yml@.*' \\\\\n" "$REPOSITORY"
+            printf '%s\n' '  --certificate-oidc-issuer https://token.actions.githubusercontent.com'
+            printf '%s\n\n' '```'
+            printf '%s\n\n' 'Verify a downloaded asset (tarball or SBOM) against its Sigstore bundle:'
+            printf '%s\n' '```sh'
+            printf 'cosign verify-blob nim-proxy-%s-linux-amd64.tar.gz \\\n' "$RELEASE_VERSION"
+            printf '  --bundle nim-proxy-%s-linux-amd64.tar.gz.sigstore.json \\\n' "$RELEASE_VERSION"
+            printf "  --certificate-identity-regexp 'https://github.com/%s/.github/workflows/release.yml@.*' \\\\\n" "$REPOSITORY"
+            printf '%s\n' '  --certificate-oidc-issuer https://token.actions.githubusercontent.com'
+            printf '%s\n' '```'
+          } > release-notes.md
 
-            ```sh
-            docker pull ghcr.io/${{ github.repository }}:${{ needs.prepare.outputs.version }}
-            ```
-
-            Verify the image signature:
-
-            ```sh
-            cosign verify ghcr.io/${{ github.repository }}:${{ needs.prepare.outputs.version }} \
-              --certificate-identity-regexp 'https://github.com/${{ github.repository }}/.github/workflows/release.yml@.*' \
-              --certificate-oidc-issuer https://token.actions.githubusercontent.com
-            ```
-
-            Verify a downloaded asset (tarball or SBOM) against its Sigstore bundle:
-
-            ```sh
-            cosign verify-blob nim-proxy-${{ needs.prepare.outputs.version }}-linux-amd64.tar.gz \
-              --bundle nim-proxy-${{ needs.prepare.outputs.version }}-linux-amd64.tar.gz.sigstore.json \
-              --certificate-identity-regexp 'https://github.com/${{ github.repository }}/.github/workflows/release.yml@.*' \
-              --certificate-oidc-issuer https://token.actions.githubusercontent.com
-            ```
+          # Explicit tag: dispatch runs start from a branch ref. --notes is a
+          # preamble when combined with --generate-notes.
+          gh release create "$RELEASE_TAG" \
+            nim-proxy-*.tar.gz \
+            nim-proxy-*.tar.gz.sigstore.json \
+            nim-proxy-sbom.spdx.json \
+            nim-proxy-sbom.spdx.json.sigstore.json \
+            --repo "$REPOSITORY" \
+            --generate-notes \
+            --notes "$(<release-notes.md)"
