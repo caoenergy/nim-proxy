@@ -12,10 +12,11 @@ description: Append-only record of ingests, decisions, and maintenance passes.
   security notes from Unreleased into v0.6.5; synchronized the crate/lockfile
   version and changelog comparison links.
 
-## [2026-07-28] lint — remove duplicate agent workflow documents
+## [2026-07-28] lint — remove duplicate planning and prototype documents
 
-- Removed `docs/superpowers`; durable design decisions and operational facts
-  remain in the project knowledge graph instead of a second planning archive.
+- Removed `docs/superpowers` and the root `design/` prototype handoffs;
+  durable design decisions and operational facts remain in the project
+  knowledge graph instead of parallel planning archives.
 
 ## [2026-07-28] decision — reset-aware dashboard history
 

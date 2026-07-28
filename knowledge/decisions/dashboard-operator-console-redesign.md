@@ -12,13 +12,13 @@ timestamp: 2026-07-03T00:00:00Z
 
 The dashboard's data layer and charts already worked; the presentation had
 grown organically across three prior passes (three tabs → six persona-aligned
-tabs → incremental polish) and needed a deliberate visual pass. A design
-handoff (`design/dashboard-redesign/`) specified a dark, NVIDIA-green
+tabs → incremental polish) and needed a deliberate visual pass. A prototype
+handoff specified a dark, NVIDIA-green
 "operator console" aesthetic with a revised information architecture, richer
 KPI cards, and two new interactions (chart hover tooltips, click-to-sort
 tables) — all layered on the **unchanged** `parseProm`/`groups`/`buckets`/
 `wgroups` data machinery. Four decisions needed to be locked in before
-implementation (see [`design/dashboard-redesign/PLAN.md`](../../design/dashboard-redesign/PLAN.md)).
+implementation; this decision page is their durable record.
 
 ## Options & Choice
 
