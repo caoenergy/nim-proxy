@@ -1648,6 +1648,9 @@ async fn dashboard_pause_traffic_is_derived_from_rendered_samples() {
         .await
         .unwrap();
     assert!(html.contains("function hasSelectedRequestTraffic(selectedSamples)"));
+    assert!(html.contains(
+        "row => row.name === 'nimproxy_requests_total' && +row.value > 0"
+    ));
     assert!(html.contains("frozenHasTraffic = hasSelectedRequestTraffic(samples);"));
     assert!(html.contains(
         "const hasTraffic = mode.paused ? frozenHasTraffic : hasSelectedRequestTraffic(samples);"

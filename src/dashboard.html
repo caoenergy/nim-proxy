@@ -710,7 +710,7 @@ function rangeSamples(range, tail) {
 
 function hasSelectedRequestTraffic(selectedSamples) {
   return selectedSamples.some(sample => sample.rows.some(
-    row => row.metric === 'nimproxy_requests_total' && +row.value > 0));
+    row => row.name === 'nimproxy_requests_total' && +row.value > 0));
 }
 
 /* pool capacity from per-lane rpms when the server provides them (keys can
