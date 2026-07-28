@@ -13,6 +13,12 @@ description: Append-only record of ingests, decisions, and maintenance passes.
   separately configured retention/default window, and lightweight current
   polling.
 
+## [2026-07-28] ingest — bound capacity to observed history
+
+- Clarified that a partial default window keeps the first retained sample's
+  exact totals without inventing duration or capacity in the unavailable
+  prefix; saturated retention arithmetic also keeps extreme valid values safe.
+
 ## [2026-07-28] ingest — synchronize dashboard history documentation
 
 - Updated the dashboard, metrics-history, configuration, retention, and auth

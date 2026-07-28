@@ -65,6 +65,9 @@ Totals are computed from the normalized index, not from the chart buckets, so
 precision boundary; partial buckets do not pretend to know intra-sample event
 times. A delta belongs to a range when `from < sample_time <= to`. The HTTP
 contract defaults to 288 presentation points and clamps requests to 2–1000.
+When a requested range begins before the first retained sample, that sample's
+exact delta remains in the total, but its chart point has zero duration and no
+capacity average: the unavailable prefix is not treated as observed time.
 
 `History::current()` renders the live registry under the same history
 generation lock. It returns current typed metrics plus a tail whose totals are

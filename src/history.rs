@@ -654,7 +654,7 @@ impl History {
 
         let days = self.days.load(Ordering::Relaxed);
         if days > 0 {
-            let cutoff = t.saturating_sub(days * 86400);
+            let cutoff = t.saturating_sub(days.saturating_mul(86_400));
             let before = inner.points.len();
             inner.points.retain(|point| point.t >= cutoff);
             *self.dropped_since_compact.lock().unwrap() += before - inner.points.len();
@@ -735,7 +735,10 @@ impl History {
             bucket.gauges.extend(point.gauges.clone());
 
             let interval_start = if index == 0 {
-                from
+                // The first retained sample provides no evidence about the
+                // preceding interval. Keep its exact delta, but do not invent
+                // duration or capacity before history begins.
+                point.t.max(from)
             } else {
                 inner.points[index - 1].t.max(from)
             };
@@ -1334,6 +1337,18 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         assert_eq!(rollup.points[0].to, 200_000);
     }
 
+    #[test]
+    fn append_saturates_an_extreme_retention_window() {
+        let history = memory_history(u64::MAX);
+        history.append(
+            1,
+            "# TYPE requests_total counter\nrequests_total 1\n",
+            capacity(40),
+        );
+
+        assert_eq!(history.inner.lock().unwrap().points.len(), 1);
+    }
+
     #[tokio::test]
     async fn retention_reconfiguration_prunes_indexed_queries_immediately() {
         let history = memory_history(0);
@@ -1621,13 +1636,29 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
     }
 
     #[test]
+    fn rollup_does_not_invent_capacity_before_the_first_retained_sample() {
+        let rollup = history_with_points().rollup(0, 100, 20);
+
+        assert_eq!(value(&rollup.totals, "requests_total"), 10.0);
+        assert_eq!(rollup.effective_from, Some(100));
+        assert_eq!(rollup.points.len(), 1);
+        assert_eq!(rollup.points[0].from, 100);
+        assert_eq!(rollup.points[0].to, 100);
+        assert_eq!(rollup.points[0].duration_seconds, 0);
+        assert_eq!(rollup.points[0].capacity, None);
+    }
+
+    #[test]
     fn rollup_time_weights_capacity() {
         let rollup = history_with_points().rollup(99, 300, 2);
         let weighted_rpm = rollup
             .points
             .iter()
-            .map(|point| {
-                point.capacity.as_ref().unwrap().average_rpm * point.duration_seconds as f64
+            .filter_map(|point| {
+                point
+                    .capacity
+                    .as_ref()
+                    .map(|capacity| capacity.average_rpm * point.duration_seconds as f64)
             })
             .sum::<f64>();
         let duration = rollup
@@ -1635,8 +1666,8 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
             .iter()
             .map(|point| point.duration_seconds)
             .sum::<u64>();
-        assert_eq!(duration, 201);
-        assert!((weighted_rpm / duration as f64 - 16040.0 / 201.0).abs() < 1e-12);
+        assert_eq!(duration, 200);
+        assert!((weighted_rpm / duration as f64 - 80.0).abs() < 1e-12);
         assert_eq!(
             rollup
                 .points
