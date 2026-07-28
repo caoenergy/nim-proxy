@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard the release workflow's Cosign CLI and artifact contract."""
+"""Guard the release workflow's publication, Cosign, and artifact contract."""
 
 from pathlib import Path
 import unittest
@@ -25,11 +25,20 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertIn("nim-proxy-*.tar.gz.sigstore.json", self.workflow)
         self.assertIn("nim-proxy-sbom.spdx.json.sigstore.json", self.workflow)
         self.assertIn(
-            "--bundle "
-            "nim-proxy-${{ needs.prepare.outputs.version }}"
-            "-linux-amd64.tar.gz.sigstore.json",
+            "printf '  --bundle "
+            "nim-proxy-%s-linux-amd64.tar.gz.sigstore.json",
             self.workflow,
         )
+
+    def test_release_uses_runner_gh_cli(self) -> None:
+        self.assertNotIn("softprops/action-gh-release", self.workflow)
+        self.assertIn("GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}", self.workflow)
+        self.assertIn("RELEASE_TAG: ${{ needs.prepare.outputs.tag }}", self.workflow)
+        self.assertIn("REPOSITORY: ${{ github.repository }}", self.workflow)
+        self.assertIn('gh release create "$RELEASE_TAG"', self.workflow)
+        self.assertIn('--repo "$REPOSITORY"', self.workflow)
+        self.assertIn("--generate-notes", self.workflow)
+        self.assertIn('--notes "$(<release-notes.md)"', self.workflow)
 
 
 if __name__ == "__main__":

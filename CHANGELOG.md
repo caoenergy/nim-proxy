@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   expansions into step-scoped environment variables, and added a seven-day
   observation window for routine Cargo, GitHub Actions, and Docker dependency
   updates. Dependabot security updates remain immediate.
+- Replaced the third-party GitHub Release publishing action with the
+  GitHub-hosted runner's preinstalled `gh` CLI, preserving generated notes,
+  verification instructions, and signed asset uploads while reducing the
+  workflow's external action surface.
 
 ### Changed
 

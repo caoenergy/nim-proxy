@@ -14,8 +14,9 @@ attests SLSA build provenance, generates an SPDX SBOM, and publishes a GitHub
 Release with the static binaries and the SBOM attached. The downloadable
 assets (tarballs + SBOM) are themselves signed with `cosign sign-blob`, each
 getting a `.sigstore.json` bundle alongside it. The bundle contains the
-signature, signing certificate, and transparency-log proof. SemVer + Keep a
-Changelog throughout.
+signature, signing certificate, and transparency-log proof. The final release
+is published by the GitHub-hosted runner's preinstalled `gh` CLI rather than a
+third-party publishing action. SemVer + Keep a Changelog throughout.
 
 It has two entry points: **Run workflow** in the Actions UI (the normal path
 since v0.6.1 — the workflow's `prepare` job resolves the version from

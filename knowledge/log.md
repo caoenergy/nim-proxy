@@ -6,6 +6,14 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-28] ingest — publish GitHub Releases with the runner CLI
+
+Replaced `softprops/action-gh-release` with the GitHub-hosted runner's
+preinstalled `gh release create`. The release job still uses the prepared tag,
+prepends the container and Sigstore verification instructions to generated
+notes, and uploads the same signed tarballs and SBOM assets, while removing
+one third-party action from the release trust surface.
+
 ## [2026-07-28] ingest — harden workflow inputs and parameterize Compose publishing
 
 Moved release metadata and digest values out of shell-script template
