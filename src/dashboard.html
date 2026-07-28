@@ -2016,7 +2016,11 @@ function renderServer() {
     if (!isFinite(pin) || !isFinite(pout) || !(days >= 0)) return note('pricing-err', 'Prices and retention need numeric values.');
     try {
       await sPost('/api/settings/pricing', { ref_price_in: pin, ref_price_out: pout });
-      await sPost('/api/settings/history', { days });
+      await sPost('/api/settings/history', {
+        days,
+        default_window_days: sv.dashboard.default_window_days,
+        slo_target_percent: sv.dashboard.slo_target_percent,
+      });
       await loadSettings();
       note('pricing-err', 'Saved.', true);
     } catch (e) { note('pricing-err', e.message); }

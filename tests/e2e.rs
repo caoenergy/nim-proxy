@@ -1677,7 +1677,14 @@ async fn user_role_is_denied_server_settings_and_foreign_keys() {
             "/api/settings/upstream",
             serde_json::json!({"base_url": "http://x"}),
         ),
-        ("/api/settings/history", serde_json::json!({"days": 1})),
+        (
+            "/api/settings/history",
+            serde_json::json!({
+                "days": 30,
+                "default_window_days": 30,
+                "slo_target_percent": 99.9
+            }),
+        ),
         (
             "/api/settings/users",
             serde_json::json!({"add": {"username": "eve", "password": "long-enough-pw", "role": "user"}}),
@@ -2319,8 +2326,8 @@ async fn governor_settings_reflect_and_persist() {
     );
 }
 
-/// Pricing and history retention save through the same pipeline and reflect
-/// in /api/config; a negative reference price is refused.
+/// Pricing and dashboard history settings save through the same pipeline and
+/// reflect in /api/config; invalid candidates leave every value unchanged.
 #[tokio::test]
 async fn pricing_and_history_settings_reflect_in_api_config() {
     let mock = start_mock().await;
@@ -2339,7 +2346,11 @@ async fn pricing_and_history_settings_reflect_in_api_config() {
         &proxy,
         &root,
         "/api/settings/history",
-        serde_json::json!({"days": 7}),
+        serde_json::json!({
+            "days": 45,
+            "default_window_days": 30,
+            "slo_target_percent": 99.5
+        }),
     )
     .await;
     assert_eq!(status, 200, "{v}");
@@ -2347,7 +2358,26 @@ async fn pricing_and_history_settings_reflect_in_api_config() {
     let cfg = api_config(&proxy, &root).await;
     assert_eq!(cfg["server"]["pricing"]["ref_price_in"], 1.25);
     assert_eq!(cfg["server"]["pricing"]["ref_price_out"], 3.5);
-    assert_eq!(cfg["server"]["history"]["days"], 7);
+    assert_eq!(cfg["server"]["history"]["days"], 45);
+    assert_eq!(cfg["server"]["dashboard"]["default_window_days"], 30);
+    assert_eq!(cfg["server"]["dashboard"]["slo_target_percent"], 99.5);
+
+    let (status, v) = post_json(
+        &proxy,
+        &root,
+        "/api/settings/history",
+        serde_json::json!({
+            "days": 7,
+            "default_window_days": 30,
+            "slo_target_percent": 98.0
+        }),
+    )
+    .await;
+    assert_eq!(status, 400, "invalid window/retention pair accepted: {v}");
+    let cfg = api_config(&proxy, &root).await;
+    assert_eq!(cfg["server"]["history"]["days"], 45);
+    assert_eq!(cfg["server"]["dashboard"]["default_window_days"], 30);
+    assert_eq!(cfg["server"]["dashboard"]["slo_target_percent"], 99.5);
 
     let (status, v) = post_json(
         &proxy,

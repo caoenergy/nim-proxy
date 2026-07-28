@@ -18,7 +18,7 @@ pub use config::fuzz as fuzz_config;
 pub use proxy::fuzz as fuzz_proxy;
 
 use std::collections::HashMap;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -104,6 +104,8 @@ pub struct AppState {
     /// Per-model worker-concurrency gate (runtime state, settings in Config).
     pub governor: Arc<governor::Governor>,
     pub history: Arc<history::History>,
+    /// Monotonic settings generation for lightweight dashboard refreshes.
+    pub config_revision: AtomicU64,
     /// Unix time this process started (dashboard uptime).
     pub started: u64,
 }
@@ -414,6 +416,7 @@ pub async fn run() {
         inflight: AtomicUsize::new(0),
         governor: Arc::new(governor::Governor::default()),
         history: hist,
+        config_revision: AtomicU64::new(1),
         started: unix_now(),
         store: std::sync::Mutex::new(stored),
         data_dir,

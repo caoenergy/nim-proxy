@@ -33,6 +33,7 @@ pub fn commit(
     }
     state.history.set_days(candidate.history.days);
     *guard = candidate;
+    state.config_revision.fetch_add(1, Ordering::SeqCst);
     Ok(())
 }
 
@@ -381,6 +382,7 @@ pub async fn api_config(
             "limits": sc.limits,
             "pricing": sc.pricing,
             "history": sc.history,
+            "dashboard": sc.dashboard,
             "governor": sc.governor,
         });
         body["users"] = serde_json::json!(sc
@@ -655,6 +657,8 @@ admin_section!(
 #[derive(Deserialize)]
 pub struct HistoryReq {
     days: u64,
+    default_window_days: u64,
+    slo_target_percent: f64,
 }
 
 admin_section!(
@@ -662,6 +666,8 @@ admin_section!(
     HistoryReq,
     |cand: &mut StoredConfig, req: HistoryReq| {
         cand.history.days = req.days;
+        cand.dashboard.default_window_days = req.default_window_days;
+        cand.dashboard.slo_target_percent = req.slo_target_percent;
     }
 );
 
