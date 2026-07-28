@@ -1,8 +1,9 @@
-//! Metrics history: every 5 minutes the sampler appends a full Prometheus
-//! snapshot to disk when a data dir is writable and normalizes it into a
-//! typed in-memory index. Dashboard range queries consume exact totals plus
-//! bounded rollup points from that index. Snapshots are ~4 KB, so 30 days is
-//! ~35 MB — retention is a days knob, not a size-management subsystem.
+//! Metrics history: the sampler appends one full Prometheus snapshot at
+//! startup and every 5 minutes thereafter when a data dir is writable, then
+//! normalizes it into a typed in-memory index. Dashboard range queries consume
+//! exact totals plus bounded rollup points from that index. Snapshot size
+//! varies with registry cardinality; retention is an operator-facing time
+//! boundary rather than a predicted byte cap.
 
 use std::collections::BTreeMap;
 use std::fs;

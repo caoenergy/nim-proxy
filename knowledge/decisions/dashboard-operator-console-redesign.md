@@ -101,3 +101,17 @@ implementation (see [`design/dashboard-redesign/PLAN.md`](../../design/dashboard
 - Anyone linking to the old tab anchors/names (`#harnesses`, `#proxy`,
   `#keys`, a "Compare" mention) needs the new names: `#clients`,
   `#reliability`, `#capacity`, and "the scorecard section of Models".
+
+## Amendment (2026-07-28 — reset-aware history)
+
+The visual, information-architecture, font/CSP, interaction, and security
+choices above remain current. The statements that the data layer was
+unchanged, that delta comparisons used a browser live ring, and that an
+alternative would double `/api/history` calls describe the 2026-07-03
+implementation and are superseded by
+[reset-aware-dashboard-history](reset-aware-dashboard-history.md).
+
+Today every analytical tab consumes the typed `/api/dashboard` range contract
+plus `/api/dashboard/now`, shares one following/fixed selection, and computes
+delta chips from that selected server-backed sample window. The old
+`/api/history` transport and browser-owned lifetime mode no longer exist.

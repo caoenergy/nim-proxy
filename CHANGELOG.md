@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added reset-aware startup indexing for persisted dashboard history. Explicit
+  v2 process epochs produce exact cross-restart totals; legacy v1 files remain
+  readable with best-effort reset inference. Chart point limits no longer
+  change reported totals.
+- Added one global dashboard window across Overview, Models, Clients,
+  Reliability, and Capacity, with **Default · 30d**, fixed/pause semantics,
+  and an **All retained** preset. Current operational values remain labeled
+  **Now** and continue refreshing while a historical range is fixed.
+- Added separate Server settings for the default dashboard window, history
+  retention, and availability SLO. The window and retention both default to
+  30 days; retention `0` is unlimited and a finite retention window cannot be
+  shorter than the default view.
+
 ### Security
 
 - Moved release metadata and image digests from inline shell-template
@@ -22,6 +37,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Docker Compose's host-side publish address is now configurable with
   `PUBLISH_HOST` in `.env` while retaining `127.0.0.1` as the safe default.
+- Replaced browser parsing of raw `/metrics`, `/api/history`, and
+  `/dash/config.json` data with authenticated typed range/current dashboard
+  contracts, revision-aware live tails, and server-side exact rollups.
+- Historical Capacity views now use the contemporaneous capacity stored with
+  each sample; current lane/load values use the live **Now** snapshot. The
+  Reliability SLO is configured rather than hardcoded.
+- History retention now trims the in-memory index immediately and compacts the
+  JSONL file atomically in the background while preserving the boundary
+  baseline and boot marker needed for exact retained totals. The old
+  fixed-size estimate was removed after a real 7,316-sample history measured
+  235,598,655 bytes; size remains workload-dependent.
 
 ## [0.6.4] - 2026-07-17
 

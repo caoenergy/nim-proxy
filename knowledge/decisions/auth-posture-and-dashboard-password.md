@@ -75,10 +75,13 @@ three specifics:
 - **`INSECURE_NO_AUTH` retires.** Its replacement is the store's `open|keyed`
   API-access mode, and it now governs **only `/v1`**. `keyed` (default) is
   fail-closed — keyed with zero client keys rejects everything; `open` (labeled
-  "local") is trusted-network only. Every dashboard/`/metrics`/`/api/history`
-  surface **always** requires a logged-in session post-setup; there is no
-  "everything open" mode for the UI anymore. Pre-setup, only `/health`,
-  `/setup`, and `/login` (which redirects to `/setup`) are reachable.
+  "local") is trusted-network only. Every dashboard, `/metrics`, and
+  authenticated dashboard API surface **always** requires a logged-in session
+  post-setup; there is no "everything open" mode for the UI anymore.
+  Pre-setup, only `/health`, `/setup`, and `/login` (which redirects to
+  `/setup`) are reachable. The later reset-aware history change removed
+  `/api/history`; the same gate covers `/api/dashboard` and
+  `/api/dashboard/now`.
 - **The single `ADMIN_PASSWORD` becomes multi-user.** Users live in the store
   (`{username, password_hash, role}`); login is username + password. Passwords
   are **PBKDF2-HMAC-SHA256, 600k iterations**, the iteration count encoded in
