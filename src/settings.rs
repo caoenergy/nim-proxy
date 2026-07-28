@@ -31,10 +31,12 @@ pub fn commit(
         let mut pool = state.pool.write().unwrap();
         *pool = Arc::new(pool.rebuild(candidate.pool_specs()));
     }
-    state
-        .history
-        .clone()
-        .reconfigure_retention(candidate.history.days, crate::unix_now());
+    if candidate.history.days != guard.history.days {
+        state
+            .history
+            .clone()
+            .reconfigure_retention(candidate.history.days, crate::unix_now());
+    }
     *guard = candidate;
     state.config_revision.fetch_add(1, Ordering::SeqCst);
     Ok(())
