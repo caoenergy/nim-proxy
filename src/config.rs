@@ -456,13 +456,11 @@ pub fn validate(sc: &StoredConfig) -> Result<(), String> {
     if sc.history.days != 0 && sc.history.days < sc.dashboard.default_window_days {
         return Err("history days must be 0 or at least default_window_days".into());
     }
-    if !sc.dashboard.slo_target_percent.is_finite()
-        || !(0.0 < sc.dashboard.slo_target_percent
-            && sc.dashboard.slo_target_percent <= 100.0)
+    if !(sc.dashboard.slo_target_percent.is_finite()
+        && 0.0 < sc.dashboard.slo_target_percent
+        && sc.dashboard.slo_target_percent <= 100.0)
     {
-        return Err(
-            "slo_target_percent must be a number greater than 0 and at most 100".into(),
-        );
+        return Err("slo_target_percent must be a number greater than 0 and at most 100".into());
     }
     check_base_url(&sc.upstream.base_url)?;
 
