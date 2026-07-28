@@ -13,7 +13,9 @@ pushes it to `ghcr.io/miztertea/nim-proxy`, signs it with keyless cosign,
 attests SLSA build provenance, generates an SPDX SBOM, and publishes a GitHub
 Release with the static binaries and the SBOM attached. The downloadable
 assets (tarballs + SBOM) are themselves signed with `cosign sign-blob`, each
-getting a `.sig` + `.pem` alongside it. SemVer + Keep a Changelog throughout.
+getting a `.sigstore.json` bundle alongside it. The bundle contains the
+signature, signing certificate, and transparency-log proof. SemVer + Keep a
+Changelog throughout.
 
 It has two entry points: **Run workflow** in the Actions UI (the normal path
 since v0.6.1 — the workflow's `prepare` job resolves the version from
@@ -72,17 +74,16 @@ cosign verify ghcr.io/miztertea/nim-proxy:X.Y.Z \
   --certificate-identity-regexp 'https://github.com/miztertea/nim-proxy/.github/workflows/release.yml@.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
-# and a downloaded asset against its detached .sig + .pem:
+# and a downloaded asset against its Sigstore bundle:
 cosign verify-blob nim-proxy-X.Y.Z-linux-amd64.tar.gz \
-  --signature nim-proxy-X.Y.Z-linux-amd64.tar.gz.sig \
-  --certificate nim-proxy-X.Y.Z-linux-amd64.tar.gz.pem \
+  --bundle nim-proxy-X.Y.Z-linux-amd64.tar.gz.sigstore.json \
   --certificate-identity-regexp 'https://github.com/miztertea/nim-proxy/.github/workflows/release.yml@.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
 Also check the GitHub Release page: two `nim-proxy-X.Y.Z-linux-*.tar.gz` assets
-plus `nim-proxy-sbom.spdx.json`, each with its `.sig` + `.pem`, and generated
-release notes. The notes are
+plus `nim-proxy-sbom.spdx.json`, each with its `.sigstore.json` bundle, and
+generated release notes. The notes are
 grouped by PR label via `.github/release.yml` (Security / Breaking changes /
 Features=`enhancement` / Fixes=`bug` / Documentation / Dependencies —
 Dependabot's default label / Other; `skip-changelog` excludes a PR) — so

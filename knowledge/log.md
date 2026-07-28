@@ -6,6 +6,16 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-28] ingest — repair Cosign v3 release asset signing
+
+The first v0.6.4 release attempt built and signed the multi-arch image but
+failed before publishing the GitHub Release. `cosign-installer` 4.1.2 had
+changed its default CLI from Cosign v2 to v3 while the release job retained
+the legacy `.sig` + `.pem` `sign-blob` flags. Migrated release assets and
+verification instructions to `.sigstore.json` bundles, explicitly pinned the
+Cosign CLI separately from the installer, and added a real offline
+sign/verify contract smoke test to the workflow-lint gate.
+
 ## [2026-07-17] ingest — prepare v0.6.4 release metadata
 
 Promoted the accumulated deadline, security, cleanup, and dependency entries
