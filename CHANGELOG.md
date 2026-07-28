@@ -7,20 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Fixed
 
-- Added reset-aware startup indexing for persisted dashboard history. Explicit
-  v2 process epochs produce exact cross-restart totals; legacy v1 files remain
-  readable with best-effort reset inference. Chart point limits no longer
-  change reported totals.
-- Added one global dashboard window across Overview, Models, Clients,
-  Reliability, and Capacity, with **Default · 30d**, fixed/pause semantics,
-  and an **All retained** preset. Current operational values remain labeled
-  **Now** and continue refreshing while a historical range is fixed.
-- Added separate Server settings for the default dashboard window, history
-  retention, and availability SLO. The window and retention both default to
-  30 days; retention `0` is unlimited and a finite retention window cannot be
-  shorter than the default view.
+- Persisted dashboard traffic now appears immediately after login and remains
+  truthful across process/container restarts. Startup indexing normalizes
+  explicit v2 process epochs and legacy v1 counter resets; chart point limits
+  no longer change reported totals.
+- The existing dashboard time controls now apply one selected window across
+  Overview, Models, Clients, Reliability, and Capacity. The default follows
+  the retained 30-day window, fixed/paused ranges stay fixed, and **All
+  retained** reaches the earliest available sample.
+- Historical Capacity views now use the configuration recorded with each
+  sample instead of comparing past traffic with today's pool. Unavailable
+  pre-history time is no longer treated as observed capacity.
 
 ### Security
 
@@ -40,9 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replaced browser parsing of raw `/metrics`, `/api/history`, and
   `/dash/config.json` data with authenticated typed range/current dashboard
   contracts, revision-aware live tails, and server-side exact rollups.
-- Historical Capacity views now use the contemporaneous capacity stored with
-  each sample; current lane/load values use the live **Now** snapshot. The
-  Reliability SLO is configured rather than hardcoded.
+- Default dashboard window, data retention, and availability target are
+  separate Server settings rather than hardcoded display assumptions. Window
+  and retention default to 30 days; retention `0` is unlimited and finite
+  retention cannot be shorter than the default view.
+- Current lane/load values use the live **Now** snapshot while selected-window
+  values stay historical.
 - History retention now trims the in-memory index immediately and compacts the
   JSONL file atomically in the background while preserving the boundary
   baseline and boot marker needed for exact retained totals. The old
