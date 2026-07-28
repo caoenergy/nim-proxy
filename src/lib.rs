@@ -181,43 +181,6 @@ fn capacity_snapshot(pool: &Pool) -> history::CapacitySnapshot {
     }
 }
 
-/// Live dashboard bootstrap config — reflects the current pool and pricing
-/// even after a settings change swaps them.
-async fn dash_config(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
-    let cfg = state.cfg();
-    let pool = state.pool();
-    let rpms = pool.rpms();
-    axum::Json(serde_json::json!({
-        "version": env!("CARGO_PKG_VERSION"),
-        "lanes": pool.len(),
-        // Uniform-rpm compatibility value; per-lane truth is in `rpms`.
-        "rpm": rpms.iter().copied().max().unwrap_or(0),
-        "rpms": rpms,
-        "capacity_rpm": pool.capacity_rpm(),
-        "price_in": cfg.price_in,
-        "price_out": cfg.price_out,
-        "auth": cfg.clients.is_some(),
-        "started": state.started,
-    }))
-}
-
-async fn api_history(
-    State(state): State<Arc<AppState>>,
-    q: axum::extract::Query<HashMap<String, String>>,
-) -> axum::Json<Vec<serde_json::Value>> {
-    let now = unix_now();
-    let get = |k: &str, d: u64| q.get(k).and_then(|v| v.parse().ok()).unwrap_or(d);
-    let (from, to) = (get("from", now.saturating_sub(86400)), get("to", now));
-    axum::Json(
-        state
-            .history
-            .range(from, to, 288)
-            .into_iter()
-            .map(|(t, m)| serde_json::json!({"t": t, "m": m}))
-            .collect(),
-    )
-}
-
 #[derive(serde::Deserialize)]
 struct DashboardQuery {
     from: Option<u64>,
@@ -554,8 +517,6 @@ pub async fn run() {
     let protected = Router::new()
         .route("/", get(dash))
         .route("/dash", get(dash))
-        .route("/dash/config.json", get(dash_config))
-        .route("/api/history", get(api_history))
         .route("/api/dashboard", get(api_dashboard))
         .route("/api/dashboard/now", get(api_dashboard_now))
         .route("/api/config", get(settings::api_config))

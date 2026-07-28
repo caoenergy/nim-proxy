@@ -1042,12 +1042,12 @@ async fn history_records_snapshots_and_survives_restart() {
         .filter(|value| value["m"].is_string())
         .count();
 
-    // Restart on the SAME data dir: history reloads from disk and is served
-    // through the (now auth-gated) /api/history endpoint.
+    // Restart on the SAME data dir: history reloads into the normalized index
+    // and remains visible through the typed dashboard range contract.
     let proxy = restart(proxy, &[("HISTORY_SAMPLE_SECS", "1")]).await;
     let cookie = login(&proxy).await;
-    let points: Vec<serde_json::Value> = client()
-        .get(proxy.url("/api/history"))
+    let history: serde_json::Value = client()
+        .get(proxy.url("/api/dashboard?from=1&to=4102444800&points=1000"))
         .header("cookie", cookie)
         .send()
         .await
@@ -1056,9 +1056,8 @@ async fn history_records_snapshots_and_survives_restart() {
         .await
         .unwrap();
     assert!(
-        points.len() >= before,
-        "history persisted across restart ({} >= {before})",
-        points.len()
+        history["history_revision"].as_u64().unwrap() >= before as u64,
+        "history persisted across restart: {history}"
     );
 }
 
@@ -1287,10 +1286,17 @@ async fn dashboard_and_config_are_served_to_authenticated_users() {
         .await
         .unwrap();
     assert_eq!(dash.status(), 200);
-    assert!(dash.text().await.unwrap().contains("NIM"));
+    let html = dash.text().await.unwrap();
+    assert!(html.contains("NIM"));
+    assert!(html.contains("/api/dashboard/now"));
+    assert!(html.contains("data-range=\"default\""));
+    assert!(html.contains("data-range=\"all-retained\""));
+    assert!(!html.contains("fetch('/metrics')"));
+    assert!(!html.contains("/api/history?"));
+    assert!(!html.contains("/dash/config.json"));
 
-    let cfg: serde_json::Value = client()
-        .get(proxy.url("/dash/config.json"))
+    let now: serde_json::Value = client()
+        .get(proxy.url("/api/dashboard/now"))
         .header("cookie", &cookie)
         .send()
         .await
@@ -1298,8 +1304,22 @@ async fn dashboard_and_config_are_served_to_authenticated_users() {
         .json()
         .await
         .unwrap();
-    assert_eq!(cfg["lanes"], 3);
-    assert_eq!(cfg["auth"], false, "open /v1 mode reports auth=false");
+    assert_eq!(now["lanes"], 3);
+    assert_eq!(now["auth"], false, "open /v1 mode reports auth=false");
+
+    for retired in ["/api/history", "/dash/config.json"] {
+        assert_eq!(
+            client()
+                .get(proxy.url(retired))
+                .header("cookie", &cookie)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            404,
+            "{retired} stays retired"
+        );
+    }
 }
 
 // ---------- boot posture & the setup wizard ----------
@@ -1454,7 +1474,7 @@ async fn setup_claim_survives_restart() {
     let cookie = login_as(&proxy, "admin").await;
     // The persisted store rehydrated: one lane (the setup key), keyed /v1.
     let cfg: serde_json::Value = client()
-        .get(proxy.url("/dash/config.json"))
+        .get(proxy.url("/api/dashboard/now"))
         .header("cookie", cookie)
         .send()
         .await
@@ -1600,16 +1620,19 @@ async fn operator_surface_always_requires_auth() {
         .unwrap();
     assert_eq!(ok.status(), 200);
 
-    // History requires creds too.
-    assert_eq!(
-        client()
-            .get(proxy.url("/api/history"))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        401
-    );
+    // Both dashboard data surfaces require credentials.
+    for path in ["/api/dashboard", "/api/dashboard/now"] {
+        assert_eq!(
+            client()
+                .get(proxy.url(path))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            401,
+            "{path} requires auth"
+        );
+    }
 
     // Browser hitting the dashboard without a session is redirected to /login.
     let nr = no_redirect_client();

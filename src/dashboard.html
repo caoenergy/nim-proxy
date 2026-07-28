@@ -323,7 +323,7 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
     <button role="tab" data-tab="settings" aria-selected="false"><span class="nbar"></span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.4"/><path d="M8 1.6v2.1M8 12.3v2.1M1.6 8h2.1M12.3 8h2.1M3.5 3.5L5 5M11 11l1.5 1.5M12.5 3.5L11 5M5 11l-1.5 1.5"/></svg><span class="label">Settings</span></button>
   </nav>
   <div class="foot">
-    <button class="live" id="live" title="Click to pause/resume the live poll"><span class="dot"></span><span id="liveText">connecting</span></button>
+    <button class="live" id="live" title="Click to freeze/resume the selected window"><span class="dot"></span><span id="liveText">connecting</span></button>
     <span id="uptime"></span>
     <span id="verinfo"></span>
   </div>
@@ -335,12 +335,13 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
     <div class="tright">
       <span id="rangeinfo"></span>
       <div class="pills" id="ranges">
-        <button data-range="live" aria-pressed="true">Live</button>
+        <button data-range="default" aria-pressed="true">Default · 30d</button>
         <button data-range="3600">1h</button>
         <button data-range="21600">6h</button>
         <button data-range="86400">24h</button>
         <button data-range="604800">7d</button>
         <button data-range="2592000">30d</button>
+        <button data-range="all-retained">All retained</button>
         <button data-range="custom"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke-width="1.5"><rect x="2" y="3" width="12" height="11" rx="2"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3" stroke-linecap="round"/></svg>Custom</button>
       </div>
     </div>
@@ -603,20 +604,11 @@ const ago = s => { s = Math.max(0, Math.round(s));
   const d = Math.floor(s/86400), h = Math.floor(s%86400/3600), m = Math.floor(s%3600/60);
   return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : m ? `${m}m` : `${s}s`; };
 
-/* ---------- prometheus text parser ---------- */
-function parseProm(text) {
-  const rows = [];
-  for (const line of text.split('\n')) {
-    if (!line || line[0] === '#') continue;
-    const m = line.match(/^([a-zA-Z_:][\w:]*)(?:\{(.*)\})?\s+([-\d.eE+]+|NaN|[+-]Inf)$/);
-    if (!m) continue;
-    const labels = {};
-    if (m[2]) for (const kv of m[2].matchAll(/([a-zA-Z_][\w]*)="((?:[^"\\]|\\.)*)"/g))
-      labels[kv[1]] = kv[2].replace(/\\(["\\n])/g, x => x[1] === 'n' ? '\n' : x[1]);
-    rows.push({ name: m[1], labels, value: m[3] === '+Inf' ? Infinity : parseFloat(m[3]) });
-  }
-  return rows;
-}
+/* ---------- typed dashboard rows ---------- */
+const rowKey = r => r.metric + '\0' +
+  Object.entries(r.labels || {}).sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${v}`).join('\0');
+const asRow = r => ({ name: r.metric, labels: r.labels || {}, value: +r.value });
 const sum = (rows, name, f) => rows.filter(r => r.name === name && (!f || f(r.labels))).reduce((a,r) => a + r.value, 0);
 const groups = (rows, name, key, f) => {
   const out = new Map();
@@ -650,11 +642,70 @@ function quantile(bs, q) {
 }
 const deltaBuckets = (cur, prev) => cur.map((b, i) => ({ le: b.le, count: b.count - (prev[i]?.count || 0) }));
 
-/* ---------- state: live ring or fetched range, same shape ---------- */
-const POLL_MS = 3000, KEEP = 400;
-let samples = [];              // [{t(ms), rows}]
-let mode = { kind: 'live', paused: false };
-let cfg = { lanes: 0, rpm: 40, price_in: 0.5, price_out: 2.0, started: Date.now()/1000, version: '' };
+/* ---------- state: one selected range plus a lightweight current snapshot ---------- */
+const POLL_MS = 3000;
+let samples = [];              // synthetic cumulative [{t(ms), rows}]
+let rangeData = null;
+let nowData = null;
+let nowRows = [];
+let mode = { kind: 'following', preset: 'default', paused: false, from: 0, to: 0 };
+let cfg = {
+  lanes: 0, rpm: 40, rpms: [], capacity_rpm: 0, price_in: 0.5, price_out: 2.0,
+  started: Date.now()/1000, version: '', auth: false, default_window_days: 30,
+  retention_days: 30, slo_target_percent: 99.9,
+};
+let previousNow = null, nowRpm = 0;
+
+/* Adapt normalized counter deltas back into the cumulative rows all existing
+   renderers consume. Gauges are replaced, never accumulated; the final
+   historical sample is overwritten from exact range totals. */
+function rangeSamples(range, tail) {
+  const gaugeKeys = new Set((range.latest || []).map(rowKey));
+  let counters = new Map();
+  const gauges = new Map();
+  const seedCounter = r => {
+    const key = rowKey(r);
+    if (!gaugeKeys.has(key) && !counters.has(key))
+      counters.set(key, { metric: r.metric, labels: r.labels || {}, value: 0 });
+  };
+  for (const r of range.totals || []) seedCounter(r);
+  for (const point of range.points || [])
+    for (const r of point.values || []) seedCounter(r);
+
+  const rows = () => [...counters.values(), ...gauges.values()].map(asRow);
+  const baseline = range.window.effective_from ?? range.window.requested_from;
+  const out = [{ t: baseline * 1000, rows: rows() }];
+  const points = [...(range.points || [])].sort((a, b) => a.to - b.to);
+  for (const point of points) {
+    for (const r of point.values || []) {
+      const key = rowKey(r);
+      if (gaugeKeys.has(key)) {
+        gauges.set(key, { metric: r.metric, labels: r.labels || {}, value: +r.value });
+      } else {
+        const current = counters.get(key) || { metric: r.metric, labels: r.labels || {}, value: 0 };
+        counters.set(key, { ...current, value: current.value + (+r.value || 0) });
+      }
+    }
+    out.push({ t: point.to * 1000, rows: rows() });
+  }
+
+  counters = new Map((range.totals || []).map(r =>
+    [rowKey(r), { metric: r.metric, labels: r.labels || {}, value: +r.value }]));
+  for (const r of range.latest || [])
+    gauges.set(rowKey(r), { metric: r.metric, labels: r.labels || {}, value: +r.value });
+  if (out.length > 1) out[out.length - 1].rows = rows();
+
+  if (tail && tail.base_history_revision === range.history_revision) {
+    for (const r of tail.totals || []) {
+      const key = rowKey(r);
+      const current = counters.get(key) || { metric: r.metric, labels: r.labels || {}, value: 0 };
+      counters.set(key, { ...current, value: current.value + (+r.value || 0) });
+    }
+    out.push({ t: tail.to * 1000, rows: rows() });
+  }
+  return out;
+}
+
 /* pool capacity from per-lane rpms when the server provides them (keys can
    have different limits); the uniform `rpm` field is the fallback */
 const poolCapacity = () => Math.max(1, cfg.capacity_rpm ?? cfg.lanes * cfg.rpm);
@@ -668,25 +719,22 @@ function rate(cur, prev, curT, prevT) {
 const rateSeries = get => samples.slice(1).map((s, i) =>
   ({ t: s.t, v: rate(get(s), get(samples[i]), s.t, samples[i].t) }));
 
-/* windowed total: whole view in range mode, lifetime in live mode */
+/* every selected range begins at a synthetic zero-counter baseline */
 const windowed = get => {
-  if (!samples.length) return 0;
-  const last = get(samples[samples.length-1]);
-  return mode.kind === 'live' ? last : Math.max(0, last - get(samples[0]));
+  if (samples.length < 2) return 0;
+  return Math.max(0, get(samples[samples.length-1]) - get(samples[0]));
 };
-/* windowed per-key map: cumulative in live mode, delta over view in range mode */
+/* windowed per-key map: delta over the selected view */
 function wgroups(name, key, f) {
   const cur = groups(samples[samples.length-1].rows, name, key, f);
-  if (mode.kind !== 'live') {
-    const base = groups(samples[0].rows, name, key, f);
-    for (const [k, v] of cur) cur.set(k, Math.max(0, v - (base.get(k) || 0)));
-  }
+  const base = groups(samples[0].rows, name, key, f);
+  for (const [k, v] of cur) cur.set(k, Math.max(0, v - (base.get(k) || 0)));
   return cur;
 }
-/* windowed histogram buckets: lifetime in live mode, delta over view in range mode */
+/* windowed histogram buckets: delta over the selected view */
 function wbuckets(metric, f) {
   const cur = buckets(samples[samples.length-1].rows, metric, f);
-  if (mode.kind === 'live' || samples.length < 2) return cur;
+  if (samples.length < 2) return cur;
   return deltaBuckets(cur, buckets(samples[0].rows, metric, f));
 }
 /* pairwise windowed average of a histogram's sum/count — a trend line for
@@ -1095,8 +1143,8 @@ const TITLES = { overview: 'Overview', models: 'Models', clients: 'Clients', rel
 
 function render() {
   if (!samples.length) return;
-  const last = samples[samples.length-1], rows = last.rows;
-  const windowLabel = mode.kind === 'live' ? 'lifetime' : 'in range';
+  const last = samples[samples.length-1], rows = nowRows;
+  const windowLabel = 'selected window';
 
   /* ----- shared per-model aggregates ----- */
   const ptok = wgroups('nimproxy_prompt_tokens_total', 'model');
@@ -1135,20 +1183,18 @@ function render() {
   const base = samples[0];
   const savedAt = s => {
     let v = 0;
-    v += (sum(s.rows, 'nimproxy_prompt_tokens_total') - (mode.kind === 'live' ? 0 : sum(base.rows, 'nimproxy_prompt_tokens_total'))) / 1e6 * cfg.price_in;
-    v += (sum(s.rows, 'nimproxy_completion_tokens_total') - (mode.kind === 'live' ? 0 : sum(base.rows, 'nimproxy_completion_tokens_total'))) / 1e6 * cfg.price_out;
+    v += (sum(s.rows, 'nimproxy_prompt_tokens_total') - sum(base.rows, 'nimproxy_prompt_tokens_total')) / 1e6 * cfg.price_in;
+    v += (sum(s.rows, 'nimproxy_completion_tokens_total') - sum(base.rows, 'nimproxy_completion_tokens_total')) / 1e6 * cfg.price_out;
     return Math.max(0, v);
   };
 
   /* ----- shared proxy / capacity aggregates ----- */
   const reqPts = rateSeries(s => sum(s.rows, 'nimproxy_requests_total'));
-  // Trailing-60s average in live mode so the gauge doesn't jump on 3s bursts.
-  const recent = reqPts.filter(p => p.t >= (reqPts[reqPts.length-1]?.t || 0) - 60000);
-  const curRpm = recent.length ? recent.reduce((a,p) => a+p.v, 0) / recent.length : 0;
+  const curRpm = nowRpm;
   const avgRpm = reqPts.length ? reqPts.reduce((a,p) => a+p.v, 0) / reqPts.length : 0;
   const peakRpm = reqPts.length ? Math.max(...reqPts.map(p => p.v)) : 0;
   const capacity = poolCapacity();
-  const rpmNow = mode.kind === 'live' ? curRpm : avgRpm;
+  const rpmNow = curRpm;
   const capRatio = rpmNow / capacity;
   // Green while there's headroom, amber approaching the cap, red once saturated.
   const capColor = capRatio >= 0.9 ? css('--red') : capRatio >= 0.7 ? css('--amber') : MED;
@@ -2146,73 +2192,189 @@ const RENDERERS = { overview: renderOverview, models: renderModels, clients: ren
   settings: () => {} /* settings never rides the metrics poll */ };
 
 /* ---------- data sources ---------- */
-async function pollLive() {
-  if (mode.kind !== 'live' || mode.paused) return;
-  try {
-    const rows = parseProm(await (await fetch('/metrics')).text());
-    samples.push({ t: Date.now(), rows });
-    if (samples.length > KEEP) samples.shift();
-    render();
-    $('live').className = 'live';
-    $('liveText').textContent = 'live · 3s poll';
-    $('uptime').textContent = 'up ' + ago(Date.now()/1000 - cfg.started);
-  } catch {
+async function fetchRange(from, to) {
+  const url = `/api/dashboard?from=${from}&to=${to}&points=288`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`range ${response.status}`);
+  rangeData = await response.json();
+}
+
+function applyNowConfig(next) {
+  cfg = {
+    version: next.version || '', started: +next.started || Date.now()/1000,
+    lanes: +next.lanes || 0, rpms: next.rpms || [], rpm: Math.max(0, ...(next.rpms || [40])),
+    capacity_rpm: +next.capacity_rpm || 0,
+    price_in: +next.price_in || 0, price_out: +next.price_out || 0, auth: !!next.auth,
+    default_window_days: +next.default_window_days || 30,
+    retention_days: +next.retention_days || 0,
+    slo_target_percent: +next.slo_target_percent || 99.9,
+  };
+  $('verinfo').textContent = `v${cfg.version} · ${cfg.lanes} lanes · auth ${cfg.auth ? 'on' : 'off'}`;
+  const defaultButton = document.querySelector('#ranges [data-range="default"]');
+  if (defaultButton) defaultButton.textContent = `Default · ${cfg.default_window_days}d`;
+}
+
+function followingBounds() {
+  const to = nowData.sampled_at;
+  if (mode.preset === 'all-retained') {
+    const earliest = nowData.available_from;
+    return { from: earliest == null ? Math.max(0, to - 1) : Math.max(0, earliest - 1), to };
+  }
+  const seconds = mode.preset === 'default'
+    ? cfg.default_window_days * 86400
+    : Math.max(1, parseInt(mode.preset));
+  return { from: Math.max(0, to - seconds), to };
+}
+
+function presetLabel() {
+  if (mode.preset === 'default') return `Default · ${cfg.default_window_days}d`;
+  if (mode.preset === 'all-retained') return 'All retained';
+  return ({ '3600': '1h', '21600': '6h', '86400': '24h', '604800': '7d', '2592000': '30d' })[mode.preset] || '';
+}
+
+const scopeDate = seconds => new Date(seconds * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
+const scopeTime = seconds => new Date(seconds * 1000).toLocaleString([], {
+  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+});
+
+function updateScope() {
+  if (!rangeData) return;
+  const tail = mode.kind === 'following' && !mode.paused &&
+    nowData?.tail?.base_history_revision === rangeData.history_revision ? nowData.tail : null;
+  const hasTraffic = (rangeData.totals || []).some(r => +r.value > 0) ||
+    (tail?.totals || []).some(r => +r.value > 0);
+  if (!hasTraffic) {
+    $('rangeinfo').textContent = 'No traffic in selected window';
+    return;
+  }
+  const from = rangeData.window.effective_from ?? mode.from;
+  const to = tail?.to ?? rangeData.window.effective_to ?? mode.to;
+  if (mode.kind === 'following' && !mode.paused) {
+    $('rangeinfo').textContent = `● Following now    ${presetLabel()}    ${scopeDate(from)} – ${scopeDate(to)}`;
+  } else {
+    $('rangeinfo').textContent = `○ Fixed range    ${scopeTime(from)} – ${scopeTime(to)}`;
+  }
+}
+
+function syncFollowControl(offline = false) {
+  if (offline) {
     $('live').className = 'live down';
     $('liveText').textContent = 'offline';
+    return;
   }
+  const following = mode.kind === 'following' && !mode.paused;
+  $('live').className = following ? 'live' : 'live idle';
+  $('liveText').textContent = following ? 'following now' : 'fixed range';
 }
 
-async function loadRange(from, to) {
-  mode = { kind: 'range', paused: false };
-  $('live').className = 'live idle';
-  $('liveText').textContent = 'history';
-  $('rangeinfo').textContent =
-    new Date(from*1000).toLocaleString() + ' – ' + new Date(to*1000).toLocaleString();
+function rebuildSamples() {
+  if (!rangeData) return;
+  const tail = mode.kind === 'following' && !mode.paused ? nowData?.tail : null;
+  samples = rangeSamples(rangeData, tail);
+  updateScope();
+}
+
+async function refreshSelectedRange() {
+  if (!nowData) return;
+  if (mode.kind === 'following') {
+    const bounds = followingBounds();
+    mode.from = bounds.from;
+    mode.to = bounds.to;
+  }
+  await fetchRange(mode.from, mode.to);
+  rebuildSamples();
+}
+
+let pollingNow = false;
+async function pollNow() {
+  if (pollingNow) return;
+  pollingNow = true;
   try {
-    const data = await (await fetch(`/api/history?from=${from}&to=${to}`)).json();
-    samples = data.map(p => ({ t: p.t * 1000, rows: parseProm(p.m) }));
-    if (samples.length < 2) {
-      for (const el of document.querySelectorAll('main [id^="chart-"], main #heatmap, main #o-traffic'))
-        el.innerHTML = '<div class="empty">Not enough history in this window yet — snapshots land every 5 minutes</div>';
-      if (samples.length) render();
-      return;
+    const response = await fetch('/api/dashboard/now');
+    if (!response.ok) throw new Error(`now ${response.status}`);
+    const next = await response.json();
+    const nextRows = next.metrics.map(asRow);
+    const historyChanged = rangeData && next.history_revision !== rangeData.history_revision;
+    const configChanged = nowData && next.config_revision !== nowData.config_revision;
+
+    if (previousNow)
+      nowRpm = rate(sum(nextRows, 'nimproxy_requests_total'),
+        sum(previousNow.rows, 'nimproxy_requests_total'),
+        next.sampled_at * 1000, previousNow.t);
+    previousNow = { t: next.sampled_at * 1000, rows: nextRows };
+    nowData = next;
+    nowRows = nextRows;
+    applyNowConfig(next);
+
+    if (!rangeData) {
+      await refreshSelectedRange();
+    } else if (mode.kind === 'following' && !mode.paused) {
+      if (historyChanged || (configChanged && mode.preset === 'default'))
+        await refreshSelectedRange();
+      else {
+        const bounds = followingBounds();
+        mode.from = bounds.from;
+        mode.to = bounds.to;
+        rebuildSamples();
+      }
     }
     render();
+    syncFollowControl();
+    $('uptime').textContent = 'up ' + ago(next.sampled_at - cfg.started);
   } catch {
-    $('rangeinfo').textContent = 'failed to load history';
+    syncFollowControl(true);
+  } finally {
+    pollingNow = false;
   }
-}
-
-function goLive() {
-  mode = { kind: 'live', paused: false };
-  samples = [];
-  $('rangeinfo').textContent = '';
-  pollLive();
 }
 
 /* ---------- controls ---------- */
 for (const b of document.querySelectorAll('#ranges button')) {
-  b.addEventListener('click', () => {
+  b.addEventListener('click', async () => {
     for (const o of document.querySelectorAll('#ranges button')) o.setAttribute('aria-pressed', o === b);
     const r = b.dataset.range;
     $('custom').classList.toggle('show', r === 'custom');
-    if (r === 'live') goLive();
-    else if (r !== 'custom') {
-      const now = Math.floor(Date.now()/1000);
-      loadRange(now - parseInt(r), now);
+    if (r !== 'custom') {
+      mode = { kind: 'following', preset: r, paused: false, from: 0, to: 0 };
+      syncFollowControl();
+      try {
+        await refreshSelectedRange();
+        render();
+      } catch {
+        $('rangeinfo').textContent = 'failed to load selected window';
+      }
     }
   });
 }
-$('applyRange').addEventListener('click', () => {
+$('applyRange').addEventListener('click', async () => {
   const f = new Date($('from').value).getTime()/1000, t = new Date($('to').value).getTime()/1000;
-  if (isFinite(f) && isFinite(t) && t > f) loadRange(Math.floor(f), Math.floor(t));
+  if (!isFinite(f) || !isFinite(t) || t <= f) return;
+  mode = { kind: 'fixed', preset: 'custom', paused: false, from: Math.floor(f), to: Math.floor(t) };
+  syncFollowControl();
+  try {
+    await refreshSelectedRange();
+    render();
+  } catch {
+    $('rangeinfo').textContent = 'failed to load selected window';
+  }
 });
-$('live').addEventListener('click', () => {
-  if (mode.kind !== 'live') return;
+$('live').addEventListener('click', async () => {
+  if (mode.kind !== 'following') return;
   mode.paused = !mode.paused;
-  $('liveText').textContent = mode.paused ? 'paused' : 'live · 3s poll';
-  $('live').className = mode.paused ? 'live idle' : 'live';
-  if (!mode.paused) pollLive();
+  if (mode.paused && samples.length) {
+    mode.from = samples[0].t / 1000;
+    mode.to = samples[samples.length - 1].t / 1000;
+    updateScope();
+    render();
+  } else if (!mode.paused) {
+    try {
+      await refreshSelectedRange();
+      render();
+    } catch {
+      $('rangeinfo').textContent = 'failed to resume selected window';
+    }
+  }
+  syncFollowControl();
 });
 for (const b of document.querySelectorAll('#side nav button')) {
   b.addEventListener('click', () => {
@@ -2231,14 +2393,12 @@ for (const b of document.querySelectorAll('#side nav button')) {
 
 /* ---------- boot ---------- */
 (async () => {
-  try { cfg = await (await fetch('/dash/config.json')).json(); } catch {}
-  $('verinfo').textContent = `v${cfg.version} · ${cfg.lanes} lanes · auth ${cfg.auth ? 'on' : 'off'}`;
   const pad = n => String(n).padStart(2, '0');
   const toLocal = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   $('to').value = toLocal(new Date());
   $('from').value = toLocal(new Date(Date.now() - 86400e3));
-  await pollLive();
-  setInterval(pollLive, POLL_MS);
+  await pollNow();
+  setInterval(pollNow, POLL_MS);
 })();
 </script>
 </body>

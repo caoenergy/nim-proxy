@@ -1,9 +1,8 @@
 //! Metrics history: every 5 minutes the sampler appends a full Prometheus
-//! snapshot (the same text /metrics serves) to memory and, when a data dir is
-//! writable, to history.jsonl. The dashboard's range queries replay these
-//! snapshots through the same client-side parser it uses for live polls.
-//! Snapshots are ~4 KB, so 30 days is ~35 MB — retention is a days knob
-//! (HISTORY_DAYS, 0 = keep forever), not a size-management subsystem.
+//! snapshot to disk when a data dir is writable and normalizes it into a
+//! typed in-memory index. Dashboard range queries consume exact totals plus
+//! bounded rollup points from that index. Snapshots are ~4 KB, so 30 days is
+//! ~35 MB — retention is a days knob, not a size-management subsystem.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -428,9 +427,6 @@ enum CompactionOutcome {
 }
 
 pub struct History {
-    /// Temporary raw compatibility storage for `/api/history`; Task 7 removes
-    /// it after the route switches to typed rollups.
-    points: Mutex<Vec<RawPoint>>,
     inner: Mutex<HistoryInner>,
     file: Option<PathBuf>,
     /// Retention in days (0 = keep forever). Atomic so the settings layer can
@@ -494,7 +490,6 @@ impl History {
         });
 
         records.sort_by_key(LoadedRecord::timestamp);
-        let mut raw_points = Vec::new();
         let mut indexed_points = Vec::new();
         let mut last_parsed: Option<ParsedSnapshot> = None;
         let mut last_sample_boot: Option<String> = None;
@@ -534,7 +529,6 @@ impl History {
                     gauges: normalized.gauges,
                     capacity: point.capacity.clone(),
                 });
-                raw_points.push(point.clone());
             } else {
                 filtered_by_retention += 1;
             }
@@ -548,7 +542,6 @@ impl History {
         let boot_id = new_boot_id();
         let compaction_pending = file.is_some() && filtered_by_retention > 0;
         let history = Self {
-            points: Mutex::new(raw_points),
             inner: Mutex::new(HistoryInner {
                 points: indexed_points,
                 revision,
@@ -603,9 +596,7 @@ impl History {
         let cutoff = now.saturating_sub(days.saturating_mul(86_400));
         let mut inner = self.inner.lock().unwrap();
         let before = inner.points.len();
-        let mut raw_points = self.points.lock().unwrap();
         inner.points.retain(|point| point.t >= cutoff);
-        raw_points.retain(|point| point.t >= cutoff);
         let removed = before - inner.points.len();
         if removed > 0 {
             *self.dropped_since_compact.lock().unwrap() += removed;
@@ -613,7 +604,6 @@ impl History {
         }
         inner.available_from = inner.points.first().map(|point| point.t);
         inner.available_to = inner.points.last().map(|point| point.t);
-        drop(raw_points);
         drop(inner);
 
         if self.file.is_some() {
@@ -662,24 +652,16 @@ impl History {
         }
 
         let days = self.days.load(Ordering::Relaxed);
-        let mut raw_points = self.points.lock().unwrap();
         if days > 0 {
             let cutoff = t.saturating_sub(days * 86400);
             let before = inner.points.len();
             inner.points.retain(|point| point.t >= cutoff);
-            raw_points.retain(|point| point.t >= cutoff);
             *self.dropped_since_compact.lock().unwrap() += before - inner.points.len();
         }
         inner.points.push(IndexedPoint {
             t,
             deltas: normalized.deltas,
             gauges: normalized.gauges,
-            capacity: Some(capacity.clone()),
-        });
-        raw_points.push(RawPoint {
-            t,
-            m: snapshot.to_owned(),
-            boot: Some(self.boot_id.clone()),
             capacity: Some(capacity.clone()),
         });
         inner.revision = inner.revision.wrapping_add(1);
@@ -697,7 +679,6 @@ impl History {
             m: snapshot,
         })
         .expect("history sample record serializes");
-        drop(raw_points);
         self.persist_sample(&line);
 
         if self.compaction_pending.load(Ordering::SeqCst) {
@@ -823,22 +804,6 @@ impl History {
                 totals: metric_values(normalized.deltas),
             },
         }
-    }
-
-    /// Snapshots in [from, to], stride-sampled down to at most `max` plus the
-    /// range's endpoints. Temporary raw compatibility until Task 7.
-    pub fn range(&self, from: u64, to: u64, max: usize) -> Vec<(u64, String)> {
-        let points = self.points.lock().unwrap();
-        let hits: Vec<&RawPoint> = points
-            .iter()
-            .filter(|point| point.t >= from && point.t <= to)
-            .collect();
-        let stride = hits.len().div_ceil(max.max(2));
-        hits.iter()
-            .enumerate()
-            .filter(|(index, _)| index % stride == 0 || *index == hits.len() - 1)
-            .map(|(_, point)| (point.t, point.m.clone()))
-            .collect()
     }
 
     fn persist_boot_marker(&self) {
@@ -1170,7 +1135,6 @@ mod tests {
 
     fn history_with_file(days: u64, file: PathBuf) -> Arc<History> {
         Arc::new(History {
-            points: Mutex::new(Vec::new()),
             inner: Mutex::new(HistoryInner::default()),
             file: Some(file),
             days: AtomicU64::new(days),
@@ -1358,15 +1322,15 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
     }
 
     #[test]
-    fn retention_prunes_and_range_filters() {
+    fn retention_prunes_and_rollup_filters() {
         let h = memory_history(1);
         h.append(1_000, "old", capacity(40));
         h.append(200_000, "new", capacity(40)); // 1-day cutoff drops t=1000
-        assert_eq!(h.range(0, u64::MAX, 100).len(), 1);
+        assert_eq!(h.inner.lock().unwrap().points.len(), 1);
         h.append(200_300, "newer", capacity(40));
-        let r = h.range(200_000, 200_100, 100);
-        assert_eq!(r.len(), 1);
-        assert_eq!(r[0].1, "new");
+        let rollup = h.rollup(199_999, 200_100, 100);
+        assert_eq!(rollup.points.len(), 1);
+        assert_eq!(rollup.points[0].to, 200_000);
     }
 
     #[tokio::test]
@@ -1425,17 +1389,6 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         assert_eq!(history.status().available_to, Some(300));
         let rollup = history.rollup(299, 300, 20);
         assert_eq!(value(&rollup.totals, "requests_total"), 15.0);
-    }
-
-    #[test]
-    fn range_downsamples_to_max() {
-        let h = memory_history(0);
-        for i in 0..1000u64 {
-            h.append(i, &i.to_string(), capacity(40));
-        }
-        let r = h.range(0, 999, 100);
-        assert!(r.len() <= 101, "got {}", r.len());
-        assert_eq!(r.last().unwrap().0, 999, "endpoint kept");
     }
 
     /// A unique per-test scratch dir (std-only; removed on drop).
@@ -1798,13 +1751,20 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         .unwrap();
         // days = 0 exercises the "infinite" retention log branch.
         let h = History::load(Some(dir.0.clone()), 0, capacity(40));
-        let all = h.range(0, u64::MAX, 100);
-        assert_eq!(all.len(), 3, "3 valid lines parsed, junk skipped");
-        assert_eq!(all[0].0, 5, "snapshots sorted by timestamp on load");
+        let timestamps = h
+            .inner
+            .lock()
+            .unwrap()
+            .points
+            .iter()
+            .map(|point| point.t)
+            .collect::<Vec<_>>();
+        assert_eq!(timestamps.len(), 3, "3 valid lines parsed, junk skipped");
+        assert_eq!(timestamps[0], 5, "snapshots sorted by timestamp on load");
         // Finite retention is also enforced while loading so a compacted
         // pre-cutoff baseline stays hidden after restart.
         let h2 = History::load(Some(dir.0.clone()), 7, capacity(40));
-        assert!(h2.range(0, u64::MAX, 100).is_empty());
+        assert!(h2.inner.lock().unwrap().points.is_empty());
         assert_eq!(h2.status().available_from, None);
     }
 
@@ -2037,7 +1997,7 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         let h = history_with_file(0, dir.0.clone());
         h.append(1, "snap", capacity(40));
         assert_eq!(
-            h.range(0, u64::MAX, 10).len(),
+            h.inner.lock().unwrap().points.len(),
             1,
             "in-memory append still works"
         );
