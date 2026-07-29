@@ -450,6 +450,13 @@ mod tests {
         }
 
         sorted("ApiError", &ApiError::new("code", "message"));
+        sorted(
+            "CapacityRollup",
+            &crate::history::CapacityRollup {
+                average_rpm: 0.0,
+                latest_rpms: vec![],
+            },
+        );
         sorted("ApiErrorBody", &ApiError::new("code", "message").error);
         sorted("OkResponse", &OkResponse::new());
         sorted(

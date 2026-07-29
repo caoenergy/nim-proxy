@@ -33,7 +33,7 @@ hold-out.
 The constraint that shaped everything: **the wire format must not move.**
 0.6.6 already carries two breaking changes (the pricing removal and the
 `nimproxy_lane_benched_total` rename). A third — an accidental one — would be
-unforgivable, and ~85 settings tests plus a dashboard that parses these bodies
+unforgivable, and 47 API-touching tests plus a dashboard that parses these bodies
 are the things that would break.
 
 ## Options
@@ -114,7 +114,7 @@ every `/setup` operation explicitly waiving it.
 
 ## Consequences
 
-- **The wire format did not move.** Verified two ways: the ~85 settings tests
+- **The wire format did not move.** Verified two ways: the 47 API-touching tests
   in `tests/e2e.rs` pass **unmodified**, and a throwaway harness captured raw
   response bytes for 31 request/response pairs (both `/api/config` role views,
   both dashboard endpoints with and without traffic, every settings write, and

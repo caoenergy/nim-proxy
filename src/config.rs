@@ -731,6 +731,80 @@ mod tests {
         validate(&sc).expect("a legacy pricing block must not fail validation");
     }
 
+    /// A verbatim `config.json` as 0.6.5 wrote it: `limits` in the pre-reorder
+    /// key order and `governor.overrides` written by a `HashMap` (so, arbitrary
+    /// order). Neither the field reorder nor the `HashMap -> BTreeMap` switch
+    /// may change what loads — serde matches by name, not position.
+    #[test]
+    fn a_0_6_5_config_json_loads_unchanged() {
+        let dir = TestDir::new();
+        // Hand-written, NOT round-tripped through the current structs: this is
+        // the byte shape an installed 0.6.5 has on disk.
+        let raw = r#"{
+          "version": 1,
+          "upstream": {
+            "base_url": "https://integrate.api.nvidia.com",
+            "nim_keys": [{"key":"nvapi-one","owner":"root","enabled":true,"rpm":40}]
+          },
+          "client_auth": {"mode":"keyed","keys":[]},
+          "limits": {
+            "max_wait_secs": 111,
+            "heartbeat_secs": 22,
+            "models_ttl_secs": 333,
+            "stream_idle_secs": 44,
+            "request_timeout_secs": 555,
+            "max_inflight": 66,
+            "strict_passthrough": true
+          },
+          "history": {"days": 7},
+          "dashboard": {"default_window_days": 3, "slo_target_percent": 95.5},
+          "governor": {
+            "enabled": false,
+            "overrides": {"zzz/model": 9, "aaa/model": 1, "mmm/model": 5}
+          },
+          "users": [{"username":"root","password_hash":"pbkdf2-sha256$1000$aa$bb","role":"superuser"}],
+          "pricing": {"ref_price_in": 0.5, "ref_price_out": 2.0}
+        }"#;
+        fs::write(store_path(&dir.0), raw).unwrap();
+
+        let sc = load(&dir.0).unwrap().expect("a 0.6.5 store must load");
+        validate(&sc).expect("a 0.6.5 store must stay valid");
+
+        // Every `limits` field landed on the right key despite the reorder.
+        assert_eq!(sc.limits.max_wait_secs, 111);
+        assert_eq!(sc.limits.heartbeat_secs, 22);
+        assert_eq!(sc.limits.models_ttl_secs, 333);
+        assert_eq!(sc.limits.stream_idle_secs, 44);
+        assert_eq!(sc.limits.request_timeout_secs, 555);
+        assert_eq!(sc.limits.max_inflight, 66);
+        assert!(sc.limits.strict_passthrough);
+
+        // Nothing else drifted.
+        assert_eq!(sc.history.days, 7);
+        assert_eq!(sc.dashboard.default_window_days, 3);
+        assert_eq!(sc.dashboard.slo_target_percent, 95.5);
+        assert_eq!(sc.upstream.nim_keys[0].rpm, 40);
+        assert_eq!(sc.users[0].role, Role::Superuser);
+
+        // The HashMap -> BTreeMap switch drops no entry and rewrites no value.
+        assert!(!sc.governor.enabled);
+        assert_eq!(sc.governor.overrides.len(), 3);
+        assert_eq!(sc.governor.overrides["aaa/model"], 1);
+        assert_eq!(sc.governor.overrides["mmm/model"], 5);
+        assert_eq!(sc.governor.overrides["zzz/model"], 9);
+
+        // Re-saving keeps every value, and is now byte-deterministic.
+        save(&dir.0, &sc).unwrap();
+        let first = fs::read_to_string(store_path(&dir.0)).unwrap();
+        let again = load(&dir.0).unwrap().expect("round-trip");
+        save(&dir.0, &again).unwrap();
+        let second = fs::read_to_string(store_path(&dir.0)).unwrap();
+        assert_eq!(first, second, "two saves of one config must be identical");
+        assert_eq!(again.governor.overrides, sc.governor.overrides);
+        assert_eq!(again.limits.max_wait_secs, 111);
+        assert_eq!(again.limits.max_inflight, 66);
+    }
+
     #[test]
     fn future_version_refuses_to_load() {
         let dir = TestDir::new();

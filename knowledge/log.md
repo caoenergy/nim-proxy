@@ -30,7 +30,7 @@ Recorded in [typed-responses-and-generated-openapi](decisions/typed-responses-an
   response bytes for 31 request/response pairs — both `/api/config` role
   views, both dashboard endpoints with and without traffic, every settings
   write, every error branch — before and after the refactor, and compared them
-  key-for-key at every nesting level. The ~85 settings tests in `tests/e2e.rs`
+  key-for-key at every nesting level. The 47 API-touching tests in `tests/e2e.rs`
   are **unmodified**.
 - `/api/config`'s role filter is now a type: `server`/`users` are
   `Option<..>` that are `None` for a `user` role, so the body is built
