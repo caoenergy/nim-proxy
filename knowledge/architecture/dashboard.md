@@ -17,7 +17,7 @@ custom date-range picker, and five persona-aligned tabs, each ordered
 **at-a-glance → trends → detail**:
 
 - **Overview** (landing, balanced) — KPI cards + threshold ring gauges,
-  request/token/savings sparklines, a health strip, a p50/p95 performance
+  request and token sparklines, a health strip, a p50/p95 performance
   band, top models & harnesses.
 - **Models** (benchmarker) — KPI cards, tokens/min-by-model chart, a
   TTFT/tok-s/TPOT/upstream quantile quad, a "how responses end" breakdown,

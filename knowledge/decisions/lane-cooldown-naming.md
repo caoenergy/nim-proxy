@@ -36,8 +36,8 @@ was already load-bearing.
 
 ## Choice
 
-**Option 5.** `bench` → `cooldown` across `src/`, `tests/`, `knowledge/`, and
-`README.md`. The Prometheus series `nimproxy_lane_benched_total` becomes
+**Option 5.** `bench` → `cooldown` across `src/`, `tests/`, `scripts/`,
+`knowledge/`, and `README.md`. The Prometheus series `nimproxy_lane_benched_total` becomes
 `nimproxy_lane_cooldown_total`; every other `nimproxy_*` series is unchanged.
 The internal helper `proxy::bench` becomes `proxy::enter_cooldown`.
 

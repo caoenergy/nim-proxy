@@ -53,8 +53,8 @@ ignored — that list exists for exactly this.
 ## Consequences
 
 - **`/api/settings/pricing` is gone** (404 after upgrade), and `/api/config` no
-  longer carries a `server.pricing` object. `/api/dashboard` no longer emits
-  `price_in` / `price_out`.
+  longer carries a `server.pricing` object. `/api/dashboard/now` no longer
+  emits `price_in` / `price_out`.
 - **Existing config stores load unchanged.** `StoredConfig` has no
   `deny_unknown_fields`, so a `pricing` block written by 0.6.5 or earlier is
   ignored rather than rejected. No migration runs, and nothing rewrites the

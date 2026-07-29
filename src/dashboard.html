@@ -1008,15 +1008,15 @@ const ICONS = {
   bolt: '<path d="M9 1.5L3 9h4l-1 5.5L13 7H9z"/>',
   grid: '<path d="M2 8h5M2 4h9M2 12h7"/>',
 };
-function sparkSvg(pts, green, hero) {
+function sparkSvg(pts, hero) {
   if (!pts || pts.length < 2) return '';
   const W = 300, H = hero ? 58 : 44, vs = pts.map(p => p.v);
   const vmax = Math.max(1e-9, ...vs);
   const X = i => W * i / (vs.length - 1), Y = v => 4 + (H - 8) * (1 - Math.min(v, vmax) / vmax);
   const d = vs.map((v, i) => (i ? 'L' : 'M') + X(i).toFixed(1) + ',' + Y(v).toFixed(1)).join('');
   return `<svg class="kpispark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">` +
-    `<path d="${d}L${W},${H}L0,${H}Z" fill="url(#${green ? 'gGreen' : 'gMuted'})"/>` +
-    `<path d="${d}" fill="none" stroke="${green ? MED : '#8E967F'}" stroke-width="1.5"/></svg>`;
+    `<path d="${d}L${W},${H}L0,${H}Z" fill="url(#gMuted)"/>` +
+    `<path d="${d}" fill="none" stroke="#8E967F" stroke-width="1.5"/></svg>`;
 }
 /* trend chip: second half of the window vs the first half */
 function deltaChip(pts, downIsGood) {
@@ -1030,14 +1030,14 @@ function deltaChip(pts, downIsGood) {
   const good = downIsGood ? d <= 0 : d >= 0;
   return `<span class="chip ${good ? 'good' : 'bad'}" title="second half of this window vs the first">${d >= 0 ? '+' : ''}${Math.abs(d) >= 10 ? d.toFixed(0) : d.toFixed(1)}%</span>`;
 }
-/* k: {icon, label, value, sub, delta?, valColor?, pts?, green?} */
+/* k: {icon, label, value, sub, delta?, pts?} */
 function kpiCards(el, defs, hero) {
   el.innerHTML = defs.map(k =>
     `<div class="kpi${hero ? ' hero' : ''}">` +
     `<div class="kpihead"><span class="kpilabel"><svg viewBox="0 0 16 16">${ICONS[k.icon] || ''}</svg>${esc(k.label)}</span>${k.delta || ''}</div>` +
-    `<div class="kpival"${k.valColor ? ` style="color:${k.valColor}"` : ''}>${k.value}</div>` +
+    `<div class="kpival">${k.value}</div>` +
     `<div class="kpisub">${k.sub || ''}</div>` +
-    sparkSvg(k.pts, k.green, hero) + `</div>`).join('');
+    sparkSvg(k.pts, hero) + `</div>`).join('');
 }
 
 /* one metric-list row: label, right-aligned mono value, optional tone */

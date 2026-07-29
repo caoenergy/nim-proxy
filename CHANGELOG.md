@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Reliability tables, the Pricing settings card, the `pricing` config block
   (`ref_price_in` / `ref_price_out`), and the `POST /api/settings/pricing`
   route are gone; `/api/config` no longer returns `server.pricing` and
-  `/api/dashboard` no longer returns `price_in` / `price_out`.
+  `/api/dashboard/now` no longer returns `price_in` / `price_out`.
 
   An honest figure needs a published per-model rate for each model in the pool;
   applying one reference rate to every model measured nothing. Existing config
