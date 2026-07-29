@@ -32,6 +32,8 @@ the chronology in [log.md](log.md).
 | [ui-managed-config-store](decisions/ui-managed-config-store.md) | App config moves from env into a JSON store edited from the dashboard; first-run wizard, multi-user + per-key ownership, no encryption at rest |
 | [explicit-request-deadline](decisions/explicit-request-deadline.md) | Opt-in wall-clock bound cancels queue/retry/generation work without weakening patient defaults |
 | [dependency-update-cooldown](decisions/dependency-update-cooldown.md) | Routine dependency updates wait seven days; security updates remain immediate |
+| [lane-cooldown-naming](decisions/lane-cooldown-naming.md) | `bench` → `cooldown`; renames the metric and accepts a bounded history gap over a permanent alias |
+| [no-estimated-savings-metric](decisions/no-estimated-savings-metric.md) | "Dollars saved" needed per-model published rates to be honest; deleted rather than faked |
 
 ## Research — validated external facts
 
@@ -45,7 +47,7 @@ the chronology in [log.md](log.md).
 
 | Page | One-liner |
 |---|---|
-| [key-pool](architecture/key-pool.md) | Per-key sliding-window lanes; least-loaded selection; cooldown benching |
+| [key-pool](architecture/key-pool.md) | Per-key sliding-window lanes; least-loaded selection; cooldown on upstream backoff |
 | [dispatcher](architecture/dispatcher.md) | Global FIFO slot queue; abandoned-waiter slot return; affinity accounting |
 | [governor](architecture/governor.md) | Per-model concurrency gate; classifies worker exhaustion apart from 429s and backs off the model, adaptively |
 | [streaming-pipeline](architecture/streaming-pipeline.md) | Heartbeats, retry/failover, absolute deadlines, idle timeout, SSE usage scanning |

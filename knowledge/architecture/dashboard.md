@@ -149,8 +149,8 @@ The browser polls `/api/dashboard/now` every three seconds. Only a
 following, unpaused window refetches history when its revision changes.
 Custom and paused totals remain fixed, while **Now** widgets—active requests,
 queue depth, current RPM/capacity, enabled lane slots, uptime, and header
-metadata—continue refreshing. A config-revision change updates pricing,
-capacity, auth state, default window, retention, and SLO without reloading
+metadata—continue refreshing. A config-revision change updates capacity,
+auth state, default window, retention, and SLO without reloading
 the page; if the active preset is the default, its following bounds are
 recomputed.
 
@@ -173,7 +173,7 @@ recomputed.
   history uses the contemporaneous value stored with each v2 sample; legacy
   intervals explicitly show capacity unavailable. Active load, lane count,
   current RPM, and utilization are labeled **Now**; selected-window lane
-  request and bench counts remain historical.
+  request and cooldown counts remain historical.
 
 Following history survives refresh and process restart because it is rebuilt
 from the server index; only the adjacent-poll rate shown in **Now** widgets

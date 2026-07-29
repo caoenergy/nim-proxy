@@ -51,9 +51,6 @@ pub struct Config {
     pub request_timeout: Duration,
     /// Never modify request bodies (disables stream_options usage injection).
     pub strict_passthrough: bool,
-    /// Reference $/1M token prices for the dashboard's "dollars saved" figure.
-    pub price_in: f64,
-    pub price_out: f64,
     /// token -> client name. None = local mode, no client auth.
     pub clients: Option<HashMap<String, String>>,
     /// Cap on concurrent requests; bounds memory under floods.
@@ -256,8 +253,6 @@ async fn api_dashboard_now(State(state): State<Arc<AppState>>) -> axum::Json<ser
         "version": env!("CARGO_PKG_VERSION"),
         "sampled_at": now,
         "started": state.started,
-        "price_in": stored.pricing.ref_price_in,
-        "price_out": stored.pricing.ref_price_out,
         "auth": stored.client_auth.mode == config::Mode::Keyed,
         "lanes": pool.len(),
         "rpms": pool.rpms(),
@@ -524,7 +519,6 @@ pub async fn run() {
         .route("/api/settings/clients", post(settings::clients))
         .route("/api/settings/upstream", post(settings::upstream))
         .route("/api/settings/limits", post(settings::limits))
-        .route("/api/settings/pricing", post(settings::pricing))
         .route("/api/settings/history", post(settings::history))
         .route("/api/settings/governor", post(settings::governor_cfg))
         .route("/api/settings/users", post(settings::users))

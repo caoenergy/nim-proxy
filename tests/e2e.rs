@@ -1047,9 +1047,9 @@ async fn overloaded_requests_are_shed_with_503() {
 }
 
 /// An unreachable upstream exercises the connection-error arm: the lane is
-/// benched with status "connect" and the request fails fast at the deadline.
+/// put in cooldown with status "connect" and the request fails fast at the deadline.
 #[tokio::test]
-async fn upstream_connection_error_is_benched() {
+async fn upstream_connection_error_enters_cooldown() {
     // Nothing listens on port 1 → every connect attempt fails.
     let proxy = start_proxy_with(
         "http://127.0.0.1:1",
@@ -1071,8 +1071,8 @@ async fn upstream_connection_error_is_benched() {
 
     let metrics = metrics(&proxy).await;
     assert!(
-        metrics.contains(r#"nimproxy_lane_benched_total{lane="0",status="connect"}"#),
-        "connection error benched the lane: {metrics}"
+        metrics.contains(r#"nimproxy_lane_cooldown_total{lane="0",status="connect"}"#),
+        "connection error put the lane in cooldown: {metrics}"
     );
 }
 
@@ -2181,10 +2181,10 @@ async fn worker_exhaustion_governs_the_model_and_spares_the_lane() {
     assert_eq!(v["choices"][0]["message"]["content"], "hello world");
     assert_eq!(mock.state.hit_count(), 2, "one exhausted try, one success");
     // The retry waited out the governor's ~2s drain gap, not the 10s default
-    // lane bench a plain 429-without-Retry-After would have earned.
+    // lane cooldown a plain 429-without-Retry-After would have earned.
     assert!(
         started.elapsed() < Duration::from_secs(8),
-        "retry took {:?} — looks like a lane bench, not a model drain gap",
+        "retry took {:?} — looks like a lane cooldown, not a model drain gap",
         started.elapsed()
     );
 
@@ -2194,8 +2194,8 @@ async fn worker_exhaustion_governs_the_model_and_spares_the_lane() {
         "exhaustion counted: {metrics}"
     );
     assert!(
-        !metrics.contains("nimproxy_lane_benched_total"),
-        "worker exhaustion must never bench a lane: {metrics}"
+        !metrics.contains("nimproxy_lane_cooldown_total"),
+        "worker exhaustion must never cool down a lane: {metrics}"
     );
     assert!(
         metrics.contains(r#"nimproxy_model_limit{model="mock/model-a"} 1"#),
@@ -2231,8 +2231,8 @@ async fn worker_exhaustion_streaming_retries_inside_the_stream() {
         "exhaustion counted: {metrics}"
     );
     assert!(
-        !metrics.contains("nimproxy_lane_benched_total"),
-        "worker exhaustion must never bench a lane: {metrics}"
+        !metrics.contains("nimproxy_lane_cooldown_total"),
+        "worker exhaustion must never cool down a lane: {metrics}"
     );
 }
 
@@ -2339,10 +2339,6 @@ async fn user_role_is_denied_server_settings_and_foreign_keys() {
                 "stream_idle_secs": 300, "request_timeout_secs": 300,
                 "max_inflight": 512, "strict_passthrough": false
             }),
-        ),
-        (
-            "/api/settings/pricing",
-            serde_json::json!({"ref_price_in": 1.0, "ref_price_out": 2.0}),
         ),
         (
             "/api/settings/governor",
@@ -2968,22 +2964,14 @@ async fn governor_settings_reflect_and_persist() {
     );
 }
 
-/// Pricing and dashboard history settings save through the same pipeline and
-/// reflect in /api/config; invalid candidates leave every value unchanged.
+/// Dashboard history settings save through the shared pipeline and reflect in
+/// /api/config; invalid candidates leave every value unchanged.
 #[tokio::test]
-async fn pricing_and_history_settings_reflect_in_api_config() {
+async fn history_settings_reflect_in_api_config() {
     let mock = start_mock().await;
     let proxy = start_proxy(&mock.url, &[]).await;
     let root = support::login(&proxy).await;
 
-    let (status, v) = post_json(
-        &proxy,
-        &root,
-        "/api/settings/pricing",
-        serde_json::json!({"ref_price_in": 1.25, "ref_price_out": 3.5}),
-    )
-    .await;
-    assert_eq!(status, 200, "{v}");
     let (status, v) = post_json(
         &proxy,
         &root,
@@ -2998,8 +2986,6 @@ async fn pricing_and_history_settings_reflect_in_api_config() {
     assert_eq!(status, 200, "{v}");
 
     let cfg = api_config(&proxy, &root).await;
-    assert_eq!(cfg["server"]["pricing"]["ref_price_in"], 1.25);
-    assert_eq!(cfg["server"]["pricing"]["ref_price_out"], 3.5);
     assert_eq!(cfg["server"]["history"]["days"], 45);
     assert_eq!(cfg["server"]["dashboard"]["default_window_days"], 30);
     assert_eq!(cfg["server"]["dashboard"]["slo_target_percent"], 99.5);
@@ -3020,15 +3006,6 @@ async fn pricing_and_history_settings_reflect_in_api_config() {
     assert_eq!(cfg["server"]["history"]["days"], 45);
     assert_eq!(cfg["server"]["dashboard"]["default_window_days"], 30);
     assert_eq!(cfg["server"]["dashboard"]["slo_target_percent"], 99.5);
-
-    let (status, v) = post_json(
-        &proxy,
-        &root,
-        "/api/settings/pricing",
-        serde_json::json!({"ref_price_in": -1.0, "ref_price_out": 3.5}),
-    )
-    .await;
-    assert_eq!(status, 400, "negative prices must be refused: {v}");
 }
 
 /// The limits endpoint enforces the shared rulebook (heartbeat < max_wait)

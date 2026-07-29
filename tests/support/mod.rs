@@ -23,7 +23,7 @@ pub enum Behavior {
     /// 429 with this Retry-After (seconds).
     RateLimited(u64),
     /// 429 carrying NIM's worker-exhaustion signature — model-scoped, so the
-    /// proxy must back off the model (governor), never bench the lane.
+    /// proxy must back off the model (governor), never cool down the lane.
     WorkerExhausted,
     /// A retryable server error.
     ServerError(u16),

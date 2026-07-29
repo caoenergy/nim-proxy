@@ -33,8 +33,6 @@ pub struct StoredConfig {
     #[serde(default)]
     pub limits: Limits,
     #[serde(default)]
-    pub pricing: Pricing,
-    #[serde(default)]
     pub history: HistoryCfg,
     #[serde(default)]
     pub dashboard: DashboardCfg,
@@ -130,23 +128,6 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         serde_json::from_str("{}").expect("all Limits fields have defaults")
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct Pricing {
-    #[serde(default = "default_price_in")]
-    pub ref_price_in: f64,
-    #[serde(default = "default_price_out")]
-    pub ref_price_out: f64,
-}
-
-impl Default for Pricing {
-    fn default() -> Self {
-        Self {
-            ref_price_in: default_price_in(),
-            ref_price_out: default_price_out(),
-        }
     }
 }
 
@@ -254,12 +235,6 @@ fn default_request_timeout() -> u64 {
 fn default_max_inflight() -> usize {
     512
 }
-fn default_price_in() -> f64 {
-    0.5
-}
-fn default_price_out() -> f64 {
-    2.0
-}
 fn default_history_days() -> u64 {
     30
 }
@@ -303,8 +278,6 @@ impl StoredConfig {
             stream_idle: Duration::from_secs(self.limits.stream_idle_secs),
             request_timeout: Duration::from_secs(self.limits.request_timeout_secs),
             strict_passthrough: self.limits.strict_passthrough,
-            price_in: self.pricing.ref_price_in,
-            price_out: self.pricing.ref_price_out,
             clients: match self.client_auth.mode {
                 Mode::Open => None,
                 Mode::Keyed => Some(
@@ -442,13 +415,6 @@ pub fn validate(sc: &StoredConfig) -> Result<(), String> {
     }
     if l.max_inflight == 0 {
         return Err("max_inflight must be >= 1".into());
-    }
-    if !sc.pricing.ref_price_in.is_finite()
-        || !sc.pricing.ref_price_out.is_finite()
-        || sc.pricing.ref_price_in < 0.0
-        || sc.pricing.ref_price_out < 0.0
-    {
-        return Err("reference prices must be non-negative numbers".into());
     }
     if sc.dashboard.default_window_days == 0 {
         return Err("default_window_days must be >= 1".into());
@@ -742,6 +708,23 @@ mod tests {
         }
     }
 
+    /// 0.6.6 removed the `pricing` block. Stores written by 0.6.5 and earlier
+    /// still carry it; `StoredConfig` has no `deny_unknown_fields`, so the
+    /// orphan key must load and be ignored rather than fail the boot.
+    #[test]
+    fn config_with_a_legacy_pricing_block_still_loads() {
+        let dir = TestDir::new();
+        let mut raw = serde_json::to_value(claimed()).unwrap();
+        raw.as_object_mut().unwrap().insert(
+            "pricing".into(),
+            serde_json::json!({"ref_price_in": 0.5, "ref_price_out": 2.0}),
+        );
+        fs::write(store_path(&dir.0), serde_json::to_string(&raw).unwrap()).unwrap();
+
+        let sc = load(&dir.0).unwrap().expect("legacy store must load");
+        validate(&sc).expect("a legacy pricing block must not fail validation");
+    }
+
     #[test]
     fn future_version_refuses_to_load() {
         let dir = TestDir::new();
@@ -811,10 +794,6 @@ mod tests {
             (
                 "bad base_url",
                 Box::new(|sc| sc.upstream.base_url = "ftp://x".into()),
-            ),
-            (
-                "negative price",
-                Box::new(|sc| sc.pricing.ref_price_in = -1.0),
             ),
             (
                 "bad governor cap",

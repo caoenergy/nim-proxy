@@ -123,7 +123,7 @@ fn retryable(status: reqwest::StatusCode) -> bool {
     matches!(status.as_u16(), 429 | 500 | 502 | 503 | 504)
 }
 
-/// Backoff for a benched lane: honor Retry-After when present.
+/// Backoff for a lane in cooldown: honor Retry-After when present.
 fn backoff_for(resp: &reqwest::Response) -> Duration {
     resp.headers()
         .get(header::RETRY_AFTER)
@@ -204,11 +204,12 @@ async fn acquire_model_permit(
     }
 }
 
-/// Bench the granting lane after the upstream told us to back off. Routes
-/// through the slot's own pool, so a bench that races a settings-driven pool
-/// swap lands on the (possibly retired) generation that made the grant.
-fn bench(slot: &Slot, status: &str, backoff: Duration) {
-    counter!("nimproxy_lane_benched_total", "lane" => slot.lane.to_string(), "status" => status.to_owned())
+/// Put the granting lane in cooldown after the upstream told us to back
+/// off. Routes through the slot's own pool, so a cooldown that races a
+/// settings-driven pool swap lands on the (possibly retired) generation that
+/// made the grant.
+fn enter_cooldown(slot: &Slot, status: &str, backoff: Duration) {
+    counter!("nimproxy_lane_cooldown_total", "lane" => slot.lane.to_string(), "status" => status.to_owned())
         .increment(1);
     slot.pool.penalize(slot.lane, backoff);
 }
@@ -734,7 +735,7 @@ async fn buffered(
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!(lane = slot.lane, error = %e, "upstream connection error, retrying");
-                bench(&slot, "connect", Duration::from_secs(5));
+                enter_cooldown(&slot, "connect", Duration::from_secs(5));
                 continue;
             }
         };
@@ -742,7 +743,7 @@ async fn buffered(
             let status = resp.status();
             let backoff = backoff_for(&resp);
             // Sniff the error body: worker exhaustion is model-scoped (shared
-            // across every key), so benching the lane would just burn healthy
+            // across every key), so cooling down the lane would just burn healthy
             // key capacity on a failover that cannot help.
             let detail = resp.text().await.unwrap_or_default();
             if governor::is_worker_exhausted(&detail) {
@@ -751,8 +752,8 @@ async fn buffered(
                     .note_exhausted(&ctx.model, cfg.governor.overrides.get(&ctx.model).copied());
                 continue; // permit drops here; re-admission waits out the drain
             }
-            tracing::info!(lane = slot.lane, %status, ?backoff, "lane benched, retrying");
-            bench(&slot, status.as_str(), backoff);
+            tracing::info!(lane = slot.lane, %status, ?backoff, "lane in cooldown, retrying");
+            enter_cooldown(&slot, status.as_str(), backoff);
             continue;
         }
         histogram!("nimproxy_upstream_seconds", "model" => ctx.model.clone())
@@ -851,7 +852,7 @@ fn streaming(
                     Ok(r) => r,
                     Err(e) => {
                         tracing::warn!(lane = slot.lane, error = %e, "upstream connection error, retrying");
-                        bench(&slot, "connect", Duration::from_secs(5));
+                        enter_cooldown(&slot, "connect", Duration::from_secs(5));
                         continue;
                     }
                 };
@@ -884,8 +885,8 @@ fn streaming(
                             cfg.governor.overrides.get(&ctx.model).copied(),
                         );
                     } else {
-                        tracing::info!(lane = slot.lane, %status, ?backoff, "lane benched, retrying");
-                        bench(&slot, status.as_str(), backoff);
+                        tracing::info!(lane = slot.lane, %status, ?backoff, "lane in cooldown, retrying");
+                        enter_cooldown(&slot, status.as_str(), backoff);
                     }
                     if !send(": retrying\n\n").await {
                         record_request(&ctx, "disconnect");
@@ -1042,7 +1043,7 @@ async fn models(state: Arc<AppState>, cfg: Arc<Config>) -> Response {
         }
         Ok(resp) => {
             if retryable(resp.status()) {
-                bench(&slot, resp.status().as_str(), backoff_for(&resp));
+                enter_cooldown(&slot, resp.status().as_str(), backoff_for(&resp));
             }
             let status =
                 StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);

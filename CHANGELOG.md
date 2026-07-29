@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the lane state entered after an upstream 429/5xx is now called
+  **cooldown** rather than "bench", and the Prometheus series
+  `nimproxy_lane_benched_total` is renamed to `nimproxy_lane_cooldown_total`.
+  Every other `nimproxy_*` series is unchanged. Update any dashboards, alerts,
+  or recording rules that referenced the old name.
+
+  Retained history stores the metric name verbatim, so lane-cooldown charts
+  show a gap for points recorded before the upgrade and return to full fidelity
+  one retention window (`history_days`) later. This is a deliberate clean break
+  — no compatibility alias is carried.
+
+### Removed
+
+- **Breaking:** pricing configuration and the estimated-savings metric. The
+  `Dollars saved` KPI, the `Saved` columns in the Models, Clients, and
+  Reliability tables, the Pricing settings card, the `pricing` config block
+  (`ref_price_in` / `ref_price_out`), and the `POST /api/settings/pricing`
+  route are gone; `/api/config` no longer returns `server.pricing` and
+  `/api/dashboard` no longer returns `price_in` / `price_out`.
+
+  An honest figure needs a published per-model rate for each model in the pool;
+  applying one reference rate to every model measured nothing. Existing config
+  stores containing a `pricing` block still load — the orphan key is ignored,
+  and no migration runs. `REF_PRICE_IN` / `REF_PRICE_OUT` remain in the
+  legacy-env warning list so an upgrader who still sets them is told they do
+  nothing.
+
 ## [0.6.5] - 2026-07-28
 
 ### Fixed
