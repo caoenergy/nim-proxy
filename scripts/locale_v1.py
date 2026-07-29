@@ -132,6 +132,7 @@ def selftest() -> int:
         "stale-hash.json": "stale",
         "too-long.json": "length",
         "unbalanced-inline.json": "inline",
+        "frozen-token-dropped.json": "frozen",
     }
     failures = []
     for fixture, want in sorted(expected.items()):
