@@ -129,6 +129,80 @@
       "en": "[NIM Ƥŕóxŷ — Ƒíŕşŧ-ŧíɱé şéŧúƥ escamotab]",
       "desc": "Browser tab title. 'NIM Proxy' is the product name and stays.",
       "hash": "a59b017c"
+    },
+    "setup.step1.error.username_charset": {
+      "en": "[Úşéŕñáɱé: 1–32 ŀéŧŧéŕş, đíǥíŧş, '.', '_' óŕ '-'. escamotableescamo]",
+      "desc": "Validation error under the account form. The character set and the 1-32 range are enforced by the server and must survive verbatim.",
+      "hash": "c437375f"
+    },
+    "setup.step1.error.password_length": {
+      "en": "[Ƥáşşŵóŕđ ɱúşŧ ƀé áŧ ŀéáşŧ 10 çĥáŕáçŧéŕş. escamotableesc]",
+      "desc": "Validation error under the account form. 10 is the enforced minimum length.",
+      "hash": "7e65d20b"
+    },
+    "setup.step1.error.password_mismatch": {
+      "en": "[Ƥáşşŵóŕđş đó ñóŧ ɱáŧçĥ. escamota]",
+      "hash": "6c6e178a"
+    },
+    "setup.step2.key_meta": {
+      "en": "[{models} ɱóđéŀş · {rpm} rpm esca]",
+      "desc": "Meta line on an added key: how many models the key reached, then its per-minute limit. 'rpm' is a unit and must survive verbatim.",
+      "hash": "026c787c"
+    },
+    "setup.step2.error.key_required": {
+      "en": "[Ƥáşŧé á NIM ÁƤÍ ķéŷ ƒíŕşŧ. escamota]",
+      "desc": "Validation error: the key field is empty. 'NIM' is the vendor product name and stays.",
+      "hash": "45e7e8a4"
+    },
+    "setup.step2.error.key_duplicate": {
+      "en": "[Ŧĥáŧ ķéŷ íş áŀŕéáđŷ áđđéđ. escamotab]",
+      "desc": "Validation error: the same NIM key is already in the list.",
+      "hash": "984cdd49"
+    },
+    "setup.step2.error.validation_failed": {
+      "en": "[Ķéŷ ṽáŀíđáŧíóñ ƒáíŀéđ: {error} escamota]",
+      "desc": "The upstream rejected the key. {error} is the upstream's own error text or an HTTP status code, inserted verbatim and never translated.",
+      "hash": "38f22520"
+    },
+    "setup.step2.error.validation_request": {
+      "en": "[Ṽáŀíđáŧíóñ ŕéɋúéşŧ ƒáíŀéđ: {error} escamotab]",
+      "desc": "The browser could not reach the proxy to validate the key. {error} is the browser's error text, inserted verbatim and never translated.",
+      "hash": "9e7beddf"
+    },
+    "setup.step3.review.superuser": {
+      "en": "[Şúƥéŕúşéŕ esc]",
+      "desc": "Review-panel row label. The role of the account being created; the proxy persists this same role name.",
+      "hash": "593b0a98"
+    },
+    "setup.step3.review.keys": {
+      "en": "[NIM ķéŷş es]",
+      "desc": "Review-panel row label: the upstream NIM API keys added in step 2. 'NIM' is the vendor product name and stays.",
+      "hash": "504945ef"
+    },
+    "setup.step3.review.keys_value": {
+      "en": "[{count} ṽáŀíđáŧéđ · Ŧóŧáŀ {rpm} rpm escamot]",
+      "desc": "Review-panel value for the NIM keys row: how many keys validated, then the pool's combined per-minute limit. 'rpm' is a unit and must survive verbatim.",
+      "hash": "1497318d"
+    },
+    "setup.step3.review.upstream": {
+      "en": "[Úƥşŧŕéáɱ esc]",
+      "desc": "Review-panel row label. The upstream base URL requests are forwarded to; the value beside it is a URL.",
+      "hash": "94adc696"
+    },
+    "setup.step3.review.api_access": {
+      "en": "[ÁƤÍ áççéşş esca]",
+      "desc": "Review-panel row label. Whether the proxy's own /v1 endpoint will require a client API key.",
+      "hash": "923fd434"
+    },
+    "setup.step3.error.failed": {
+      "en": "[Şéŧúƥ ƒáíŀéđ ({status}) escam]",
+      "desc": "The proxy rejected the setup request. {status} is the HTTP status code, a number inserted verbatim.",
+      "hash": "1a1df234"
+    },
+    "setup.step3.error.request": {
+      "en": "[Şéŧúƥ ŕéɋúéşŧ ƒáíŀéđ: {error} escamota]",
+      "desc": "The browser could not reach the proxy to submit setup. {error} is the browser's error text, inserted verbatim and never translated.",
+      "hash": "d35faf3c"
     }
   }
 }

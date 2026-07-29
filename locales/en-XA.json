@@ -438,6 +438,11 @@
       "en": "[Ɋúéúéđ es]",
       "hash": "661ff40a"
     },
+    "dashboard.common.row.error_rate": {
+      "en": "[Éŕŕóŕ ŕáŧé esca]",
+      "desc": "Live-panel label beside Active now and Queued: the share of requests in the selected time range that did not return 2xx. Noun phrase, not an imperative.",
+      "hash": "33a22472"
+    },
     "dashboard.common.row.rate_limit_cooldowns": {
       "en": "[Ŕáŧé-ŀíɱíŧ çóóŀđóŵñş escamot]",
       "hash": "5f009330"
@@ -652,9 +657,54 @@
       "en": "[Şáŧúŕáŧíóñ esca]",
       "hash": "993f024b"
     },
+    "dashboard.capacity.note.current_vs_capacity": {
+      "en": "[çúŕŕéñŧ ŕáŧé ṽş ŧóŧáŀ çáƥáçíŧŷ escamotabl]",
+      "desc": "Note beside the Saturation heading, explaining what the percentage divides: the pool's current request rate over its total configured capacity. Lowercase note, not a heading.",
+      "hash": "61534260"
+    },
+    "dashboard.capacity.note.enabled_keys.zero": {
+      "en": "[{n} éñáƀŀéđ ķéŷş escam]",
+      "desc": "CLDR plural category 'zero' of the sub-label under the saturation bar. {n} is the count of enabled upstream NIM API keys and must stay a placeholder. English distinguishes only 'one' and 'other', so this form repeats the English of 'other' — do not assume the categories are identical in your language.",
+      "hash": "8d762678"
+    },
+    "dashboard.capacity.note.enabled_keys.one": {
+      "en": "[{n} éñáƀŀéđ ķéŷ esca]",
+      "desc": "CLDR plural category 'one' of the sub-label under the saturation bar. {n} is the count of enabled upstream NIM API keys and must stay a placeholder. This is the singular English uses for exactly 1.",
+      "hash": "9aae9534"
+    },
+    "dashboard.capacity.note.enabled_keys.two": {
+      "en": "[{n} éñáƀŀéđ ķéŷş escam]",
+      "desc": "CLDR plural category 'two' of the sub-label under the saturation bar. {n} is the count of enabled upstream NIM API keys and must stay a placeholder. English distinguishes only 'one' and 'other', so this form repeats the English of 'other' — do not assume the categories are identical in your language.",
+      "hash": "8d762678"
+    },
+    "dashboard.capacity.note.enabled_keys.few": {
+      "en": "[{n} éñáƀŀéđ ķéŷş escam]",
+      "desc": "CLDR plural category 'few' of the sub-label under the saturation bar. {n} is the count of enabled upstream NIM API keys and must stay a placeholder. English distinguishes only 'one' and 'other', so this form repeats the English of 'other' — do not assume the categories are identical in your language.",
+      "hash": "8d762678"
+    },
+    "dashboard.capacity.note.enabled_keys.many": {
+      "en": "[{n} éñáƀŀéđ ķéŷş escam]",
+      "desc": "CLDR plural category 'many' of the sub-label under the saturation bar. {n} is the count of enabled upstream NIM API keys and must stay a placeholder. English distinguishes only 'one' and 'other', so this form repeats the English of 'other' — do not assume the categories are identical in your language.",
+      "hash": "8d762678"
+    },
+    "dashboard.capacity.note.enabled_keys.other": {
+      "en": "[{n} éñáƀŀéđ ķéŷş escam]",
+      "desc": "CLDR plural category 'other' of the sub-label under the saturation bar. {n} is the count of enabled upstream NIM API keys and must stay a placeholder. English uses this form for every count except 1, including 0.",
+      "hash": "8d762678"
+    },
+    "dashboard.capacity.note.rpm_available": {
+      "en": "[rpm áṽáíŀáƀŀé esca]",
+      "desc": "Follows a number in the saturation footer: how much of the pool's per-minute capacity is still unused. 'rpm' is a unit and must survive verbatim; only 'available' is translated.",
+      "hash": "f1a43cbe"
+    },
     "dashboard.capacity.history.title": {
       "en": "[Çáƥáçíŧŷ ĥíşŧóŕŷ escamo]",
       "hash": "0e9d9c58"
+    },
+    "dashboard.capacity.history.shortfall": {
+      "en": "[Ƥéáķ şĥóŕŧƒáŀŀ · rpm escamo]",
+      "desc": "Unit label under the Capacity history figure: the largest amount by which demand exceeded the capacity configured at the time. 'rpm' is a unit and must survive verbatim; '·' is a separator.",
+      "hash": "037f087b"
     },
     "dashboard.capacity.hero.throttling": {
       "en": "[Ŧĥŕóŧŧŀíñǥ esca]",
@@ -687,6 +737,11 @@
       "en": "[Áṽáíŀáƀíŀíŧŷ esca]",
       "hash": "12f67f85"
     },
+    "dashboard.reliability.hero.error_budget": {
+      "en": "[éŕŕóŕ ƀúđǥéŧ esca]",
+      "desc": "SLO error budget: how much of the allowed unavailability has already been consumed. Lowercase on purpose — it sits inline above the budget bar, not as a heading.",
+      "hash": "32064cd1"
+    },
     "dashboard.nav.live.disconnected": {
       "en": "[Đíşçóññéçŧéđ esca]",
       "desc": "Live-tail control: the browser lost contact with the proxy.",
@@ -701,6 +756,61 @@
       "en": "[Áƀşóŀúŧé esc]",
       "desc": "Live-tail control: the range is pinned to fixed bounds.",
       "hash": "f288738f"
+    },
+    "dashboard.reliability.slo.met": {
+      "en": "[SLO {target} · ɱéŧ es]",
+      "desc": "Under the availability figure when the target was achieved. 'SLO' is an abbreviation and must survive verbatim; {target} is the target percentage.",
+      "hash": "019ba1ae"
+    },
+    "dashboard.reliability.slo.missed": {
+      "en": "[SLO {target} · ɱíşşéđ esca]",
+      "desc": "Under the availability figure when the target was not achieved. 'SLO' must survive verbatim; {target} is the target percentage.",
+      "hash": "80d04652"
+    },
+    "dashboard.reliability.slo.no_traffic": {
+      "en": "[SLO {target} · ñó éŀíǥíƀŀé ŧŕáƒƒíç escamota]",
+      "desc": "Under the availability figure when the time range contains no requests the SLO counts. 'SLO' must survive verbatim; {target} is the target percentage.",
+      "hash": "a9c9a18c"
+    },
+    "dashboard.reliability.hero.budget_used": {
+      "en": "[{pct} úşéđ es]",
+      "desc": "Right-hand side of the error-budget row: how much of the budget is consumed. {pct} is an already-formatted percentage.",
+      "hash": "786461c1"
+    },
+    "dashboard.capacity.history.utilization": {
+      "en": "[áṽǥ {avg} · ƥéáķ {peak} óƒ çáƥáçíŧŷ áŧ ŧĥé ŧíɱé escamotablees]",
+      "desc": "Footer under the Capacity history figure. {avg} and {peak} are already-formatted percentages. 'at the time' means against the capacity configured then, not today's. Lowercase note, not a heading.",
+      "hash": "32d932f7"
+    },
+    "dashboard.capacity.history.no_data.zero": {
+      "en": "[{n} íñŧéŕṽáŀş ŵíŧĥ ñó çáƥáçíŧŷ đáŧá escamotable]",
+      "desc": "CLDR plural category 'zero' of the note about intervals whose configured capacity is unknown. {n} is the count and must stay a placeholder. English distinguishes only 'one' and 'other', so this form repeats the English of 'other' — do not assume the categories are identical in your language.",
+      "hash": "fce1bc1e"
+    },
+    "dashboard.capacity.history.no_data.one": {
+      "en": "[{n} íñŧéŕṽáŀ ŵíŧĥ ñó çáƥáçíŧŷ đáŧá escamotable]",
+      "desc": "CLDR plural category 'one' of the note about intervals whose configured capacity is unknown. {n} is the count and must stay a placeholder. This is the singular English uses for exactly 1.",
+      "hash": "c0adc7d6"
+    },
+    "dashboard.capacity.history.no_data.two": {
+      "en": "[{n} íñŧéŕṽáŀş ŵíŧĥ ñó çáƥáçíŧŷ đáŧá escamotable]",
+      "desc": "CLDR plural category 'two' of the note about intervals whose configured capacity is unknown. {n} is the count and must stay a placeholder. English distinguishes only 'one' and 'other', so this form repeats the English of 'other' — do not assume the categories are identical in your language.",
+      "hash": "fce1bc1e"
+    },
+    "dashboard.capacity.history.no_data.few": {
+      "en": "[{n} íñŧéŕṽáŀş ŵíŧĥ ñó çáƥáçíŧŷ đáŧá escamotable]",
+      "desc": "CLDR plural category 'few' of the note about intervals whose configured capacity is unknown. {n} is the count and must stay a placeholder. English distinguishes only 'one' and 'other', so this form repeats the English of 'other' — do not assume the categories are identical in your language.",
+      "hash": "fce1bc1e"
+    },
+    "dashboard.capacity.history.no_data.many": {
+      "en": "[{n} íñŧéŕṽáŀş ŵíŧĥ ñó çáƥáçíŧŷ đáŧá escamotable]",
+      "desc": "CLDR plural category 'many' of the note about intervals whose configured capacity is unknown. {n} is the count and must stay a placeholder. English distinguishes only 'one' and 'other', so this form repeats the English of 'other' — do not assume the categories are identical in your language.",
+      "hash": "fce1bc1e"
+    },
+    "dashboard.capacity.history.no_data.other": {
+      "en": "[{n} íñŧéŕṽáŀş ŵíŧĥ ñó çáƥáçíŧŷ đáŧá escamotable]",
+      "desc": "CLDR plural category 'other' of the note about intervals whose configured capacity is unknown. {n} is the count and must stay a placeholder. English uses this form for every count except 1, including 0.",
+      "hash": "fce1bc1e"
     }
   }
 }
