@@ -116,7 +116,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Retained history stores the metric name verbatim, so lane-cooldown charts
   show a gap for points recorded before the upgrade and return to full fidelity
-  one retention window (`history_days`) later. This is a deliberate clean break
+  one retention window (`history.days`) later. This is a deliberate clean break
   — no compatibility alias is carried.
 
 ### Removed
