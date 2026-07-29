@@ -12,7 +12,7 @@ First change of the 0.6.6 presentation-layer rationalization.
 
 - Retired the `bench` idiom for the post-backoff lane state in favor of
   **cooldown**, which the `cooldown_until` field already used. Renamed across
-  `src/`, `tests/`, `knowledge/`, and the `README.md` metrics table;
+  `src/`, `tests/`, `scripts/`, `knowledge/`, and the `README.md` metrics table;
   `nimproxy_lane_benched_total` → `nimproxy_lane_cooldown_total`;
   `proxy::bench` → `proxy::enter_cooldown`. Recorded in
   [lane-cooldown-naming](decisions/lane-cooldown-naming.md), including why a
@@ -27,7 +27,13 @@ First change of the 0.6.6 presentation-layer rationalization.
   still loads.
 - Lint: `knowledge/architecture/key-pool.md` and `governor.md` described the
   state as "benching" while `pool.rs` already named the field `cooldown_until`
-  — the pages and the code now agree.
+  — the pages and the code now agree. Adversarial review of the change also
+  caught `README.md` and `architecture/dashboard.md` still advertising the
+  deleted savings KPI and sparklines, and both breaking-change notes naming
+  `/api/dashboard` where the removed fields were actually emitted by
+  `/api/dashboard/now`; all corrected in-PR. Removing the savings card
+  orphaned the `valColor` and `green` options on `kpiCards`/`sparkSvg` — it
+  was their only caller — so the unreachable branches went with it.
 
 ## [2026-07-28] ingest — prepare v0.6.5 maintenance release
 
