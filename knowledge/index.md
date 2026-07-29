@@ -36,6 +36,7 @@ the chronology in [log.md](log.md).
 | [no-estimated-savings-metric](decisions/no-estimated-savings-metric.md) | "Dollars saved" needed per-model published rates to be honest; deleted rather than faked |
 | [message-catalog-and-escaping](decisions/message-catalog-and-escaping.md) | Inline `en-US` catalog behind `t()`; values escaped once at load because four render helpers do not escape their arguments |
 | [intl-formatting](decisions/intl-formatting.md) | Cached `Intl` formatters keyed to the catalog locale; CSS percentages deliberately excluded |
+| [locale-guards](decisions/locale-guards.md) | `en-XA` pseudolocale, `locale-v1` validator, untagged-string lint — every check with a negative fixture written first |
 
 ## Research — validated external facts
 

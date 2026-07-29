@@ -99,6 +99,26 @@
       "en": "Open dashboard",
       "desc": "Button, imperative verb phrase. 'Open' is the verb, not the API-mode adjective.",
       "hash": "803f2313"
+    },
+    "setup.step2.validating": {
+      "en": "Validating…",
+      "desc": "Button label while a key is probed upstream.",
+      "hash": "cd51f8c8"
+    },
+    "setup.step4.copied": {
+      "en": "Copied",
+      "desc": "Button label after a successful clipboard copy. Past tense.",
+      "hash": "8d525e5f"
+    },
+    "setup.step4.select_copy": {
+      "en": "Select & copy",
+      "desc": "Button label when the clipboard API is unavailable and the user must copy manually.",
+      "hash": "09201dce"
+    },
+    "setup.document.title": {
+      "en": "NIM Proxy — First-time setup",
+      "desc": "Browser tab title. 'NIM Proxy' is the product name and stays.",
+      "hash": "a59b017c"
     }
   }
 }
