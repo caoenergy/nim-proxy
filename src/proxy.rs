@@ -310,8 +310,10 @@ fn is_json_mode(v: &serde_json::Value) -> bool {
 /// Counts and sizes only — never message content. All heavy values go to
 /// histograms, never labels, so cardinality stays bounded.
 fn record_shape(ctx: &Ctx, parsed: Option<&serde_json::Value>, wants_stream: bool) {
-    // Labeled by client: request shape reflects the harness, not the model —
-    // this is what powers the Harnesses view ("what is each agent doing").
+    // Labeled by client: request shape reflects the calling client, not the
+    // model — this is what powers the Clients view ("what is each agent
+    // doing"). "Harness" is retired vocabulary; see
+    // knowledge/decisions/standard-vocabulary.md.
     counter!(
         "nimproxy_stream_requests_total",
         "client" => ctx.client.clone(),
