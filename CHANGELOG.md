@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-07-29
+
 ### Added
 
 - **`openapi.json`** — a generated OpenAPI 3.1 description of the dashboard
@@ -653,7 +655,8 @@ Initial rate-limit-aware proxy.
 - **Distroless image**: a static musl binary shipped `FROM scratch` (~3.5 MB,
   TLS roots compiled in), running non-root with hardened compose defaults.
 
-[Unreleased]: https://github.com/miztertea/nim-proxy/compare/v0.6.5...HEAD
+[Unreleased]: https://github.com/miztertea/nim-proxy/compare/v0.6.6...HEAD
+[0.6.6]: https://github.com/miztertea/nim-proxy/compare/v0.6.5...v0.6.6
 [0.6.5]: https://github.com/miztertea/nim-proxy/compare/v0.6.4...v0.6.5
 [0.6.4]: https://github.com/miztertea/nim-proxy/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/miztertea/nim-proxy/compare/v0.6.2...v0.6.3
