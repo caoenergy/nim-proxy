@@ -155,7 +155,7 @@ RATE VIOLATIONS      {violations}  (upstream requests beyond the per-key rpm win
         print(f"FAIL: proxy exceeded the upstream speed limit {violations} time(s)")
         raise SystemExit(1)
     if len(per_key) > 1 and min(per_key.values()) == 0:
-        print("FAIL: a configured key lane was never used")
+        print("FAIL: a configured key was never used")
         raise SystemExit(1)
     print("PASS: zero failures, zero upstream rate violations")
 

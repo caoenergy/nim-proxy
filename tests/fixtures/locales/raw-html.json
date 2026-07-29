@@ -17,6 +17,10 @@
     "app.short_label": {
       "en": "Keys",
       "hash": "f0d66a79"
+    },
+    "app.rate": {
+      "en": "120 rpm · 429 retry",
+      "hash": "4b64f8c2"
     }
   }
 }

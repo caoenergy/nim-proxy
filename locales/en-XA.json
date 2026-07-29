@@ -137,12 +137,32 @@
       "hash": "139a5981"
     },
     "dashboard.overview.performance.note": {
-      "en": "[ɱéđíáñ & ƥ95 áçŕóşş ŧĥé ŧíɱé ŕáñǥé escamotablee]",
+      "en": "[ɱéđíáñ & p95 áçŕóşş ŧĥé ŧíɱé ŕáñǥé escamotable]",
       "hash": "3f0caaba"
+    },
+    "dashboard.overview.perf.lower_is_better": {
+      "en": "[ŀóŵéŕ íş ƀéŧŧéŕ escam]",
+      "desc": "Note beside a latency distribution: smaller numbers are better. Lowercase, sits under the card heading.",
+      "hash": "aa8c153c"
+    },
+    "dashboard.overview.perf.higher_is_better": {
+      "en": "[ĥíǥĥéŕ íş ƀéŧŧéŕ escamo]",
+      "desc": "Note beside a throughput distribution: larger numbers are better. Lowercase, sits under the card heading.",
+      "hash": "8cde7e09"
+    },
+    "dashboard.overview.ring.capacity_used": {
+      "en": "[Çáƥáçíŧŷ úşéđ escam]",
+      "desc": "Ring-gauge label. Share of the key pool's configured requests-per-minute currently in use.",
+      "hash": "9448656c"
     },
     "dashboard.common.note.tokens_out": {
       "en": "[ŧóķéñş óúŧ esca]",
       "hash": "6cfcdef3"
+    },
+    "dashboard.common.note.selected_time_range": {
+      "en": "[şéŀéçŧéđ ŧíɱé ŕáñǥé escamot]",
+      "desc": "Sub-label under a KPI number: the figure covers the time range currently selected in the topbar, not all history.",
+      "hash": "59e32cdb"
     },
     "dashboard.models.tokens_per_min.note": {
       "en": "[ƀŷ ɱóđéŀ esc]",
@@ -159,6 +179,11 @@
     "dashboard.models.head_to_head.note": {
       "en": "[ǥéñéŕáŧíóñ şƥééđ escamo]",
       "hash": "f8b44b7c"
+    },
+    "dashboard.models.cards.note": {
+      "en": "[ŧóƥ 4 ƀŷ ŧóķéñş óúŧ · ƒúŀŀ ŀíşŧ íñ ŧĥé ŧáƀŀé ƀéŀóŵ escamotableescamot]",
+      "desc": "Note above the leading-model cards. 'top 4' is a count of cards shown.",
+      "hash": "dedd5a12"
     },
     "dashboard.models.ttft.heading": {
       "en": "[Ŧíɱé ŧó ƒíŕşŧ ŧóķéñ escamot]",
@@ -206,7 +231,7 @@
       "hash": "5c1a4d52"
     },
     "dashboard.clients.streammix.note": {
-      "en": "[% şŧŕéáɱéđ esca]",
+      "en": "[% şŧŕéáɱéđ esc]",
       "hash": "0c0b2363"
     },
     "dashboard.clients.maxtok.heading": {
@@ -271,12 +296,17 @@
       "hash": "bd2367b1"
     },
     "dashboard.reliability.pressure.heading": {
-      "en": "[Móđéŀ ƥŕéşşúŕé escam]",
-      "hash": "87550ec5"
+      "en": "[Móđéŀ ŀíɱíŧş esca]",
+      "hash": "43e77160"
     },
     "dashboard.reliability.pressure.note": {
-      "en": "[ǥóṽéŕñóŕ éñǥáǥéđ — ŵóŕķéŕ éxĥáúşŧíóñş & ƥéŕ-ɱóđéŀ çáƥş escamotableescamota]",
-      "hash": "3c187458"
+      "en": "[ŵóŕķéŕ éxĥáúşŧíóñş & ƥéŕ-ɱóđéŀ çáƥş escamotablee]",
+      "hash": "cde0a950"
+    },
+    "dashboard.reliability.pressure.series": {
+      "en": "[Çáƥáçíŧŷ éŕŕóŕş/ɱíñ escamot]",
+      "desc": "Chart series name: upstream worker-capacity errors per minute.",
+      "hash": "2fd5ae55"
     },
     "dashboard.capacity.keyutil.heading": {
       "en": "[Ķéŷ úŧíŀíẑáŧíóñ escam]",
@@ -362,12 +392,12 @@
       "hash": "0449c134"
     },
     "dashboard.models.col.avg_ttft": {
-      "en": "[Áṽǥ ŦŦƑŦ esc]",
+      "en": "[Áṽǥ TTFT e]",
       "desc": "Column header. 'TTFT' is an abbreviation and must survive verbatim.",
       "hash": "1a2a2e30"
     },
     "dashboard.models.col.avg_tps": {
-      "en": "[Áṽǥ ŧóķ/ş esc]",
+      "en": "[Áṽǥ tok/s e]",
       "desc": "Column header. 'tok/s' is a unit and must survive verbatim.",
       "hash": "cb513f6e"
     },
@@ -426,12 +456,12 @@
       "hash": "c4b167af"
     },
     "dashboard.reliability.row.dropped_503": {
-      "en": "[Đŕóƥƥéđ (óṽéŕŀóáđ 503) escamota]",
+      "en": "[Đŕóƥƥéđ (óṽéŕŀóáđ 503) escamot]",
       "desc": "'503' is an HTTP status and must survive verbatim.",
       "hash": "dc219614"
     },
     "dashboard.common.status.unauthorized_401": {
-      "en": "[Úñáúŧĥóŕíẑéđ (401) escamo]",
+      "en": "[Úñáúŧĥóŕíẑéđ (401) escam]",
       "desc": "'401' must survive verbatim.",
       "hash": "e31a10f2"
     },
@@ -449,7 +479,7 @@
       "hash": "904e6992"
     },
     "dashboard.reliability.row.json_mode": {
-      "en": "[ĴŞÓÑ ɱóđé esc]",
+      "en": "[JSON ɱóđé es]",
       "desc": "'JSON' must survive verbatim; only 'mode' translates.",
       "hash": "36636e63"
     },
@@ -459,17 +489,87 @@
       "hash": "d3a2c6a3"
     },
     "dashboard.common.status.rate_limited_429": {
-      "en": "[Ŕáŧé ŀíɱíŧéđ (429) escamo]",
+      "en": "[Ŕáŧé ŀíɱíŧéđ (429) escam]",
       "desc": "'429' must survive verbatim.",
       "hash": "2d8d2785"
+    },
+    "dashboard.common.status.success": {
+      "en": "[Şúççéşş es]",
+      "desc": "Outcome band and stacked-chart series: requests that returned a 2xx status. Noun.",
+      "hash": "c88a0b90"
+    },
+    "dashboard.common.status.rate_limited": {
+      "en": "[Ŕáŧé ŀíɱíŧéđ esca]",
+      "desc": "Outcome band: requests the upstream rejected with 429. Past participle describing the requests.",
+      "hash": "a06130a5"
+    },
+    "dashboard.common.status.disconnect": {
+      "en": "[Đíşçóññéçŧ esca]",
+      "desc": "Outcome band: the client went away before the response finished. Noun, not the imperative verb.",
+      "hash": "acfc5be7"
+    },
+    "dashboard.common.status.timeout_stall": {
+      "en": "[Ŧíɱéóúŧ / şŧáŀŀ escam]",
+      "desc": "Outcome band grouping upstream timeouts (504) with stalled streams. Two nouns joined by a slash.",
+      "hash": "efe2e882"
+    },
+    "dashboard.common.status.client_error_4xx": {
+      "en": "[Çŀíéñŧ éŕŕóŕ (4xx) escamo]",
+      "desc": "Outcome band for 4xx statuses other than 429. '4xx' is an HTTP status class and must survive verbatim.",
+      "hash": "c2b42c93"
+    },
+    "dashboard.common.status.client_disconnected": {
+      "en": "[Çŀíéñŧ đíşçóññéçŧéđ escamot]",
+      "desc": "Non-success reason: the calling client closed the connection before the response finished.",
+      "hash": "61fcc9b2"
+    },
+    "dashboard.common.status.stream_stalled": {
+      "en": "[Şŧŕéáɱ şŧáŀŀéđ escam]",
+      "desc": "Non-success reason: the upstream stopped emitting tokens and the request was abandoned.",
+      "hash": "2845f98c"
+    },
+    "dashboard.common.status.stream_error": {
+      "en": "[Şŧŕéáɱ éŕŕóŕ esca]",
+      "desc": "Non-success reason: the upstream stream failed mid-response.",
+      "hash": "38f63d7c"
+    },
+    "dashboard.common.status.upstream_timeout_504": {
+      "en": "[Úƥşŧŕéáɱ ŧíɱéóúŧ (504) escamot]",
+      "desc": "Non-success reason. '504' must survive verbatim.",
+      "hash": "37653bb1"
+    },
+    "dashboard.common.status.bad_request_400": {
+      "en": "[Ɓáđ ŕéɋúéşŧ (400) escamo]",
+      "desc": "Non-success reason. '400' must survive verbatim.",
+      "hash": "3ce1cfb4"
+    },
+    "dashboard.common.status.forbidden_403": {
+      "en": "[Ƒóŕƀíđđéñ (403) escam]",
+      "desc": "Non-success reason. '403' must survive verbatim.",
+      "hash": "ae88f5b2"
+    },
+    "dashboard.common.status.not_found_404": {
+      "en": "[Ñóŧ ƒóúñđ (404) escam]",
+      "desc": "Non-success reason. '404' must survive verbatim.",
+      "hash": "8bcbdab7"
+    },
+    "dashboard.common.status.bad_gateway_502": {
+      "en": "[Ɓáđ ǥáŧéŵáŷ (502) escamo]",
+      "desc": "Non-success reason. '502' must survive verbatim.",
+      "hash": "1c52523b"
+    },
+    "dashboard.common.status.unavailable_503": {
+      "en": "[Úñáṽáíŀáƀŀé (503) escam]",
+      "desc": "Non-success reason. '503' must survive verbatim.",
+      "hash": "f544ed2c"
     },
     "dashboard.capacity.row.session_affinity": {
       "en": "[Şéşşíóñ áƒƒíñíŧŷ escamo]",
       "hash": "0596f708"
     },
     "dashboard.capacity.row.slots_in_use": {
-      "en": "[Şŀóŧş íñ úşé esca]",
-      "hash": "c6d01760"
+      "en": "[Éñáƀŀéđ ķéŷş esca]",
+      "hash": "226de726"
     },
     "dashboard.clients.tile.clients": {
       "en": "[Çŀíéñŧş es]",

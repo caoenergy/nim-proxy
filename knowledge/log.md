@@ -6,6 +6,62 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-29] ingest — the last 29 untagged dashboard strings, extracted
+
+`check_i18n.py` reported 35 problems / 29 unique strings; it now reports
+`i18n OK — 188 ids referenced, round-trip clean`. Extraction only: every English
+value is byte-identical to the literal it replaced, verified against a copy of
+the pre-change source.
+
+- 8 ids were reused rather than minting a duplicate value a translator would
+  have to translate twice: `Success rate`,
+  `Time to first token`, `Generation speed`, `Inter-token latency`,
+  `tokens out`, `Rate limited (429)`, `Unauthorized (401)`, `Other`. The
+  taxonomy in `TAX` and `OUTCOMES` is one set of labels rendered twice, so the
+  two tables share ids too.
+- 22 ids are new — 20 in the dashboard catalog (139 → 159), 2 in the wizard's
+  (27 → 29). The whole non-success status taxonomy landed under
+  `dashboard.common.status.*`, beside the two entries that were already there.
+- The escaping map in
+  [message-catalog-and-escaping](decisions/message-catalog-and-escaping.md) was
+  contradicted by the code — `kpiCards` stopped escaping `k.label` in `77421e2`
+  and the page still said it did — and it never covered `ringGauge`, `legend`,
+  the chart hover tooltips, or the two call sites that `esc()` the value
+  themselves. All five take `tRaw()`. Page corrected.
+- Measured: `--escape-probe` clean, and observed to fail (2 double-escaped runs)
+  when two `tRaw()` calls were flipped to `t()`. `--locale en-XA` actionable
+  untranslated runs 57 → 41; the remainder are prose in template literals,
+  lowercase single-token labels and double-quoted strings, none of which the
+  untagged-string lint can see. Those are not extracted and are still English.
+
+## [2026-07-29] decision — the standard vocabulary, committed and enforced
+
+Recorded in [standard-vocabulary](decisions/standard-vocabulary.md).
+
+The vocabulary that this whole release applies was decided before any code was
+written and was never committed to the repository — it lived in the planning
+bundle. That single omission is the root cause of most of the drift: nothing
+downstream could check against it, so five spellings of per-minute and three
+names for the model governor survived a pass whose purpose was standardization,
+and later work re-derived the decisions from the code and got them backwards.
+
+- The mapping is now a decision page, and the two enforceable halves are
+  checks: `locale_v1.py`'s `frozen` (a never-translate token the source uses
+  must survive verbatim in every translation) and `check_i18n.py`'s
+  `lint_retired_vocabulary` (no catalog value may reintroduce a retired term).
+- Written test-first: `frozen-token-dropped.json` and its selftest entry landed
+  one commit before the check, observed failing with
+  `expected check 'frozen', got nothing`.
+- One definition of `NEVER_TRANSLATE`, imported by all three scripts. A copied
+  list drifts, and it is about to be load-bearing for eight locales.
+- The retired list is deliberately multi-word: `window` is still correct for
+  the rate-limit window and `lane` for metric labels, so banning the bare words
+  would repeat the label sweep that renamed a rate-limit counter.
+- Lint: the `frozen` check failed on the shipped `en-XA` the first time it ran.
+  `gen_pseudolocale.py` was accenting frozen tokens, rendering `NÎM` and a
+  mangled `/v1` across nine messages — a string no real locale would produce,
+  in the locale that exists to prove layout. Generator fixed, en-XA regenerated.
+
 ## [2026-07-29] decision — a committed render gate, and the two page defects it found
 
 Recorded in [render-gate](decisions/render-gate.md).

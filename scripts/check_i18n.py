@@ -132,6 +132,47 @@ DISPLAY_CALLS = re.compile(
 )
 SETTINGS_START = re.compile(r"function renderSettings\(")
 
+# The allowlist above only sees five call shapes, so every leak that survived
+# extraction lived in a shape it does not scan: `{name:'…'}` chart series,
+# array-literal taxonomy tables, object-literal reason maps, and bare prose in
+# template literals. This is the documented trap "strings passed as arguments
+# hide from string sweeps" — a lint that reports clean while ~40 English
+# strings render is worse than no lint.
+#
+# So: find quoted PROSE anywhere in the scanned script, and exclude what is
+# provably not display text rather than allowlisting the places prose may sit.
+QUOTED = re.compile(r"'([^'\\\n]{2,})'")
+# Contexts where a quoted string is machinery, not text for a human.
+NOT_DISPLAY = re.compile(
+    r"querySelector|getElementById|createElementNS|setAttribute\(|getAttribute\(|"
+    r"classList|\.style|addEventListener|removeEventListener|localStorage|"
+    r"nimproxy_|labels\[|dataset\.|\.dataset|JSON\.|console\.|new Intl|"
+    r"\.split\(|\.join\(|\.replace\(|padStart|toFixed|encodeURI|fetch\("
+)
+
+
+def looks_like_prose(text: str) -> bool:
+    """Human-facing text: a capitalised word, or two words with a space.
+
+    Deliberately NOT flagged: lowercase single tokens (enum values, metric
+    label values, CSS keywords), anything with an underscore or slash-prefix
+    (identifiers, selectors, paths), and anything already frozen.
+    """
+    if frozen(text) or "${" in text or "_" in text:
+        return False
+    if text.startswith(("#", ".", "/", "--", "http")):
+        return False
+    # CSS values look like prose to a word counter: `var(--violet, #8B7BB8)`
+    # has two words and starts with a letter. They are style, never text.
+    if text.startswith("var(") or re.match(r"^[a-z-]+\(", text) or "#" in text:
+        return False
+    if not re.search(r"[A-Za-z]{3}", text):
+        return False
+    words = text.split()
+    if len(words) >= 2 and re.match(r"^[A-Za-z]", text):
+        return True
+    return bool(re.match(r"^[A-Z][a-z]{2,}$", text))
+
 
 def lint_runtime_helpers(name: str, raw: str) -> list:
     """Every i18n helper a page CALLS must be defined in that page.
@@ -162,6 +203,11 @@ def lint_untagged(name: str, raw: str) -> list:
     cut = SETTINGS_START.search(js)
     scanned = js[: cut.start()] if cut else js
 
+    # PUBLISHERS maps a model namespace to its vendor's brand name. Brand
+    # names are DATA — they arrive from the model id and are never translated,
+    # so the prose detector must not see this table. Excluded by design.
+    scanned = re.sub(r"const PUBLISHERS = \{.*?\n\};", "", scanned, flags=re.S)
+
     # chipHtml is excluded by design, not by oversight.
     scanned = re.sub(r"function chipHtml\(pub\) \{.*?\n\}", "", scanned, flags=re.S)
 
@@ -170,6 +216,14 @@ def lint_untagged(name: str, raw: str) -> list:
         if frozen(text):
             continue
         errors.append(f"{name}: untagged display string {text!r} — route it through t()")
+
+    for line in strip_comments(scanned).splitlines():
+        if NOT_DISPLAY.search(line):
+            continue
+        for m in QUOTED.finditer(line):
+            text = m.group(1)
+            if looks_like_prose(text):
+                errors.append(f"{name}: untagged prose {text!r} — route it through t()")
 
     # Localizable attributes carrying prose, with no data-i18n-attr beside them.
     markup = strip_scripts(raw)
@@ -181,6 +235,62 @@ def lint_untagged(name: str, raw: str) -> list:
             continue
         errors.append(f"{name}: untagged {attr}={text!r} — add data-i18n-attr")
     return errors
+
+
+
+# Terms retired by knowledge/decisions/standard-vocabulary.md. Reintroducing one
+# is how a standardized interface drifts back apart: nothing else in the tree
+# notices, and the next translation pass bakes the drift into eight languages.
+#
+# Multi-word and distinctive only, on purpose. Single ambiguous words are NOT
+# listed: "window" is still correct for the rate-limit rolling window ("0 / 40
+# in window"), "lane" is still correct in metric labels, "Open" and "bench"
+# have unrelated legitimate senses. Banning a word that is both a retired label
+# and a live domain term is the exact mistake that renamed a rate-limit counter
+# during the label sweep.
+RETIRED = {
+    "Harness": "Client",
+    "Harnesses": "Clients",
+    "Conversation stickiness": "Session affinity",
+    "Model-pressure governor": "Model limits",
+    "Where time goes": "Latency breakdown",
+    "Rate-limit pressure": "Throttling",
+    "Historical provisioning": "Capacity history",
+    "Dollars saved": "(removed — no honest per-model rate)",
+    "All retained": "All time",
+    "Earliest retained snapshot": "Oldest data point",
+    "History file": "Data file",
+    "exhaustions/min": "Capacity errors/min",
+    "Lane slot": "Slot",
+    "Avg reply": "Avg response",
+    "Tool-offering": "Requests with tools",
+    "Tool-using requests": "Requests using tools",
+    "No reasoning-token usage seen": "No reasoning tokens",
+    "selected window": "selected time range",
+    "Default dashboard window": "Default time range",
+    "fixed range": "Absolute",
+    "following now": "Live",
+    "rpm free": "Available",
+    "rpm total": "Total",
+    "Now rpm": "Current rate",
+    "Slots in use": "Enabled keys",
+    "Model pressure": "Model limits",
+    "governor engaged": "(dropped — 'governor' is implementation vocabulary)",
+}
+
+
+def lint_retired_vocabulary(name: str, catalog: dict) -> list:
+    """No catalog value may reintroduce a retired term."""
+    out = []
+    for mid, msg in sorted(catalog.items()):
+        text = msg["en"] if isinstance(msg, dict) else msg
+        for old, new in RETIRED.items():
+            if old in text:
+                out.append(
+                    f"{name}: {mid} uses retired term {old!r} — "
+                    f"standard vocabulary says {new!r}"
+                )
+    return out
 
 
 def main() -> int:
@@ -313,6 +423,8 @@ def main() -> int:
         page = (ROOT / name).read_text()
         errors += lint_runtime_helpers(name, page)
         errors += lint_untagged(name, page)
+        if 'id="i18n-catalog"' in page:
+            errors += lint_retired_vocabulary(name, load_catalog(page))
 
     if errors:
         print(f"{len(errors)} problem(s):")

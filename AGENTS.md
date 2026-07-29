@@ -10,26 +10,109 @@ keys, and keeps client connections alive while it waits. Source lives in
 
 Auth lives in `src/auth.rs` (fail-closed posture, admin-password session
 cookie, constant-time compares); the API-key gate and label sanitizing are in
-`src/proxy.rs`. Any change touching auth, request labels, or the dashboard's
-`innerHTML` must keep the security invariants — see the `decisions/` pages on
-auth posture and input sanitizing before editing.
+`src/proxy.rs`.
+
+## Non-negotiables
+
+Break any of these and the change is wrong regardless of whether it works:
+
+1. **Fail closed.** Pre-setup the data plane is shut; post-setup every
+   operator surface requires a session; a corrupt or future-version store
+   refuses to boot.
+2. **Escape once.** Catalog values are escaped at load. No render helper
+   escapes its label argument again.
+3. **Zero upstream rate violations.** Not "few". The proxy exists to never
+   exceed the per-key limit.
+4. **The wire format does not move** without a deliberate, documented
+   breaking-change note.
+5. **Data is never localized.** Model ids, client names, publisher names and
+   every `nimproxy_*` series pass through untouched. We localize our labels,
+   not the API's values.
+6. **Identifiers stay frozen** during label work — metric names, DOM ids,
+   `data-*`, CSS classes, sort keys, config keys.
+
+## Where to look — knowledge router
+
+`knowledge/` is an Open Knowledge Format bundle: one concept per file, path =
+identity, so it greps well. **Read the page for the area before you touch
+it** — the constraint is usually already written down, and contradicting a
+decision page is the most common way work here goes wrong.
+
+| Touching | Read first |
+|---|---|
+| pacing, key pool, lanes | `decisions/sliding-window-not-token-bucket.md`, `decisions/window-jitter-margin.md`, `architecture/key-pool.md` |
+| queueing, dispatch order | `decisions/global-fifo-dispatcher.md`, `architecture/dispatcher.md` |
+| affinity, prefix cache | `decisions/sticky-affinity-with-spillover.md`, `research/nim-kv-cache-reuse.md` |
+| per-model concurrency | `architecture/governor.md` |
+| streaming, retries, deadlines | `architecture/streaming-pipeline.md`, `decisions/sse-heartbeats-for-rate-waits.md`, `decisions/explicit-request-deadline.md` |
+| auth, roles, sessions | `decisions/auth-posture-and-dashboard-password.md`, `architecture/client-auth.md` |
+| anything reaching `innerHTML` | `decisions/input-sanitizing-and-xss.md`, `decisions/message-catalog-and-escaping.md` |
+| UI text, catalog, labels | `decisions/standard-vocabulary.md`, `decisions/message-catalog-and-escaping.md` |
+| locales, translation | `decisions/locale-guards.md`, `decisions/intl-formatting.md` |
+| numbers, dates, durations | `decisions/intl-formatting.md` |
+| page behavior, checks | `decisions/render-gate.md`, `testing/test-strategy.md` |
+| history, retention, rollups | `decisions/reset-aware-dashboard-history.md`, `architecture/metrics-history.md` |
+| config store, settings | `decisions/ui-managed-config-store.md` |
+| API responses, `openapi.json` | `decisions/typed-responses-and-generated-openapi.md` |
+| releases, tags, branch protection | `ops/release.md` |
+| deployment, env vars | `ops/deploy-docker.md`, `ops/configure-env.md` |
+
+`knowledge/index.md` is the full catalog; `knowledge/log.md` is the
+chronology. If no page covers what you are doing, say so in the plan — that is
+a valid answer once you have looked, and a signal a new decision page is owed.
+
+## How to run the work
+
+**Track it.** Keep a task list and update it as a gate, not as decoration: a
+task moves to done when its proof has run, not when the edit is written.
+
+**Delegate by surface area, not by difficulty.**
+
+- **Do it inline** — single-file edits, renames, one-line fixes, anything
+  where reading the diff is the review.
+- **Fan out to subagents** — work spanning many call sites or files (a sweep
+  across render functions, one agent per group), and independent research or
+  terminology passes where you want more than one opinion.
+- **Always use a reviewer subagent** for a diff you wrote and are about to
+  merge. Give it the constraining decision pages as context. You cannot
+  adversarially review your own work in the same context that produced it.
+
+**Bugs outside the current scope become issues, not detours.** File them with
+`.github/ISSUE_TEMPLATE/bug_report.yml` — `blank_issues_enabled` is `false`,
+so a hand-rolled issue is a process bypass. Include the file:line, the
+reproduction, and say plainly if it was found by inspection rather than
+observed. Fix in-scope defects as you go; never silently leave one behind.
 
 ## How to work here
 
-**Plan → Act → Verify, at every scale.** Not once per release — once per task,
-and again per subtask. A "task" is any edit you are about to make.
+**Every task gets a visible Plan → Act → Verify.** A task is any edit you are
+about to make — not a release, not a PR. Sub-tasks get their own loop.
 
-Before editing, write down three things:
+**The plan is output, not thought.** Before the first tool call that changes a
+file, your reply must contain these four lines. If they are not in the reply,
+you have not planned:
 
-1. **Outcome** — what will be true after this change that is not true now.
-2. **Proof** — the exact command or observation that will show it, *and how it
-   would look if the change were wrong*. If you cannot describe the failing
-   case, you do not have a check; find a different proof.
-3. **Constraint** — which `knowledge/` page governs this area. Read it. The
-   reasoning that limits your change is probably already recorded.
+- **Outcome** — what will be true after this change that is not true now.
+- **Proof** — the exact command, *and what its output looks like if the change
+  is wrong*. No describable failing case means it is not a check; find a
+  different proof.
+- **Constraint** — the `knowledge/` page governing this area, read **before**
+  editing, and what in it limits this change. "Nothing governs this" is a
+  valid answer only after looking.
+- **Rung** — which rung of the ladder below you landed on, and why the ones
+  above it did not apply. **Every change**, not only new files.
 
-Then act. Then run the proof you named — not a different, easier one, and not
+Then act. Then run the proof you named — that one, not an easier one, and not
 a batch of unrelated green checks at the end.
+
+**Numbers are measured, never predicted.** Never write a count, percentage, or
+test total you did not just read from command output. If you expect a number
+to change, run the command and quote what it said.
+
+**A green first run is a claim, not a result.** If a check passes the first
+time, say how you know it could have failed. A check nobody has watched fail
+is decoration — see the traps below for four that passed while the page was
+broken.
 
 Write the check first when the change is behavioral. A test that has never
 been observed to fail has not been shown to test anything: make it fail, then
@@ -53,8 +136,8 @@ this ladder and stop at the first rung that answers:
 6. One line? → one line.
 7. Only then: the minimum that works.
 
-Say which rung you landed on and why the ones above it did not apply. New
-components are pinned at the version you got working (`=x.y.z`).
+The rung goes in the plan above, for every change — not only when adding a
+file. New components are pinned at the version you got working (`=x.y.z`).
 
 ## What proves what
 

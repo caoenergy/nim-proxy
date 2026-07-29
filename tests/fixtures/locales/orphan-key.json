@@ -21,6 +21,10 @@
     "app.nonexistent": {
       "en": "Stray",
       "hash": "c5138370"
+    },
+    "app.rate": {
+      "en": "120 rpm · 429 retry",
+      "hash": "4b64f8c2"
     }
   }
 }

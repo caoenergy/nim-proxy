@@ -56,7 +56,7 @@ the time, and rewriting them would be dishonest.
   verbatim, so points recorded before the upgrade stay under the old key while
   the dashboard queries the new one. Lane-cooldown charts are blank for
   pre-upgrade points and return to full fidelity one retention window
-  (`history_days`) after upgrading.
+  (`history.days`) after upgrading.
 
   This was a deliberate choice over a read-time alias in `history.rs`. The
   alias would work, but it is a permanent compatibility shim carried forever to

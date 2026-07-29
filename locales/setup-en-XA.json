@@ -8,7 +8,7 @@
       "hash": "f1de6d69"
     },
     "setup.header.subtitle": {
-      "en": "[Çŀáíɱ ŧĥíş ƥŕóxŷ: çŕéáŧé ŧĥé şúƥéŕúşéŕ áççóúñŧ áñđ áđđ áŧ ŀéáşŧ óñé ÑÍM ÁƤÍ ķéŷ. escamotableescamotableescamo]",
+      "en": "[Çŀáíɱ ŧĥíş ƥŕóxŷ: çŕéáŧé ŧĥé şúƥéŕúşéŕ áççóúñŧ áñđ áđđ áŧ ŀéáşŧ óñé NIM ÁƤÍ ķéŷ. escamotableescamotableescam]",
       "hash": "4d5df656"
     },
     "setup.stepper.step1": {
@@ -16,7 +16,7 @@
       "hash": "798ca2ce"
     },
     "setup.stepper.step2": {
-      "en": "[Áđđ ÑÍM ķéŷş esca]",
+      "en": "[Áđđ NIM ķéŷş esc]",
       "hash": "5c728e31"
     },
     "setup.stepper.step3": {
@@ -61,7 +61,7 @@
       "hash": "76900f1b"
     },
     "setup.step2.hint": {
-      "en": "[Ķéŷş ĵóíñ ŧĥé şĥáŕéđ ƥóóŀ áş ŷóúŕş. Éáçĥ ķéŷ'ş ŕéɋúéşŧş-ƥéŕ-ɱíñúŧé đéƒáúŀŧş ŧó ÑÍM'ş 40. escamotableescamotableescamotab]",
+      "en": "[Ķéŷş ĵóíñ ŧĥé şĥáŕéđ ƥóóŀ áş ŷóúŕş. Éáçĥ ķéŷ'ş ŕéɋúéşŧş-ƥéŕ-ɱíñúŧé đéƒáúŀŧş ŧó NIM'ş 40. escamotableescamotableescamota]",
       "hash": "bba8a612"
     },
     "setup.step3.mintkey": {
@@ -69,8 +69,18 @@
       "desc": "Checkbox label. {key} and {endpoint} are <code>-wrapped literals: npk_… and /v1. Neither is translated.",
       "hash": "fc7a5e75"
     },
+    "setup.step3.api_access_keyed": {
+      "en": "[ÁƤÍ ķéŷ ŕéɋúíŕéđ · ƒíŕşŧ çŀíéñŧ ķéŷ \"đéƒáúŀŧ\" escamotableescam]",
+      "desc": "Review line, shown when the wizard will mint a client key. \"default\" is the key's literal name and must survive verbatim, quotes included.",
+      "hash": "e77044c2"
+    },
+    "setup.step3.api_access_open": {
+      "en": "[ÁƤÍ ķéŷ ŕéɋúíŕéđ — ñó çŀíéñŧ ķéŷ ŷéŧ (/v1 ŕéĵéçŧş éṽéŕŷŧĥíñǥ) escamotableescamotab]",
+      "desc": "Review line, shown when the wizard will not mint a client key. '/v1' is the API path and must survive verbatim.",
+      "hash": "5d421bab"
+    },
     "setup.step3.mintwarn": {
-      "en": "[Ŵíŧĥóúŧ á çŀíéñŧ ķéŷ, ŧĥé ƥŕóxŷ şŧíŀŀ ŕéɋúíŕéş áñ ÁƤÍ ķéŷ ƀúŧ ŕéĵéçŧş {b}éṽéŕŷ{/b} /ṽ1 ŕéɋúéşŧ úñŧíŀ ŷóú ɱíñŧ óñé íñ Şéŧŧíñǥş → Áççéşş & ķéŷş. Şķíƥ ŧĥíş óñŀŷ íƒ ŷóú ƥŀáñ ŧó şŵíŧçĥ ŧĥé ÁƤÍ ɱóđé ŧó óƥéñ (úñáúŧĥéñŧíçáŧéđ /ṽ1). escamotableescamotableescamotableescamotableescamotableescamotableescamotabl]",
+      "en": "[Ŵíŧĥóúŧ á çŀíéñŧ ķéŷ, ŧĥé ƥŕóxŷ şŧíŀŀ ŕéɋúíŕéş áñ ÁƤÍ ķéŷ ƀúŧ ŕéĵéçŧş {b}éṽéŕŷ{/b} /v1 ŕéɋúéşŧ úñŧíŀ ŷóú ɱíñŧ óñé íñ Şéŧŧíñǥş → Áççéşş & ķéŷş. Şķíƥ ŧĥíş óñŀŷ íƒ ŷóú ƥŀáñ ŧó şŵíŧçĥ ŧĥé ÁƤÍ ɱóđé ŧó óƥéñ (úñáúŧĥéñŧíçáŧéđ /v1). escamotableescamotableescamotableescamotableescamotableescamotableescamota]",
       "desc": "{b}...{/b} is bold emphasis. Translators may move the tags to whichever word carries the emphasis.",
       "hash": "2635d060"
     },
@@ -116,7 +126,7 @@
       "hash": "09201dce"
     },
     "setup.document.title": {
-      "en": "[ÑÍM Ƥŕóxŷ — Ƒíŕşŧ-ŧíɱé şéŧúƥ escamotabl]",
+      "en": "[NIM Ƥŕóxŷ — Ƒíŕşŧ-ŧíɱé şéŧúƥ escamotab]",
       "desc": "Browser tab title. 'NIM Proxy' is the product name and stays.",
       "hash": "a59b017c"
     }

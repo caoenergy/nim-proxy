@@ -220,7 +220,83 @@ window.addEventListener('unhandledrejection', function (e) {
 
 /* ---------- the run -------------------------------------------------------- */
 
+
+// A run of ASCII prose with no accented character, under a locale where every
+// translated message is accented, is a string the catalog never reached.
+const SCAN_UNTRANSLATED = `
+  (() => {
+    const out = [];
+    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      const p = n.parentNode.nodeName;
+      if (p === 'SCRIPT' || p === 'STYLE') continue;
+      const t = n.textContent.trim();
+      if (t.length < 3 || !/[a-zA-Z]{3}/.test(t)) continue;
+      if (/[\\u00C0-\\u024F]/.test(t)) continue;   // accented: the catalog reached it
+      out.push(t);
+    }
+    return Array.from(new Set(out));
+  })()`;
+
+// Values that originate in the API response, computed by the page's own
+// helpers so this cannot drift from what it actually renders.
+const dataLabelValues = (() => {
+  // Data means values that arrived in the payload — nothing else. Scraping
+  // rendered elements misclassifies our own generated names: "Slot 1" comes
+  // from a template we wrote, not from the API.
+  const out = new Set();
+  for (const f of ['dashboard.json', 'dashboard-now.json']) {
+    const p = path.join(FIXTURES, f);
+    if (!fs.existsSync(p)) continue;
+    const doc = JSON.parse(fs.readFileSync(p, 'utf8'));
+    for (const bucket of ['totals', 'latest']) {
+      for (const r of doc[bucket] || []) {
+        for (const k of ['model', 'client']) {
+          const v = (r.labels || {})[k];
+          if (v && v !== 'none') out.add(v);
+        }
+      }
+    }
+  }
+  return [...out];
+})();
+
+// Expand each payload value through the page's own helpers, so the exclusion
+// set matches what it actually renders rather than what I assume it renders.
+const SCAN_DATA_DERIVED = `
+  (() => {
+    const ids = ${JSON.stringify(dataLabelValues)};
+    const out = new Set(ids);
+    for (const id of ids) {
+      try { out.add(prettyName(id)); } catch (e) {}
+      try { out.add(publisher(id).name); } catch (e) {}
+    }
+    // Anything Intl produces is CLDR data, not catalog text — weekday names and
+    // hour labels are correct-by-construction for the active locale and will
+    // never be accented under en-XA. Ask the page's own cached formatters
+    // rather than hardcoding a list that would drift from them.
+    try { for (const d of DAYS) out.add(d); } catch (e) {}
+    try {
+      for (let h = 0; h < 24; h++) {
+        out.add(HOUR_ONLY.format(Date.UTC(2024, 0, 1, h)));
+        out.add(HOUR_ONLY.formatRange(Date.UTC(2024, 0, 1, h), Date.UTC(2024, 0, 1, h + 1)));
+      }
+    } catch (e) {}
+    return [...out].filter(Boolean);
+  })()`;
+
 const TABS = ['overview', 'models', 'clients', 'reliability', 'capacity'];
+
+// The never-translate list has exactly one definition, in check_i18n.py. A JS
+// copy would drift, and this list decides which "untranslated" runs are
+// actually correct.
+function frozenTokens() {
+  const out = execFileSync('python3', ['-c',
+    'import sys,json; sys.path.insert(0,"scripts"); import check_i18n; '
+    + 'print(json.dumps(sorted(check_i18n.NEVER_TRANSLATE)))'],
+    { cwd: ROOT, encoding: 'utf8' });
+  return JSON.parse(out);
+}
 
 async function main() {
   const chrome = findChrome();
@@ -347,10 +423,26 @@ async function main() {
     return r.result.value;
   };
 
+  const untranslatedByTab = new Map();
+  const dataDerived = new Set();
   const hovered = [];
   for (const tab of TABS) {
-    await evaluate(`location.hash = '#${tab}'`);
-    await sleep(900);
+    // Tabs switch on click. `location.hash` is assigned BY that handler, and
+    // the hash-to-click bridge runs once at load, so setting the hash after
+    // load silently does nothing and every "tab" measures Overview again.
+    const switched = await evaluate(`
+      (() => {
+        const b = document.querySelector('#side nav button[data-tab="${tab}"]');
+        if (!b) return false;
+        b.click();
+        return document.querySelector('#tab-${tab}') ? !document.querySelector('#tab-${tab}').hidden : false;
+      })()`);
+    if (!switched) {
+      console.error(`FAIL — could not switch to the ${tab} tab; the gate would measure the wrong panels`);
+      proc.kill('SIGKILL');
+      process.exit(1);
+    }
+    await sleep(1200);
 
     // Real pointer input, at the real coordinates of each rendered chart.
     const rects = await evaluate(`
@@ -372,6 +464,19 @@ async function main() {
       }
       hovered.push(`${tab}/${r.id}`);
     }
+
+    if (localeArg && localeArg.startsWith('en-X')) {
+      // Data is never translated: model ids, their prettified forms, publisher
+      // names and client names come from the API, and localizing them would be
+      // manipulating data rather than labelling it. Ask the page which strings
+      // those are instead of guessing from the fixtures.
+      for (const d of await evaluate(SCAN_DATA_DERIVED)) dataDerived.add(d);
+      // Per tab: panels are torn down and rebuilt on tab switch, so a single
+      // scan after the loop only ever sees the last tab.
+      for (const run of await evaluate(SCAN_UNTRANSLATED)) {
+        if (!untranslatedByTab.has(run)) untranslatedByTab.set(run, tab);
+      }
+    }
   }
 
   // The poll loop re-applies the last hover on every live re-render, which is
@@ -392,25 +497,6 @@ async function main() {
           }
         }
         return bad;
-      })()`);
-  }
-
-  let untranslated = [];
-  if (localeArg && localeArg.startsWith('en-X')) {
-    untranslated = await evaluate(`
-      (() => {
-        const skip = new Set(['SCRIPT', 'STYLE']);
-        const out = [];
-        const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-        for (let n = walk.nextNode(); n; n = walk.nextNode()) {
-          if (skip.has(n.parentNode.nodeName)) continue;
-          const t = n.textContent.trim();
-          if (t.length < 3) continue;
-          if (!/[a-zA-Z]{3}/.test(t)) continue;
-          if (/[\\u00C0-\\u024F]/.test(t)) continue;   // has an accent: translated
-          out.push(t);
-        }
-        return Array.from(new Set(out));
       })()`);
   }
 
@@ -440,10 +526,29 @@ async function main() {
 
   console.log(`rendered ${TABS.length} tabs, hovered ${hovered.length} charts`);
 
-  if (untranslated.length) {
-    console.log(`\nuntranslated runs under ${localeArg}: ${untranslated.length}`);
-    for (const s of untranslated.slice(0, 60)) console.log('   ' + JSON.stringify(s));
-    if (untranslated.length > 60) console.log(`   … ${untranslated.length - 60} more`);
+  if (untranslatedByTab.size) {
+    const frozen = frozenTokens();
+    // Exact match only. Substring matching against data values excludes real
+    // labels: a "Mo" monogram swallowed the heatmap's "Mon", and any run
+    // containing "rpm" swallowed "0 / 24 rpm · 3 keys", whose "keys" is ours.
+    const isData = (t) => dataDerived.has(t);
+    // A run is correctly untranslated only if NOTHING of ours is left once the
+    // frozen tokens, digits and punctuation are removed. "tok/s" goes; "24 rpm
+    // available" stays, because "available" is a word we wrote.
+    const isFrozen = (t) => {
+      let rest = t;
+      for (const f of [...frozen].sort((a, b) => b.length - a.length)) rest = rest.split(f).join(' ');
+      return !/[a-zA-Z]{2,}/.test(rest);
+    };
+    const real = [...untranslatedByTab].filter(([t]) => !isFrozen(t) && !isData(t));
+    if (process.env.DEBUG) {
+      const dropped = [...untranslatedByTab].filter(([t]) => isFrozen(t) || isData(t));
+      console.log('DEBUG excluded:', JSON.stringify(dropped.map(([t]) => t)));
+    }
+    const correct = untranslatedByTab.size - real.length;
+    console.log(`\nuntranslated runs under ${localeArg}: ${real.length} actionable`
+      + ` (${correct} correctly untranslated: frozen tokens and data from the API)`);
+    for (const [text, tab] of real) console.log(`   [${tab}] ${JSON.stringify(text)}`);
   }
 
   if (doubleEscaped.length) {
