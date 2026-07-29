@@ -92,6 +92,97 @@ def tagged(source: str, attr: str):
         yield mid, source[m.end():close if close != -1 else m.end()]
 
 
+
+# ---------------------------------------------------------------------------
+# Untagged-string lint
+#
+# Without this, English creeps back within two PRs: someone adds a column or a
+# metric row, writes the label inline because that is what the surrounding code
+# used to look like, and nothing complains. It covers ATTRIBUTES as well as
+# text, because a hardcoded title= is just as untranslated and far easier to
+# miss in review.
+#
+# Scoped deliberately:
+#   - the settings surface is excluded; its ~79 strings land in 0.6.7
+#   - chipHtml's interior is excluded. It interpolates into a URL and (before
+#     this release) a JS context; routing a catalog value through it is the
+#     thing we spent PR 3 removing. Flagging it would invite someone to
+#     "fix" it by wrapping it in t(), which is a net loss.
+#   - NEVER_TRANSLATE holds the units and codes that must survive verbatim.
+
+NEVER_TRANSLATE = {
+    "TTFT", "TPOT", "tok/s", "Tools/req", "Msgs/req", "p50 / p95", "p50", "p95",
+    "requests / min", "req/min", "rpm", "JSON", "HTTP", "POST", "SLO", "NIM",
+    "/v1", "%", "429", "401", "503", "504", "5xx",
+    "requests/min", "nvapi-\u2026", "npk_\u2026",
+}
+
+def frozen(text: str) -> bool:
+    """Units, status codes, key prefixes and URLs survive verbatim in every
+    locale, so a hardcoded one is correct rather than an oversight."""
+    return (
+        text in NEVER_TRANSLATE
+        or text.startswith(("http://", "https://"))
+        or not re.search(r"[A-Za-z]{2}", text)
+    )
+
+# JS positions whose first argument is displayed to the operator.
+DISPLAY_CALLS = re.compile(
+    r"(?:\{\s*label:\s*|metricRow\(\s*|tile\(\s*|prow\(\s*|empty:\s*)'([^']{2,})'"
+)
+SETTINGS_START = re.compile(r"function renderSettings\(")
+
+
+def lint_runtime_helpers(name: str, raw: str) -> list:
+    """Every i18n helper a page CALLS must be defined in that page.
+
+    `node --check` sees only syntax and `cargo test` never parses the script,
+    so an undefined helper is silent until the page runs. It bites hard:
+    applyStatic aborts on the first throw, so ONE missing helper leaves the
+    entire page untranslated rather than one string. That happened — setup.html
+    called tRaw() while defining only rawMsg()."""
+    body = re.search(r"<script>(.*?)</script>", raw, re.S)
+    if not body:
+        return []
+    js = strip_comments(body.group(1))
+    called = set(re.findall(r"\b(t|tRaw|tHtml|applyStatic|rawMsg|fill)\s*\(", js))
+    defined = set(re.findall(r"(?:const|let|var|function)\s+(t|tRaw|tHtml|applyStatic|rawMsg|fill)\b", js))
+    return [
+        f"{name}: calls {fn}() but never defines it — the page will not localize"
+        for fn in sorted(called - defined)
+    ]
+
+
+def lint_untagged(name: str, raw: str) -> list:
+    errors = []
+    body = re.search(r"<script>(.*?)</script>", raw, re.S)
+    js = body.group(1) if body else ""
+
+    # The settings surface is out of scope until 0.6.7.
+    cut = SETTINGS_START.search(js)
+    scanned = js[: cut.start()] if cut else js
+
+    # chipHtml is excluded by design, not by oversight.
+    scanned = re.sub(r"function chipHtml\(pub\) \{.*?\n\}", "", scanned, flags=re.S)
+
+    for m in DISPLAY_CALLS.finditer(strip_comments(scanned)):
+        text = m.group(1)
+        if frozen(text):
+            continue
+        errors.append(f"{name}: untagged display string {text!r} — route it through t()")
+
+    # Localizable attributes carrying prose, with no data-i18n-attr beside them.
+    markup = strip_scripts(raw)
+    for m in re.finditer(r"<[^>]*\s(title|placeholder|aria-label)=\"([^\"]{2,})\"[^>]*>", markup):
+        tag, attr, text = m.group(0), m.group(1), m.group(2)
+        if "data-i18n-attr" in tag or "${" in text:
+            continue
+        if frozen(text):
+            continue
+        errors.append(f"{name}: untagged {attr}={text!r} — add data-i18n-attr")
+    return errors
+
+
 def main() -> int:
     errors = []
     referenced = set()
@@ -188,7 +279,8 @@ def main() -> int:
         # ids used from JavaScript: t('id') / tRaw('id') / tHtml('id').
         # These must exist — an unknown id renders the raw id string to the
         # operator rather than failing loudly.
-        for m in re.finditer(r"\bt(?:Raw|Html)?\(\s*'([a-z0-9_.]+)'", strip_comments(raw)):
+        # both quote styles: dashboard.html uses ', setup.html uses "
+        for m in re.finditer(r"""\bt(?:Raw|Html)?\(\s*['"]([a-z0-9_.]+)['"]""", strip_comments(raw)):
             mid = m.group(1)
             referenced.add(mid)
             if mid not in catalog:
@@ -216,6 +308,11 @@ def main() -> int:
             for mid in sorted(set(inline) & set(disk)):
                 if inline[mid] != disk[mid]:
                     errors.append(f"{standalone}: {mid} differs from the inline catalog")
+
+    for name in ("src/dashboard.html", "src/setup.html"):
+        page = (ROOT / name).read_text()
+        errors += lint_runtime_helpers(name, page)
+        errors += lint_untagged(name, page)
 
     if errors:
         print(f"{len(errors)} problem(s):")

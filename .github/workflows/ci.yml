@@ -41,16 +41,32 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Tests (unit + integration)
         run: cargo test
-      - name: Dashboard JS syntax
+      - name: Embedded page JS syntax
+        # cargo test asserts on served HTML text and never parses the
+        # JavaScript, so it passes on a page that cannot run. This is the only
+        # gate that catches that.
         run: |
-          python3 - <<'PY' > "$RUNNER_TEMP/dash.js"
-          import re, pathlib
-          html = pathlib.Path("src/dashboard.html").read_text()
+          for page in dashboard setup; do
+            python3 - "$page" <<'PY' > "$RUNNER_TEMP/$page.js"
+          import re, sys, pathlib
+          html = pathlib.Path(f"src/{sys.argv[1]}.html").read_text()
           m = re.search(r"<script>\n(.*)</script>", html, re.S)
-          assert m, "no <script> block found in src/dashboard.html"
+          assert m, f"no <script> block found in src/{sys.argv[1]}.html"
           print(m.group(1))
           PY
-          node --check "$RUNNER_TEMP/dash.js"
+            node --check "$RUNNER_TEMP/$page.js"
+          done
+      - name: i18n catalog and untagged-string lint
+        run: python3 scripts/check_i18n.py
+      - name: locale-v1 self-test
+        # Proves every check can fail before trusting any of them.
+        run: python3 scripts/locale_v1.py --selftest
+      - name: locale-v1 validation
+        run: python3 scripts/locale_v1.py --all
+      - name: Pseudolocale is current
+        # en-XA is generated, never hand-edited; a stale one silently stops
+        # testing the strings that changed.
+        run: python3 scripts/gen_pseudolocale.py --check
 
   coverage:
     name: coverage

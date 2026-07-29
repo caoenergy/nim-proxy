@@ -6,6 +6,25 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-29] decision — pseudolocale, validator, and untagged-string lint
+
+Fifth change of the 0.6.6 rationalization. Recorded in
+[locale-guards](decisions/locale-guards.md).
+
+- Written test-first: the nine negative fixtures are a separate commit that
+  lands *before* the validator, so they describe what the checks must catch
+  rather than what an implementation happens to do.
+- The guards found three defects that had survived PR 3's adversarial review
+  and its own linter: the runtime-churn strings were never extracted (`Live`,
+  `Absolute`, `Disconnected`, `Validating…`, `Copied`, `Select & copy`, and the
+  wizard's `<title>`); `locale-v1 --all` paired the wizard's locale against the
+  dashboard's source catalog; and `setup.html` called `tRaw()` while defining
+  only `rawMsg()`.
+- Lint: that last one is worth remembering. `applyStatic` aborts on the first
+  throw, so a single undefined helper left the whole page in English rather
+  than one string — and neither `node --check` (syntax only) nor `cargo test`
+  (never parses the JS) can see it. A dedicated check now covers that class.
+
 ## [2026-07-29] decision — message catalog and the escape-once contract
 
 Third change of the 0.6.6 rationalization. Extracted the dashboard and setup

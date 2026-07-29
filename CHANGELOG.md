@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Localization guards: an `en-XA` pseudolocale (generated, never hand-edited),
+  a `locale-v1` validator covering completeness, placeholder parity, formatter
+  syntax, raw markup, inline balance, source-hash freshness and length caps, and
+  an untagged-string lint that fails on any display literal bypassing `t()`.
+  Every check ships with a deliberately broken fixture proving it can fail, and
+  all four run in CI.
+
 - The dashboard and setup wizard now render their text from an embedded
   `en-US` message catalog rather than hardcoded literals — the groundwork for
   localization. 159 messages so far, covering the static markup of both pages

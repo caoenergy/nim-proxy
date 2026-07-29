@@ -1,0 +1,124 @@
+{
+  "locale": "en-XA",
+  "state": "Generated",
+  "messages": {
+    "setup.header.title": {
+      "en": "[— Ƒíŕşŧ-ŧíɱé şéŧúƥ escamo]",
+      "desc": "Follows the untranslated NIM PROXY wordmark.",
+      "hash": "f1de6d69"
+    },
+    "setup.header.subtitle": {
+      "en": "[Çŀáíɱ ŧĥíş ƥŕóxŷ: çŕéáŧé ŧĥé şúƥéŕúşéŕ áççóúñŧ áñđ áđđ áŧ ŀéáşŧ óñé ÑÍM ÁƤÍ ķéŷ. escamotableescamotableescamo]",
+      "hash": "4d5df656"
+    },
+    "setup.stepper.step1": {
+      "en": "[Çŕéáŧé áççóúñŧ escam]",
+      "hash": "798ca2ce"
+    },
+    "setup.stepper.step2": {
+      "en": "[Áđđ ÑÍM ķéŷş esca]",
+      "hash": "5c728e31"
+    },
+    "setup.stepper.step3": {
+      "en": "[Ŕéṽíéŵ & ƒíñíşĥ escam]",
+      "hash": "d037a7cf"
+    },
+    "setup.step1.username": {
+      "en": "[Úşéŕñáɱé esc]",
+      "hash": "e3b89e9d"
+    },
+    "setup.step1.password": {
+      "en": "[Ƥáşşŵóŕđ (10+ çĥáŕáçŧéŕş) escamotab]",
+      "hash": "79c07c0e"
+    },
+    "setup.step1.confirm": {
+      "en": "[Çóñƒíŕɱ ƥáşşŵóŕđ escamo]",
+      "hash": "5ac265f3"
+    },
+    "setup.step1.username.placeholder": {
+      "en": "[é.ǥ. áđɱíñ esca]",
+      "desc": "Input placeholder. 'e.g.' needs the locale's own abbreviation; 'admin' is a suggested value.",
+      "hash": "d415d634"
+    },
+    "setup.wizard.continue": {
+      "en": "[Çóñŧíñúé esc]",
+      "hash": "31fbef16"
+    },
+    "setup.step1.hint": {
+      "en": "[Ŧĥíş áççóúñŧ íş ŧĥé şúƥéŕúşéŕ — íŧ çáñ ñéṽéŕ ƀé đéŀéŧéđ, áñđ íŧ áñçĥóŕş ŧĥé ķéŷ ƥóóŀ. escamotableescamotableescamota]",
+      "hash": "ffe50a22"
+    },
+    "setup.step2.addkey": {
+      "en": "[Ṽáŀíđáŧé & áđđ escam]",
+      "hash": "15414785"
+    },
+    "setup.step2.advanced": {
+      "en": "[Áđṽáñçéđ — úƥşŧŕéáɱ ƀáşé ÚŔĿ escamotabl]",
+      "hash": "8dd07757"
+    },
+    "setup.wizard.back": {
+      "en": "[Ɓáçķ e]",
+      "hash": "76900f1b"
+    },
+    "setup.step2.hint": {
+      "en": "[Ķéŷş ĵóíñ ŧĥé şĥáŕéđ ƥóóŀ áş ŷóúŕş. Éáçĥ ķéŷ'ş ŕéɋúéşŧş-ƥéŕ-ɱíñúŧé đéƒáúŀŧş ŧó ÑÍM'ş 40. escamotableescamotableescamotab]",
+      "hash": "bba8a612"
+    },
+    "setup.step3.mintkey": {
+      "en": "[Çŕéáŧé ɱŷ ƒíŕşŧ çŀíéñŧ ÁƤÍ ķéŷ ({key}) şó çŀíéñŧş çáñ çáŀŀ {endpoint} ŕíǥĥŧ áŵáŷ escamotableescamotablee]",
+      "desc": "Checkbox label. {key} and {endpoint} are <code>-wrapped literals: npk_… and /v1. Neither is translated.",
+      "hash": "fc7a5e75"
+    },
+    "setup.step3.mintwarn": {
+      "en": "[Ŵíŧĥóúŧ á çŀíéñŧ ķéŷ, ŧĥé ƥŕóxŷ şŧíŀŀ ŕéɋúíŕéş áñ ÁƤÍ ķéŷ ƀúŧ ŕéĵéçŧş {b}éṽéŕŷ{/b} /ṽ1 ŕéɋúéşŧ úñŧíŀ ŷóú ɱíñŧ óñé íñ Şéŧŧíñǥş → Áççéşş & ķéŷş. Şķíƥ ŧĥíş óñŀŷ íƒ ŷóú ƥŀáñ ŧó şŵíŧçĥ ŧĥé ÁƤÍ ɱóđé ŧó óƥéñ (úñáúŧĥéñŧíçáŧéđ /ṽ1). escamotableescamotableescamotableescamotableescamotableescamotableescamotabl]",
+      "desc": "{b}...{/b} is bold emphasis. Translators may move the tags to whichever word carries the emphasis.",
+      "hash": "2635d060"
+    },
+    "setup.step3.finish": {
+      "en": "[Çŕéáŧé & óƥéñ đáşĥƀóáŕđ escamota]",
+      "hash": "c91cfd01"
+    },
+    "setup.step4.intro": {
+      "en": "[Şéŧúƥ çóɱƥŀéŧé. Ƥóíñŧ ŷóúŕ çŀíéñŧ áŧ ŧĥé ƥŕóxŷ — ŧĥé ÁƤÍ ķéŷ ƀéŀóŵ íş şĥóŵñ {b}óñŀŷ ŧĥíş óñçé{/b} (óñŀŷ íŧş đíǥéşŧ íş şŧóŕéđ). escamotableescamotableescamotableescamotab]",
+      "hash": "3a9f6c0b"
+    },
+    "setup.step4.baseurl": {
+      "en": "[Çŀíéñŧ ƀáşé ÚŔĿ escam]",
+      "hash": "32444228"
+    },
+    "setup.step4.apikey": {
+      "en": "[Çŀíéñŧ ÁƤÍ ķéŷ escam]",
+      "hash": "f3a91248"
+    },
+    "setup.step4.copy": {
+      "en": "[Çóƥŷ e]",
+      "desc": "Button, imperative verb. Copies the adjacent value to the clipboard.",
+      "hash": "e21f935f"
+    },
+    "setup.step4.opendash": {
+      "en": "[Óƥéñ đáşĥƀóáŕđ escam]",
+      "desc": "Button, imperative verb phrase. 'Open' is the verb, not the API-mode adjective.",
+      "hash": "803f2313"
+    },
+    "setup.step2.validating": {
+      "en": "[Ṽáŀíđáŧíñǥ… esca]",
+      "desc": "Button label while a key is probed upstream.",
+      "hash": "cd51f8c8"
+    },
+    "setup.step4.copied": {
+      "en": "[Çóƥíéđ es]",
+      "desc": "Button label after a successful clipboard copy. Past tense.",
+      "hash": "8d525e5f"
+    },
+    "setup.step4.select_copy": {
+      "en": "[Şéŀéçŧ & çóƥŷ escam]",
+      "desc": "Button label when the clipboard API is unavailable and the user must copy manually.",
+      "hash": "09201dce"
+    },
+    "setup.document.title": {
+      "en": "[ÑÍM Ƥŕóxŷ — Ƒíŕşŧ-ŧíɱé şéŧúƥ escamotabl]",
+      "desc": "Browser tab title. 'NIM Proxy' is the product name and stays.",
+      "hash": "a59b017c"
+    }
+  }
+}
