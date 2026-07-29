@@ -36,6 +36,11 @@ const localeArg = (() => {
   const i = args.indexOf('--locale');
   return i >= 0 ? args[i + 1] : null;
 })();
+// Catalog values are escaped once at load, so no render helper may escape its
+// label argument again (knowledge/decisions/message-catalog-and-escaping.md).
+// English labels contain no escapable character, so a second escape is
+// invisible until a real locale ships. This makes it visible now.
+const escapeProbe = args.includes('--escape-probe');
 
 /* ---------- locate a browser ---------------------------------------------- */
 
@@ -157,6 +162,21 @@ function buildPage(tmpdir) {
   // In-page capture as well as CDP: the page boots from an async IIFE, so a
   // throw there surfaces as an unhandled rejection, which Runtime.exceptionThrown
   // does not reliably report. A gate blind to that is blind to boot failure.
+  if (escapeProbe) {
+    html = html.replace(
+      /(<script type="application\/json" id="i18n-catalog">)([\s\S]*?)(<\/script>)/,
+      (_m, a, json, b) => {
+        const cat = JSON.parse(json);
+        for (const k of Object.keys(cat.messages)) {
+          const v = cat.messages[k];
+          if (typeof v === 'string') cat.messages[k] = v + " Ampersand & Quote'";
+          else v.en = v.en + " Ampersand & Quote'";
+        }
+        return a + JSON.stringify(cat) + b;
+      },
+    );
+  }
+
   const stub = `<script>
 window.__fetched = [];
 window.__pageErrors = [];
@@ -356,6 +376,23 @@ async function main() {
   // how a hover throw escalates from "no tooltip" to "the tab stops updating".
   await sleep(3500);
 
+  let doubleEscaped = [];
+  if (escapeProbe) {
+    doubleEscaped = await evaluate(`
+      (() => {
+        const bad = [];
+        const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+          if (n.parentNode.nodeName === 'SCRIPT' || n.parentNode.nodeName === 'STYLE') continue;
+          const t = n.textContent;
+          if (/&amp;|&#39;|&quot;|&lt;|&gt;/.test(t)) {
+            bad.push({ text: t.trim().slice(0, 70), el: n.parentNode.className || n.parentNode.nodeName });
+          }
+        }
+        return bad;
+      })()`);
+  }
+
   let untranslated = [];
   if (localeArg && localeArg.startsWith('en-X')) {
     untranslated = await evaluate(`
@@ -387,7 +424,10 @@ async function main() {
   }
 
   proc.kill('SIGKILL');
-  fs.rmSync(tmpdir, { recursive: true, force: true });
+  await new Promise((r) => proc.on('exit', r));
+  // the browser holds its profile open; a bare rmSync races it and turns a
+  // real pass/fail into ENOTEMPTY
+  fs.rmSync(tmpdir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 
   /* ---------- report ------------------------------------------------------ */
 
@@ -397,6 +437,17 @@ async function main() {
     console.log(`\nuntranslated runs under ${localeArg}: ${untranslated.length}`);
     for (const s of untranslated.slice(0, 60)) console.log('   ' + JSON.stringify(s));
     if (untranslated.length > 60) console.log(`   … ${untranslated.length - 60} more`);
+  }
+
+  if (doubleEscaped.length) {
+    console.error(`\nFAIL — ${doubleEscaped.length} double-escaped run(s): a helper escaped an already-escaped catalog value`);
+    const seen = new Set();
+    for (const d of doubleEscaped) {
+      if (seen.has(d.el)) continue;
+      seen.add(d.el);
+      console.error(`  .${d.el}  ${JSON.stringify(d.text)}`);
+    }
+    process.exit(1);
   }
 
   if (errors.length || consoleErrors.length) {

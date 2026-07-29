@@ -934,11 +934,11 @@ function lineChart(el, series, unitFmt, opts = {}) {
   const hoverg = svg.querySelector('#hoverg'), xh = svg.querySelector('#xh');
   const hover = (clientX, clientY) => {
     const r = svg.getBoundingClientRect();
-    const at = t0 + (clientX - r.left) / Math.max(1, r.width) * (t1 - t0);
+    const tAt = t0 + (clientX - r.left) / Math.max(1, r.width) * (t1 - t0);
     // snap to the nearest sample of the densest series
     const ref = live.reduce((a, s) => s.pts.length > a.pts.length ? s : a);
     let best = ref.pts[0];
-    for (const p of ref.pts) if (Math.abs(p.t - at) < Math.abs(best.t - at)) best = p;
+    for (const p of ref.pts) if (Math.abs(p.t - tAt) < Math.abs(best.t - tAt)) best = p;
     const mx = X(best.t);
     xh.setAttribute('x1', mx); xh.setAttribute('x2', mx);
     let dots = '';
@@ -974,8 +974,8 @@ function stackChart(el, series, unitFmt, opts = {}) {
   // wrong timestamps, so it is dropped rather than drawn wrong.
   bands = bands.filter(s => s.pts.length === n);
   const ts = (bands[0] || { pts: [] }).pts.map(p => p.t);
-  const at = (s, i) => Math.max(0, s.pts[i] ? s.pts[i].v : 0);
-  const totals = ts.map((_, i) => bands.reduce((a, s) => a + at(s, i), 0));
+  const bandAt = (s, i) => Math.max(0, s.pts[i] ? s.pts[i].v : 0);
+  const totals = ts.map((_, i) => bands.reduce((a, s) => a + bandAt(s, i), 0));
   if (ts.length < 2 || !totals.some(v => v > 0)) { el.innerHTML = `<div class="empty">${t('dashboard.common.empty.no_data_in_range')}</div>`; return; }
   const W = el.clientWidth || 500, PT = 16, PB = 16;
   const t0 = ts[0], t1 = ts[ts.length-1];
@@ -998,7 +998,7 @@ function stackChart(el, series, unitFmt, opts = {}) {
   // Cumulative bands drawn top→bottom: each fills to the baseline, painting
   // over the shorter (lower) bands, so band k occupies [cum(k-1), cum(k)].
   const run = ts.map(() => 0), cum = [];
-  for (const s of bands) { for (let i = 0; i < ts.length; i++) run[i] += at(s, i); cum.push(run.slice()); }
+  for (const s of bands) { for (let i = 0; i < ts.length; i++) run[i] += bandAt(s, i); cum.push(run.slice()); }
   for (let k = bands.length - 1; k >= 0; k--) {
     const d = cum[k].map((v, i) => `${i?'L':'M'}${X(ts[i]).toFixed(1)},${Y(v).toFixed(1)}`).join('');
     g += `<path d="${d}L${X(t1).toFixed(1)},${H-PB}L${X(t0).toFixed(1)},${H-PB}Z" fill="${bands[k].color}" fill-opacity="0.82"/>`;
@@ -1010,9 +1010,9 @@ function stackChart(el, series, unitFmt, opts = {}) {
   const hoverg = svg.querySelector('#hoverg'), xh = svg.querySelector('#xh');
   const hover = (clientX, clientY) => {
     const r = svg.getBoundingClientRect();
-    const at = t0 + (clientX - r.left) / Math.max(1, r.width) * (t1 - t0);
+    const tAt = t0 + (clientX - r.left) / Math.max(1, r.width) * (t1 - t0);
     let bi = 0;
-    for (let i = 0; i < ts.length; i++) if (Math.abs(ts[i] - at) < Math.abs(ts[bi] - at)) bi = i;
+    for (let i = 0; i < ts.length; i++) if (Math.abs(ts[i] - tAt) < Math.abs(ts[bi] - tAt)) bi = i;
     const mx = X(ts[bi]);
     xh.setAttribute('x1', mx); xh.setAttribute('x2', mx);
     let dots = '';
@@ -1020,7 +1020,7 @@ function stackChart(el, series, unitFmt, opts = {}) {
       dots += `<circle cx="${mx}" cy="${Y(cum[k][bi])}" r="3" fill="${bands[k].color}" stroke="${css('--bg')}" stroke-width="1.5"/>`;
     let html = `<div class="t">${at(STAMP, ts[bi])}</div>`;
     for (const s of bands)
-      html += `<div class="row"><span><i class="sw" style="background:${s.color}"></i>${esc(s.name)}</span><b>${unitFmt(at(s, bi))}</b></div>`;
+      html += `<div class="row"><span><i class="sw" style="background:${s.color}"></i>${esc(s.name)}</span><b>${unitFmt(bandAt(s, bi))}</b></div>`;
     html += `<div class="row" style="border-top:1px solid var(--hairline);margin-top:3px;padding-top:4px"><span>total</span><b>${unitFmt(totals[bi])}</b></div>`;
     hoverg.innerHTML = xh.outerHTML + dots;
     hoverg.setAttribute('visibility', 'visible');
@@ -1150,7 +1150,7 @@ function deltaChip(pts, downIsGood) {
 function kpiCards(el, defs, hero) {
   el.innerHTML = defs.map(k =>
     `<div class="kpi${hero ? ' hero' : ''}">` +
-    `<div class="kpihead"><span class="kpilabel"><svg viewBox="0 0 16 16">${ICONS[k.icon] || ''}</svg>${esc(k.label)}</span>${k.delta || ''}</div>` +
+    `<div class="kpihead"><span class="kpilabel"><svg viewBox="0 0 16 16">${ICONS[k.icon] || ''}</svg>${k.label}</span>${k.delta || ''}</div>` +
     `<div class="kpival">${k.value}</div>` +
     `<div class="kpisub">${k.sub || ''}</div>` +
     sparkSvg(k.pts, hero) + `</div>`).join('');
