@@ -42,6 +42,7 @@ const localeArg = (() => {
 // invisible until a real locale ships. This makes it visible now.
 const escapeProbe = args.includes('--escape-probe');
 // Appended to every catalog value under --escape-probe. See the mutation below.
+const PROBE_MARKER = 'Ampersand';
 const PROBE_SUFFIX = " Ampersand & Quote' <b>Tag</b>";
 const PROBE_TAG_TEXT = 'Tag';
 
@@ -525,12 +526,18 @@ async function main() {
         // value reached a raw-HTML sink WITHOUT being escaped, that parsed into
         // a real element. Any <b> holding exactly the probe text is a sink that
         // does not escape when it must.
+        // The <b> text alone is not enough to accuse: metricRow() and the
+        // settings modal both put dynamic values inside <b>, so a value that
+        // happened to read "Tag" would be a false accusation. Require the rest
+        // of the probe suffix in the same host — it is appended to the SAME
+        // catalog value, so an unescaped one always carries both.
         for (const b of document.querySelectorAll('b')) {
-          if (b.textContent.trim() === ${JSON.stringify(PROBE_TAG_TEXT)}) {
-            const host = b.parentNode;
-            bad.push({ dir: 'missing', text: (host.textContent || '').trim().slice(0, 70),
-                       el: host.className || host.nodeName });
-          }
+          if (b.textContent.trim() !== ${JSON.stringify(PROBE_TAG_TEXT)}) continue;
+          const host = b.parentNode;
+          const hostText = (host && host.textContent) || '';
+          if (!hostText.includes(${JSON.stringify(PROBE_MARKER)})) continue;
+          bad.push({ dir: 'missing', text: hostText.trim().slice(0, 70),
+                     el: host.className || host.nodeName });
         }
         return bad;
       })()`);
