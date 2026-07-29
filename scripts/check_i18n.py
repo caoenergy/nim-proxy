@@ -41,6 +41,13 @@ def load_catalog(source: str):
     return json.loads(m.group(1))["messages"]
 
 
+def strip_comments(source: str) -> str:
+    """Drop JS comments so an id merely *mentioned* in prose does not count as
+    a reference and mask an orphan."""
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    return re.sub(r"(?<![:'\"])//[^\n]*", "", source)
+
+
 def strip_scripts(source: str) -> str:
     """Drop executable <script> bodies; the runtime's own doc comment mentions
     these attribute names and would otherwise be scanned as markup."""
@@ -139,12 +146,37 @@ def main() -> int:
             if "<" in catalog[mid]["en"]:
                 errors.append(f"{name}: {mid} contains raw markup; use a placeholder")
 
-        for m in re.finditer(r'data-i18n-attr="([^"]+)"', source):
-            for pair in m.group(1).split(","):
-                _, _, mid = pair.partition(":")
+        # No value anywhere may carry markup or an HTML entity. Entities would
+        # double-encode (values are plain text, escaped once at load); markup
+        # would render literally through the escaping paths and inject through
+        # any that is added later.
+        for mid, msg in catalog.items():
+            if "<" in msg["en"] or ">" in msg["en"]:
+                errors.append(f"{name}: {mid} contains raw markup")
+            if re.search(r"&(?:[a-zA-Z]+|#\d+);", msg["en"]):
+                errors.append(f"{name}: {mid} contains an HTML entity; store plain text")
+
+        # Only text-bearing attributes are localizable; the runtime enforces
+        # the same set, so a mismatch here is a bug in one of the two.
+        localizable = {"title", "placeholder", "aria-label", "alt"}
+        for m in re.finditer(r'(<[^>]*\sdata-i18n-attr="([^"]+)"[^>]*>)', source):
+            tag, spec = m.group(1), m.group(2)
+            for pair in spec.split(","):
+                attr, _, mid = pair.partition(":")
                 referenced.add(mid)
+                if attr not in localizable:
+                    errors.append(f"{name}: {mid} targets non-localizable attribute {attr!r}")
                 if mid not in catalog:
                     errors.append(f"{name}: data-i18n-attr={mid} has no catalog entry")
+                    continue
+                # round-trip: the attribute still present in the markup must be
+                # exactly what the catalog will substitute
+                cur = re.search(rf'\s{re.escape(attr)}="([^"]*)"', tag)
+                if cur and htmlmod.unescape(cur.group(1)) != catalog[mid]["en"]:
+                    errors.append(
+                        f"{name}: {mid} attribute {attr}={cur.group(1)[:40]!r} "
+                        f"!= catalog {catalog[mid]['en'][:40]!r}"
+                    )
 
         for mid, msg in catalog.items():
             got = hashlib.sha256(msg["en"].encode()).hexdigest()[:8]
@@ -153,13 +185,37 @@ def main() -> int:
                     f"{name}: {mid} hash {msg.get('hash')} stale, text hashes to {got}"
                 )
 
-        # ids used from JavaScript: t('id') / tRaw('id') / tHtml('id')
-        for m in re.finditer(r"\bt(?:Raw|Html)?\(\s*'([a-z0-9_.]+)'", raw):
-            referenced.add(m.group(1))
+        # ids used from JavaScript: t('id') / tRaw('id') / tHtml('id').
+        # These must exist — an unknown id renders the raw id string to the
+        # operator rather than failing loudly.
+        for m in re.finditer(r"\bt(?:Raw|Html)?\(\s*'([a-z0-9_.]+)'", strip_comments(raw)):
+            mid = m.group(1)
+            referenced.add(mid)
+            if mid not in catalog:
+                errors.append(f"{name}: t('{mid}') has no catalog entry")
 
         for mid in catalog:
             if mid not in referenced:
                 errors.append(f"{name}: catalog id {mid} is never referenced (orphan)")
+
+    # The standalone locale files are what translators and the PR 6 pipeline
+    # edit; the inline block is what ships. They must not drift.
+    for page, standalone in (
+        ("src/dashboard.html", "locales/en-US.json"),
+        ("src/setup.html", "locales/setup-en-US.json"),
+    ):
+        inline = load_catalog((ROOT / page).read_text())
+        disk = json.loads((ROOT / standalone).read_text())["messages"]
+        if inline != disk:
+            only_inline = set(inline) - set(disk)
+            only_disk = set(disk) - set(inline)
+            for mid in sorted(only_inline):
+                errors.append(f"{standalone}: missing {mid} (present inline in {page})")
+            for mid in sorted(only_disk):
+                errors.append(f"{standalone}: has {mid}, absent from {page}")
+            for mid in sorted(set(inline) & set(disk)):
+                if inline[mid] != disk[mid]:
+                    errors.append(f"{standalone}: {mid} differs from the inline catalog")
 
     if errors:
         print(f"{len(errors)} problem(s):")

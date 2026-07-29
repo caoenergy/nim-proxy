@@ -59,15 +59,30 @@ catalog candidate (`'unknown'`, the fallback publisher name) reached it.
 ## Choice
 
 **Option 4.** Catalog values are plain text. `t(id, params)` returns an escaped
-string; `tRaw(id)` returns the plain one for `setAttribute`, which does not
-parse entities. Placeholder substitution happens after escaping, so params keep
-the existing `esc()` discipline exactly as before.
+string; `tRaw(id)` returns the plain one for `setAttribute` and `textContent`,
+neither of which parses entities. Placeholder values are escaped as they are
+substituted — substitution happens *after* the message is escaped, so an
+unescaped param would land raw in exactly the sinks this decision exists to
+protect.
+
+The corollary is that **helpers must not escape their label argument**.
+`sortTable` did, which double-encoded every catalog-supplied column header —
+invisible in en-US, where no header contains `&` or `'`, and wrong the first
+time a locale or a copy edit introduces one. Worse, one id fed both an escaping
+sink (`sortTable`) and a non-escaping one (`metricRow`), so a single message had
+two escaping regimes. `sortTable` no longer escapes; column labels come from a
+literal or the catalog, never from request data.
 
 And `chipHtml`'s `onerror=` is gone before any extraction: a delegated
 capture-phase `error` listener reads the fallback from `data-*` attributes.
-The file now has no JavaScript-context interpolation at all, so the rule
-"catalog values reach element content and quoted attributes only" is
-enforceable rather than aspirational.
+The file now has no JavaScript-context interpolation at all.
+
+That alone did not make the rule "catalog values reach element content and
+quoted attributes only" *enforced* — `applyStatic` called `setAttribute` with
+whatever attribute name the markup supplied, so a markup edit could still route
+a catalog value into `onclick=` or `style=`, and the CSP permits inline
+handlers. It is enforced now: the runtime accepts only `title`, `placeholder`,
+`aria-label`, and `alt`, and `check_i18n.py` rejects any other target.
 
 Three tagging mechanisms, chosen so markup structure never changes:
 
@@ -96,8 +111,21 @@ stored in a catalog value.
   DOM follows is the end-to-end check. It is the only way to prove the runtime
   actually ran, since an unmutated en-US catalog renders identically whether
   substitution happened or not.
-- Two chart hover handlers declared `const t` for a cursor timestamp and
-  shadowed the new global. Renamed to `at`. Nothing was broken yet, but a
-  `t()` call added inside those scopes later would have failed silently.
+- Eight bindings named `t` shadowed the new global — two cursor timestamps,
+  four callback parameters, an error-rate denominator inside `renderModels`
+  (which is dense with `t()` calls), and one in the custom-range handler. All
+  renamed. None broke at the time, but each was a silent failure waiting for
+  the next `t()` call added in that scope. Renaming one of them *did* break
+  `applyRange` mid-edit — the old name was still referenced two lines down, so
+  `isFinite(t)` tested the function and the Apply button stopped working. It
+  was caught by re-reading, not by any test.
+- Ordering matters: `applyStatic` must run **before** the tab-restore loop.
+  Running it after meant deep-linking to `#models` displayed the Models section
+  under a topbar reading "Overview", because the loop sets `#pagetitle` and the
+  catalog pass then overwrote it. `cargo test` and `check_i18n.py` both passed
+  on that; only a headless render at `#models` showed it.
+- Message ids are always spelled out at the call site, never built by
+  concatenation. `tRaw('dashboard.nav.tab.' + tab)` is invisible to a static
+  linter, which is the one thing that stops English creeping back.
 - The settings surface (~79 strings) is deliberately not extracted; it lands in
   0.6.7.

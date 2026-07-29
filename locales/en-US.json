@@ -522,6 +522,70 @@
     "dashboard.capacity.empty.no_capacity_data": {
       "en": "No capacity data for this time range",
       "hash": "30f6f8f5"
+    },
+    "dashboard.common.kpi.success_rate": {
+      "en": "Success rate",
+      "desc": "KPI label. Share of requests that returned 200.",
+      "hash": "49da60f8"
+    },
+    "dashboard.models.kpi.completion_tokens": {
+      "en": "Completion tokens",
+      "hash": "f5ad1c5b"
+    },
+    "dashboard.models.kpi.prompt_tokens": {
+      "en": "Prompt tokens",
+      "hash": "b8fbf83c"
+    },
+    "dashboard.models.kpi.avg_speed": {
+      "en": "Avg speed",
+      "hash": "607e4c5f"
+    },
+    "dashboard.reliability.latency.title": {
+      "en": "Latency breakdown",
+      "hash": "66da8fe2"
+    },
+    "dashboard.reliability.latency.note": {
+      "en": "avg end-to-end",
+      "hash": "50b47513"
+    },
+    "dashboard.capacity.hero.saturation": {
+      "en": "Saturation",
+      "hash": "993f024b"
+    },
+    "dashboard.capacity.history.title": {
+      "en": "Capacity history",
+      "hash": "0e9d9c58"
+    },
+    "dashboard.capacity.hero.throttling": {
+      "en": "Throttling",
+      "hash": "06222d69"
+    },
+    "dashboard.common.kpi.delta_tooltip": {
+      "en": "second half of this time range vs the first",
+      "hash": "77d91f0f"
+    },
+    "dashboard.models.finish.completed": {
+      "en": "Completed",
+      "desc": "Finish reason. The response ended normally.",
+      "hash": "22a970d2"
+    },
+    "dashboard.models.finish.tool_call": {
+      "en": "Tool call",
+      "hash": "17011048"
+    },
+    "dashboard.models.finish.filtered": {
+      "en": "Filtered",
+      "desc": "Finish reason. Stopped by the upstream content filter.",
+      "hash": "0ba993b3"
+    },
+    "dashboard.models.finish.other": {
+      "en": "Other",
+      "desc": "Finish reason matched by no known value.",
+      "hash": "f97e9da0"
+    },
+    "dashboard.reliability.hero.availability": {
+      "en": "Availability",
+      "hash": "12f67f85"
     }
   }
 }
