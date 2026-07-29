@@ -141,7 +141,18 @@ SETTINGS_START = re.compile(r"function renderSettings\(")
 #
 # So: find quoted PROSE anywhere in the scanned script, and exclude what is
 # provably not display text rather than allowlisting the places prose may sit.
-QUOTED = re.compile(r"'([^'\\\n]{2,})'")
+QUOTED = re.compile(r"'([^'\\\n]{2,})'|\"([^\"\\\n]{2,})\"")
+# Text nodes inside template literals — `<span class="k">Superuser</span>`.
+# Neither the quoted scan nor the markup scan can see these: there are no
+# quotes around the text, and strip_scripts() deletes the script that holds
+# it. Six English labels and a retired term shipped in setup.html's review
+# panel through this hole.
+TEMPLATE_LITERAL = re.compile(r"`(?:[^`\\]|\\.)*`", re.S)
+INTERPOLATION = re.compile(r"\$\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}")
+TEXT_NODE = re.compile(r">([^<>]+)<")
+# Attribute values are not text nodes. The localizable ones (title, alt,
+# placeholder, aria-label) have their own check; the rest are machinery.
+ATTR_VALUE = re.compile(r"=\s*$")
 # Contexts where a quoted string is machinery, not text for a human.
 NOT_DISPLAY = re.compile(
     r"querySelector|getElementById|createElementNS|setAttribute\(|getAttribute\(|"
@@ -165,6 +176,12 @@ def looks_like_prose(text: str) -> bool:
     # CSS values look like prose to a word counter: `var(--violet, #8B7BB8)`
     # has two words and starts with a letter. They are style, never text.
     if text.startswith("var(") or re.match(r"^[a-z-]+\(", text) or "#" in text:
+        return False
+    # A whole inline style attribute is also style: `display:flex;gap:20px`
+    # reads as prose to a word counter. CSS declarations, never text.
+    if re.match(r"^[a-z-]+\s*:", text):
+        return False
+    if text == "use strict":
         return False
     if not re.search(r"[A-Za-z]{3}", text):
         return False
@@ -217,13 +234,31 @@ def lint_untagged(name: str, raw: str) -> list:
             continue
         errors.append(f"{name}: untagged display string {text!r} — route it through t()")
 
-    for line in strip_comments(scanned).splitlines():
+    stripped = strip_comments(scanned)
+    for line in stripped.splitlines():
         if NOT_DISPLAY.search(line):
             continue
         for m in QUOTED.finditer(line):
-            text = m.group(1)
+            text = m.group(1) if m.group(1) is not None else m.group(2)
+            # `class="logo cdnchip"` is an attribute value, not display text.
+            if ATTR_VALUE.search(line[: m.start()]):
+                continue
             if looks_like_prose(text):
                 errors.append(f"{name}: untagged prose {text!r} — route it through t()")
+
+    # Bare prose sitting between tags inside a template literal.
+    for m in TEMPLATE_LITERAL.finditer(stripped):
+        # Interpolations become a separator, not a hole: `${n} validated ·`
+        # must still expose "validated" rather than vanishing as `${`-bearing.
+        lit = INTERPOLATION.sub("\x00", m.group(0))
+        for node in TEXT_NODE.findall(lit):
+            for piece in node.split("\x00"):
+                piece = piece.strip()
+                if piece and looks_like_prose(piece):
+                    errors.append(
+                        f"{name}: untagged prose {piece!r} in template markup"
+                        f" — route it through t()"
+                    )
 
     # Localizable attributes carrying prose, with no data-i18n-attr beside them.
     markup = strip_scripts(raw)
@@ -279,15 +314,40 @@ RETIRED = {
 }
 
 
-def lint_retired_vocabulary(name: str, catalog: dict) -> list:
-    """No catalog value may reintroduce a retired term."""
+def lint_retired_vocabulary(name: str, raw: str) -> list:
+    """No shipped text may reintroduce a retired term.
+
+    Scanning only catalog values was not enough: the whole point of the
+    retirement is that operators stop seeing the old word, and a label that
+    never made it into the catalog still renders. `rpm total` shipped in
+    setup.html's review panel through exactly that hole, with CI green.
+    """
     out = []
+    catalog = load_catalog(raw)
     for mid, msg in sorted(catalog.items()):
         text = msg["en"] if isinstance(msg, dict) else msg
         for old, new in RETIRED.items():
             if old in text:
                 out.append(
                     f"{name}: {mid} uses retired term {old!r} — "
+                    f"standard vocabulary says {new!r}"
+                )
+    # Everything outside the catalog block: markup, template literals, quoted
+    # strings. Comments are stripped so a note *about* a retirement is not
+    # itself a violation.
+    outside = strip_comments(
+        re.sub(
+            r'<script type="application/json" id="i18n-catalog">.*?</script>',
+            "",
+            raw,
+            flags=re.S,
+        )
+    )
+    for lineno, line in enumerate(outside.splitlines(), 1):
+        for old, new in RETIRED.items():
+            if old in line:
+                out.append(
+                    f"{name}:{lineno}: retired term {old!r} outside the catalog — "
                     f"standard vocabulary says {new!r}"
                 )
     return out
@@ -424,7 +484,7 @@ def main() -> int:
         errors += lint_runtime_helpers(name, page)
         errors += lint_untagged(name, page)
         if 'id="i18n-catalog"' in page:
-            errors += lint_retired_vocabulary(name, load_catalog(page))
+            errors += lint_retired_vocabulary(name, page)
 
     if errors:
         print(f"{len(errors)} problem(s):")

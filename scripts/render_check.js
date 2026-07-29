@@ -41,6 +41,9 @@ const localeArg = (() => {
 // English labels contain no escapable character, so a second escape is
 // invisible until a real locale ships. This makes it visible now.
 const escapeProbe = args.includes('--escape-probe');
+// Appended to every catalog value under --escape-probe. See the mutation below.
+const PROBE_SUFFIX = " Ampersand & Quote' <b>Tag</b>";
+const PROBE_TAG_TEXT = 'Tag';
 
 /* ---------- locate a browser ---------------------------------------------- */
 
@@ -164,6 +167,11 @@ function buildPage(tmpdir) {
   // In-page capture as well as CDP: the page boots from an async IIFE, so a
   // throw there surfaces as an unhandled rejection, which Runtime.exceptionThrown
   // does not reliably report. A gate blind to that is blind to boot failure.
+  // The probe string carries both directions of the escape-once rule:
+  //   `&` and `'`  — escaped twice, they surface as literal `&amp;` / `&#39;`
+  //   `<b>`        — not escaped at all, it becomes a real ELEMENT in the DOM
+  // Without the tag the probe was a double-escape detector only, structurally
+  // blind to the missing-escape direction — which is the XSS direction.
   if (escapeProbe) {
     html = html.replace(
       /(<script type="application\/json" id="i18n-catalog">)([\s\S]*?)(<\/script>)/,
@@ -171,8 +179,8 @@ function buildPage(tmpdir) {
         const cat = JSON.parse(json);
         for (const k of Object.keys(cat.messages)) {
           const v = cat.messages[k];
-          if (typeof v === 'string') cat.messages[k] = v + " Ampersand & Quote'";
-          else v.en = v.en + " Ampersand & Quote'";
+          if (typeof v === 'string') cat.messages[k] = v + PROBE_SUFFIX;
+          else v.en = v.en + PROBE_SUFFIX;
         }
         return a + JSON.stringify(cat) + b;
       },
@@ -471,8 +479,10 @@ async function main() {
       // manipulating data rather than labelling it. Ask the page which strings
       // those are instead of guessing from the fixtures.
       for (const d of await evaluate(SCAN_DATA_DERIVED)) dataDerived.add(d);
-      // Per tab: panels are torn down and rebuilt on tab switch, so a single
-      // scan after the loop only ever sees the last tab.
+      // Per tab, so each run is attributed to the tab it was found on. Tab
+      // switching only toggles `hidden`, so a later scan would still SEE this
+      // markup — but it would blame the wrong tab, and hover tooltips really
+      // are transient, so anything hover-only has to be read here or not at all.
       for (const run of await evaluate(SCAN_UNTRANSLATED)) {
         if (!untranslatedByTab.has(run)) untranslatedByTab.set(run, tab);
       }
@@ -488,17 +498,65 @@ async function main() {
     doubleEscaped = await evaluate(`
       (() => {
         const bad = [];
+        const ENTITY = /&amp;|&#39;|&quot;|&lt;|&gt;/;
         const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
         for (let n = walk.nextNode(); n; n = walk.nextNode()) {
           if (n.parentNode.nodeName === 'SCRIPT' || n.parentNode.nodeName === 'STYLE') continue;
           const t = n.textContent;
-          if (/&amp;|&#39;|&quot;|&lt;|&gt;/.test(t)) {
-            bad.push({ text: t.trim().slice(0, 70), el: n.parentNode.className || n.parentNode.nodeName });
+          if (ENTITY.test(t)) {
+            bad.push({ dir: 'double', text: t.trim().slice(0, 70),
+                       el: n.parentNode.className || n.parentNode.nodeName });
+          }
+        }
+        // Attribute sinks. deltaChip's title=, ringGauge's aria-label=,
+        // barList/leaderList/segbar title= and applyStatic's setAttribute path
+        // are all outside SHOW_TEXT, so a double-escape in any of them shipped
+        // green and surfaced as &#39; in a tooltip on the first translation.
+        for (const el of document.querySelectorAll('[title],[aria-label],[placeholder],[alt]')) {
+          for (const a of ['title', 'aria-label', 'placeholder', 'alt']) {
+            const v = el.getAttribute(a);
+            if (v && ENTITY.test(v)) {
+              bad.push({ dir: 'double', text: v.trim().slice(0, 70),
+                         el: (el.className || el.nodeName) + '[' + a + ']' });
+            }
+          }
+        }
+        // The other direction: the probe suffix ends in <b>Tag</b>. If a catalog
+        // value reached a raw-HTML sink WITHOUT being escaped, that parsed into
+        // a real element. Any <b> holding exactly the probe text is a sink that
+        // does not escape when it must.
+        for (const b of document.querySelectorAll('b')) {
+          if (b.textContent.trim() === ${JSON.stringify(PROBE_TAG_TEXT)}) {
+            const host = b.parentNode;
+            bad.push({ dir: 'missing', text: (host.textContent || '').trim().slice(0, 70),
+                       el: host.className || host.nodeName });
           }
         }
         return bad;
       })()`);
   }
+
+  /* The `status` label is whatever the upstream returned, so "succeeded" is
+     not "=== '200'". The captured fixtures only contain 200/429/504/disconnect,
+     so replaying them can never observe the disagreement; the predicates
+     themselves can, and they are module-scope for exactly this reason. */
+  const predicateFailures = await evaluate(`
+    (() => {
+      if (typeof IS_2XX !== 'function' || typeof IS_ERR !== 'function')
+        return ['IS_2XX / IS_ERR are not reachable at module scope'];
+      const cases = [
+        ['200', true, false], ['201', true, false], ['204', true, false],
+        ['299', true, false], ['400', false, true], ['429', false, true],
+        ['504', false, true], ['300', false, true], ['2', false, true],
+        ['disconnect', false, false], ['stall', false, true],
+      ];
+      const bad = [];
+      for (const [s, ok, err] of cases) {
+        if (IS_2XX(s) !== ok) bad.push(\`IS_2XX(\${JSON.stringify(s)}) = \${IS_2XX(s)}, expected \${ok}\`);
+        if (IS_ERR(s) !== err) bad.push(\`IS_ERR(\${JSON.stringify(s)}) = \${IS_ERR(s)}, expected \${err}\`);
+      }
+      return bad;
+    })()`);
 
   const inPage = await evaluate('JSON.stringify(window.__pageErrors || [])').then(JSON.parse);
   for (const e of inPage) {
@@ -551,13 +609,28 @@ async function main() {
     for (const [text, tab] of real) console.log(`   [${tab}] ${JSON.stringify(text)}`);
   }
 
+  if (predicateFailures.length) {
+    console.error(`\nFAIL — ${predicateFailures.length} status-predicate disagreement(s)`);
+    for (const f of predicateFailures) console.error('  ' + f);
+    process.exit(1);
+  }
+
   if (doubleEscaped.length) {
-    console.error(`\nFAIL — ${doubleEscaped.length} double-escaped run(s): a helper escaped an already-escaped catalog value`);
+    const dbl = doubleEscaped.filter((d) => d.dir !== 'missing');
+    const miss = doubleEscaped.filter((d) => d.dir === 'missing');
+    console.error(`\nFAIL — escape-once violated: ${dbl.length} double-escaped, ${miss.length} unescaped`);
+    if (dbl.length) console.error('  a helper escaped an already-escaped catalog value:');
     const seen = new Set();
-    for (const d of doubleEscaped) {
+    for (const d of dbl) {
       if (seen.has(d.el)) continue;
       seen.add(d.el);
-      console.error(`  .${d.el}  ${JSON.stringify(d.text)}`);
+      console.error(`    .${d.el}  ${JSON.stringify(d.text)}`);
+    }
+    if (miss.length) console.error('  a catalog value reached a raw-HTML sink unescaped:');
+    for (const d of miss) {
+      if (seen.has(d.el)) continue;
+      seen.add(d.el);
+      console.error(`    .${d.el}  ${JSON.stringify(d.text)}`);
     }
     process.exit(1);
   }

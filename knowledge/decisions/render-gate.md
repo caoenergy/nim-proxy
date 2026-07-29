@@ -115,5 +115,35 @@ faked.
 - `--escape-probe` gives the escape-once rule in
   [message-catalog-and-escaping](message-catalog-and-escaping.md) an
   enforcement mechanism instead of a paragraph.
+
+  It enforces **both directions**, and the second one was added only after an
+  adversarial review proved the first was not enough. The probe appends
+  `Ampersand & Quote' <b>Tag</b>` to every catalog value:
+
+  - *Double-escaped* — the `&` and `'` come back as literal `&amp;` / `&#39;`
+    in the rendered output.
+  - *Not escaped at all* — the `<b>` parses into a real element, so a catalog
+    value that reached a raw-HTML sink is a DOM node rather than text.
+
+  The original probe carried no tag and scanned text nodes only, which made it
+  a double-escape detector that was structurally blind to the missing-escape
+  direction — the XSS direction — and blind to every attribute sink
+  (`deltaChip`'s `title=`, `ringGauge`'s `aria-label=`, the taxonomy segbar's
+  `title=`, and all of `applyStatic`'s `setAttribute` path). Four deliberate
+  defects were injected to establish that: two the probe caught, two it passed
+  green. It now scans `title`, `aria-label`, `placeholder` and `alt` as well as
+  text, and both injected defects fail.
+
+- The gate also asserts the **status predicates agree**. `IS_2XX` / `IS_ERR`
+  are module-scope in `dashboard.html` specifically so the gate can evaluate
+  them: the captured payloads contain only `200`, `429`, `504` and
+  `disconnect`, so replaying fixtures can never observe a `204` being counted
+  as Success on one card and as an error on the card beside it. Fixtures prove
+  the page runs; the predicate assertion proves the rule it runs on.
+
+- **`src/setup.html` has no render coverage.** The gate hardcodes the
+  dashboard, and CI runs it on that page only. Setup is reachable by hand with
+  the same harness and passes, but nothing keeps it passing. Recorded as a gap
+  rather than implied by silence.
 - It is not a screenshot test and takes no screenshots. Layout review stays
   human, per the plan's original and still-correct reasoning.
