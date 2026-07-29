@@ -1563,7 +1563,9 @@ function renderModels(c) {
   }).join('') || `<div class="empty">${t('dashboard.common.empty.no_traffic')}</div>`;
 
   /* per-model table */
-  $('m-tablecount').textContent = models.length ? `${models.length} model${models.length === 1 ? '' : 's'} · ${t('dashboard.common.sort_hint')}` : '';
+  // tRaw, not t: this lands in textContent, which does not parse entities, so
+  // an escaped value renders its entities literally.
+  $('m-tablecount').textContent = models.length ? `${models.length} model${models.length === 1 ? '' : 's'} · ${tRaw('dashboard.common.sort_hint')}` : '';
   sortTable($('table-models'), 'models', [
     { label: t('dashboard.common.col.model'), align: 'l', str: true }, { label: t('dashboard.common.col.requests') }, { label: t('dashboard.common.col.tokens_out') },
     { label: t('dashboard.models.col.avg_ttft') }, { label: t('dashboard.models.col.avg_tps') }, { label: 'TPOT' }, { label: t('dashboard.models.col.avg_response') },

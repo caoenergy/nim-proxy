@@ -220,7 +220,36 @@ window.addEventListener('unhandledrejection', function (e) {
 
 /* ---------- the run -------------------------------------------------------- */
 
+
+// A run of ASCII prose with no accented character, under a locale where every
+// translated message is accented, is a string the catalog never reached.
+const SCAN_UNTRANSLATED = `
+  (() => {
+    const out = [];
+    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      const p = n.parentNode.nodeName;
+      if (p === 'SCRIPT' || p === 'STYLE') continue;
+      const t = n.textContent.trim();
+      if (t.length < 3 || !/[a-zA-Z]{3}/.test(t)) continue;
+      if (/[\\u00C0-\\u024F]/.test(t)) continue;   // accented: the catalog reached it
+      out.push(t);
+    }
+    return Array.from(new Set(out));
+  })()`;
+
 const TABS = ['overview', 'models', 'clients', 'reliability', 'capacity'];
+
+// The never-translate list has exactly one definition, in check_i18n.py. A JS
+// copy would drift, and this list decides which "untranslated" runs are
+// actually correct.
+function frozenTokens() {
+  const out = execFileSync('python3', ['-c',
+    'import sys,json; sys.path.insert(0,"scripts"); import check_i18n; '
+    + 'print(json.dumps(sorted(check_i18n.NEVER_TRANSLATE)))'],
+    { cwd: ROOT, encoding: 'utf8' });
+  return JSON.parse(out);
+}
 
 async function main() {
   const chrome = findChrome();
@@ -347,10 +376,25 @@ async function main() {
     return r.result.value;
   };
 
+  const untranslatedByTab = new Map();
   const hovered = [];
   for (const tab of TABS) {
-    await evaluate(`location.hash = '#${tab}'`);
-    await sleep(900);
+    // Tabs switch on click. `location.hash` is assigned BY that handler, and
+    // the hash-to-click bridge runs once at load, so setting the hash after
+    // load silently does nothing and every "tab" measures Overview again.
+    const switched = await evaluate(`
+      (() => {
+        const b = document.querySelector('#side nav button[data-tab="${tab}"]');
+        if (!b) return false;
+        b.click();
+        return document.querySelector('#tab-${tab}') ? !document.querySelector('#tab-${tab}').hidden : false;
+      })()`);
+    if (!switched) {
+      console.error(`FAIL — could not switch to the ${tab} tab; the gate would measure the wrong panels`);
+      proc.kill('SIGKILL');
+      process.exit(1);
+    }
+    await sleep(1200);
 
     // Real pointer input, at the real coordinates of each rendered chart.
     const rects = await evaluate(`
@@ -372,6 +416,14 @@ async function main() {
       }
       hovered.push(`${tab}/${r.id}`);
     }
+
+    if (localeArg && localeArg.startsWith('en-X')) {
+      // Per tab: panels are torn down and rebuilt on tab switch, so a single
+      // scan after the loop only ever sees the last tab.
+      for (const run of await evaluate(SCAN_UNTRANSLATED)) {
+        if (!untranslatedByTab.has(run)) untranslatedByTab.set(run, tab);
+      }
+    }
   }
 
   // The poll loop re-applies the last hover on every live re-render, which is
@@ -392,25 +444,6 @@ async function main() {
           }
         }
         return bad;
-      })()`);
-  }
-
-  let untranslated = [];
-  if (localeArg && localeArg.startsWith('en-X')) {
-    untranslated = await evaluate(`
-      (() => {
-        const skip = new Set(['SCRIPT', 'STYLE']);
-        const out = [];
-        const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-        for (let n = walk.nextNode(); n; n = walk.nextNode()) {
-          if (skip.has(n.parentNode.nodeName)) continue;
-          const t = n.textContent.trim();
-          if (t.length < 3) continue;
-          if (!/[a-zA-Z]{3}/.test(t)) continue;
-          if (/[\\u00C0-\\u024F]/.test(t)) continue;   // has an accent: translated
-          out.push(t);
-        }
-        return Array.from(new Set(out));
       })()`);
   }
 
@@ -440,10 +473,14 @@ async function main() {
 
   console.log(`rendered ${TABS.length} tabs, hovered ${hovered.length} charts`);
 
-  if (untranslated.length) {
-    console.log(`\nuntranslated runs under ${localeArg}: ${untranslated.length}`);
-    for (const s of untranslated.slice(0, 60)) console.log('   ' + JSON.stringify(s));
-    if (untranslated.length > 60) console.log(`   … ${untranslated.length - 60} more`);
+  if (untranslatedByTab.size) {
+    const frozen = frozenTokens();
+    const isFrozen = (t) => frozen.some((f) => t === f || t.includes(f));
+    const real = [...untranslatedByTab].filter(([t]) => !isFrozen(t));
+    const correct = untranslatedByTab.size - real.length;
+    console.log(`\nuntranslated runs under ${localeArg}: ${real.length} actionable`
+      + ` (${correct} correctly untranslated: frozen tokens, model ids, client names)`);
+    for (const [text, tab] of real) console.log(`   [${tab}] ${JSON.stringify(text)}`);
   }
 
   if (doubleEscaped.length) {

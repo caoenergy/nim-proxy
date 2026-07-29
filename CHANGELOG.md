@@ -39,8 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `en-XA` regenerated.
 
 - A render gate, `scripts/render_check.js`: it loads the dashboard against
-  captured API payloads, walks all five tabs, hovers every chart with real
-  pointer input, and fails on any uncaught page error. `--escape-probe`
+  captured API payloads, clicks through all five tabs, hovers every chart with
+  real pointer input, and fails on any uncaught page error. `--escape-probe`
   additionally fails when a render helper escapes a catalog value that was
   already escaped at load. No new dependency — Node's built-in WebSocket
   driving the system browser. It is the only check that proves the page *runs*;
