@@ -238,6 +238,42 @@ const SCAN_UNTRANSLATED = `
     return Array.from(new Set(out));
   })()`;
 
+// Values that originate in the API response, computed by the page's own
+// helpers so this cannot drift from what it actually renders.
+const dataLabelValues = (() => {
+  // Data means values that arrived in the payload — nothing else. Scraping
+  // rendered elements misclassifies our own generated names: "Slot 1" comes
+  // from a template we wrote, not from the API.
+  const out = new Set();
+  for (const f of ['dashboard.json', 'dashboard-now.json']) {
+    const p = path.join(FIXTURES, f);
+    if (!fs.existsSync(p)) continue;
+    const doc = JSON.parse(fs.readFileSync(p, 'utf8'));
+    for (const bucket of ['totals', 'latest']) {
+      for (const r of doc[bucket] || []) {
+        for (const k of ['model', 'client']) {
+          const v = (r.labels || {})[k];
+          if (v && v !== 'none') out.add(v);
+        }
+      }
+    }
+  }
+  return [...out];
+})();
+
+// Expand each payload value through the page's own helpers, so the exclusion
+// set matches what it actually renders rather than what I assume it renders.
+const SCAN_DATA_DERIVED = `
+  (() => {
+    const ids = ${JSON.stringify(dataLabelValues)};
+    const out = new Set(ids);
+    for (const id of ids) {
+      try { out.add(prettyName(id)); } catch (e) {}
+      try { out.add(publisher(id).name); } catch (e) {}
+    }
+    return [...out].filter(Boolean);
+  })()`;
+
 const TABS = ['overview', 'models', 'clients', 'reliability', 'capacity'];
 
 // The never-translate list has exactly one definition, in check_i18n.py. A JS
@@ -377,6 +413,7 @@ async function main() {
   };
 
   const untranslatedByTab = new Map();
+  const dataDerived = new Set();
   const hovered = [];
   for (const tab of TABS) {
     // Tabs switch on click. `location.hash` is assigned BY that handler, and
@@ -418,6 +455,11 @@ async function main() {
     }
 
     if (localeArg && localeArg.startsWith('en-X')) {
+      // Data is never translated: model ids, their prettified forms, publisher
+      // names and client names come from the API, and localizing them would be
+      // manipulating data rather than labelling it. Ask the page which strings
+      // those are instead of guessing from the fixtures.
+      for (const d of await evaluate(SCAN_DATA_DERIVED)) dataDerived.add(d);
       // Per tab: panels are torn down and rebuilt on tab switch, so a single
       // scan after the loop only ever sees the last tab.
       for (const run of await evaluate(SCAN_UNTRANSLATED)) {
@@ -475,11 +517,26 @@ async function main() {
 
   if (untranslatedByTab.size) {
     const frozen = frozenTokens();
-    const isFrozen = (t) => frozen.some((f) => t === f || t.includes(f));
-    const real = [...untranslatedByTab].filter(([t]) => !isFrozen(t));
+    // Exact match only. Substring matching against data values excludes real
+    // labels: a "Mo" monogram swallowed the heatmap's "Mon", and any run
+    // containing "rpm" swallowed "0 / 24 rpm · 3 keys", whose "keys" is ours.
+    const isData = (t) => dataDerived.has(t);
+    // A run is correctly untranslated only if NOTHING of ours is left once the
+    // frozen tokens, digits and punctuation are removed. "tok/s" goes; "24 rpm
+    // available" stays, because "available" is a word we wrote.
+    const isFrozen = (t) => {
+      let rest = t;
+      for (const f of [...frozen].sort((a, b) => b.length - a.length)) rest = rest.split(f).join(' ');
+      return !/[a-zA-Z]{2,}/.test(rest);
+    };
+    const real = [...untranslatedByTab].filter(([t]) => !isFrozen(t) && !isData(t));
+    if (process.env.DEBUG) {
+      const dropped = [...untranslatedByTab].filter(([t]) => isFrozen(t) || isData(t));
+      console.log('DEBUG excluded:', JSON.stringify(dropped.map(([t]) => t)));
+    }
     const correct = untranslatedByTab.size - real.length;
     console.log(`\nuntranslated runs under ${localeArg}: ${real.length} actionable`
-      + ` (${correct} correctly untranslated: frozen tokens, model ids, client names)`);
+      + ` (${correct} correctly untranslated: frozen tokens and data from the API)`);
     for (const [text, tab] of real) console.log(`   [${tab}] ${JSON.stringify(text)}`);
   }
 
