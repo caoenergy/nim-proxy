@@ -4,7 +4,7 @@ nim-proxy is a Rust proxy that makes NVIDIA NIM's free tier usable for agent
 harnesses: it paces requests to the per-key rate limit, load-balances across
 keys, and keeps client connections alive while it waits. Source lives in
 `src/` (`main.rs`, `lib.rs`, `proxy.rs`, `pool.rs`, `dispatch.rs`,
-`governor.rs`, `history.rs`, `config.rs`, `settings.rs`, `auth.rs`,
+`governor.rs`, `history.rs`, `config.rs`, `settings.rs`, `auth.rs`, `api.rs`,
 `dashboard.html`, `setup.html`), tests in `tests/`, scripts and harnesses in
 `scripts/`, translations in `locales/`.
 
@@ -73,6 +73,7 @@ actually covers what you changed:
 | Strings, catalog, any new UI text | `python3 scripts/check_i18n.py` (round-trip + untagged-string lint) |
 | A locale file | `python3 scripts/locale_v1.py --all`; `--selftest` proves the validator still bites |
 | Any change to English source text | `python3 scripts/gen_pseudolocale.py --check` |
+| Handlers or wire types | `UPDATE_OPENAPI=1 cargo test --test openapi`, then commit `openapi.json` |
 | Pacing, key pool, dispatcher, affinity | `scripts/mock_nim.py --enforce` + `scripts/loadtest.py` — **zero** upstream violations, not "few" |
 | Anything at all, before pushing | `cargo fmt` |
 

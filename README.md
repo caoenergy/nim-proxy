@@ -250,6 +250,19 @@ scrape_configs:
 
 `/health` stays public (load-balancer / Docker probe; exposes nothing).
 
+### The dashboard API
+
+The routes the dashboard and the setup wizard call are described by
+[`openapi.json`](openapi.json) at the repo root — 14 operations covering the
+twelve `/api/*` routes plus the two unauthenticated `/setup` ones. It is
+**generated from the handlers** (`utoipa`) and CI fails on any drift, so it
+cannot describe a version of the API that no longer exists. Point any offline
+viewer or client generator at it; nothing is served at runtime, which keeps
+the Content-Security-Policy strict and the image a single static binary.
+
+The OpenAI-compatible `/v1` surface is deliberately not in there — that
+contract is NVIDIA NIM's, and nim-proxy passes it through.
+
 ### Deployment patterns
 
 | Pattern | How |

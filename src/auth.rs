@@ -398,13 +398,10 @@ fn wants_html(headers: &HeaderMap) -> bool {
 }
 
 fn unauthorized_json() -> Response {
-    let body = serde_json::json!({
-        "error": {
-            "message": "authentication required (session cookie, or Authorization: Bearer <username>:<password>)",
-            "type": "proxy_error",
-            "code": "unauthorized"
-        }
-    });
+    let body = crate::api::ApiError::new(
+        "unauthorized",
+        "authentication required (session cookie, or Authorization: Bearer <username>:<password>)",
+    );
     (
         StatusCode::UNAUTHORIZED,
         [(header::WWW_AUTHENTICATE, "Bearer")],
@@ -414,13 +411,10 @@ fn unauthorized_json() -> Response {
 }
 
 pub fn setup_required_json() -> Response {
-    let body = serde_json::json!({
-        "error": {
-            "message": "first-time setup has not been completed; open the dashboard to create the superuser",
-            "type": "proxy_error",
-            "code": "setup_required"
-        }
-    });
+    let body = crate::api::ApiError::new(
+        "setup_required",
+        "first-time setup has not been completed; open the dashboard to create the superuser",
+    );
     (StatusCode::SERVICE_UNAVAILABLE, axum::Json(body)).into_response()
 }
 

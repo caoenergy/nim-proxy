@@ -41,6 +41,15 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Tests (unit + integration)
         run: cargo test
+      # openapi.json is generated from the handlers. Regenerate it here and
+      # fail on any difference, so the committed spec cannot drift from the
+      # code that serves the requests — `cargo test` alone would catch it, but
+      # only if the contributor remembered to commit the regenerated file.
+      - name: OpenAPI spec is in sync
+        run: |
+          UPDATE_OPENAPI=1 cargo test --test openapi
+          git diff --exit-code -- openapi.json \
+            || { echo "::error::openapi.json is stale — run 'UPDATE_OPENAPI=1 cargo test --test openapi' and commit it"; exit 1; }
       - name: Embedded page JS syntax
         # cargo test asserts on served HTML text and never parses the
         # JavaScript, so it passes on a page that cannot run. This is the only

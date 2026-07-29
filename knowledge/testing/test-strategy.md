@@ -44,6 +44,24 @@ rejection fallback and kill switch, stalled-stream cutoff, metrics accuracy
 (exact token counts), history persistence across restart, SIGTERM, and
 dashboard/config routes.
 
+### The wire-format guards
+
+Two tests exist purely so the JSON contract cannot move by accident (see
+[typed-responses-and-generated-openapi](../decisions/typed-responses-and-generated-openapi.md)):
+
+- `api::field_order_stays_ascii_sorted` (unit) serializes a populated value of
+  every response type and asserts the keys come out ASCII-sorted. Declaration
+  order *is* the wire order, and the pre-0.6.6 `json!` bodies were sorted by
+  `serde_json`'s `BTreeMap` — so a "tidier" field reorder is a wire change,
+  and this is what says so.
+- `tests/openapi.rs` regenerates `openapi.json` and fails on any difference
+  from the committed file. Regenerate with
+  `UPDATE_OPENAPI=1 cargo test --test openapi`; CI's `check` job runs that and
+  then `git diff --exit-code -- openapi.json`. `spec_is_usable` additionally
+  asserts the document is consumable — 14 operations, each tagged with a
+  documented 200, `/api/*` inheriting the auth requirement and `/setup`
+  explicitly waiving it.
+
 ## 3. Load — `scripts/loadtest.py` vs `scripts/mock_nim.py --enforce`
 
 The enforcing mock plays a *strict* NIM: true per-key sliding window,

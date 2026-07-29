@@ -427,9 +427,14 @@ async function main() {
 
   proc.kill('SIGKILL');
   await new Promise((r) => proc.on('exit', r));
-  // the browser holds its profile open; a bare rmSync races it and turns a
-  // real pass/fail into ENOTEMPTY
-  fs.rmSync(tmpdir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  // The browser's renderer children can outlive the parent and keep the
+  // profile busy. Cleanup is housekeeping: a failure here must never be
+  // reported as, or hide, a page result.
+  try {
+    fs.rmSync(tmpdir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  } catch (e) {
+    console.warn(`note: left ${tmpdir} behind (${e.code})`);
+  }
 
   /* ---------- report ------------------------------------------------------ */
 

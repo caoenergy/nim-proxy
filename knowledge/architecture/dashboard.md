@@ -137,6 +137,13 @@ The retired `/api/history` and `/dash/config.json` routes are absent. Raw
 `/metrics` remains available to authenticated Prometheus scrapers, not as a
 dashboard transport.
 
+Both bodies — and every `/api/settings/*` body — are `derive(Serialize)`
+structs in `src/api.rs`, not hand-built JSON, and `openapi.json` at the repo
+root is generated from them. Field *declaration* order is the wire order, so
+those structs are declared ASCII-sorted; see
+[typed-responses-and-generated-openapi](../decisions/typed-responses-and-generated-openapi.md)
+before adding or moving a field.
+
 `rangeSamples()` adapts the normalized range contract back into the
 `samples: [{t, rows}]` cumulative structure the rendering primitives consume.
 Every selection begins with a synthetic zero-counter baseline, then applies

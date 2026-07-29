@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`openapi.json`** — a generated OpenAPI 3.1 description of the dashboard
+  API, committed at the repo root. It covers 14 operations: the twelve
+  `/api/*` routes, plus `POST /setup` and `POST /setup/validate-key`, which
+  are flagged unauthenticated because they run before any user exists (and
+  404 once one does). The `/v1` passthrough is deliberately out of scope —
+  that contract belongs to the upstream.
+
+  The spec is generated from the handlers with `utoipa`, so it cannot describe
+  an API that no longer exists: CI regenerates it and fails on any difference.
+  Regenerate locally with `UPDATE_OPENAPI=1 cargo test --test openapi`. No
+  documentation UI is served — the available ones fetch JavaScript from a CDN
+  that the dashboard's Content-Security-Policy forbids, and bundling would add
+  about a megabyte to a `FROM scratch` image. Point an offline viewer or a
+  client generator at the file instead.
+
 - A render gate, `scripts/render_check.js`: it loads the dashboard against
   captured API payloads, walks all five tabs, hovers every chart with real
   pointer input, and fails on any uncaught page error. `--escape-probe`
@@ -41,6 +56,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   missing or orphaned, and no message hash is stale.
 
 ### Changed
+
+- Every dashboard-API response body is now a Rust type rather than a
+  hand-built JSON literal, and `GET /api/config`'s role filtering is expressed
+  in that type: the admin-only `server` and `users` sections are `Option`s
+  that are never constructed for a `user`, instead of keys added to an
+  otherwise-complete body.
+
+  **No wire change.** The JSON is byte-for-byte what 0.6.5 served, at every
+  nesting level, and the existing end-to-end suite passes unmodified. Two
+  internal side effects an operator may notice: `config.json`'s `limits` block
+  and `governor.overrides` are written in a different key order (the store is
+  read by name, so nothing migrates), and `governor.overrides` is now
+  serialized in sorted order, making repeated saves of the same configuration
+  byte-identical.
 
 - Numbers, durations, and dates in the dashboard are formatted with `Intl`,
   keyed to the interface's locale rather than the browser's. Two long-standing
