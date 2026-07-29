@@ -6,6 +6,34 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-29] ingest — the last 29 untagged dashboard strings, extracted
+
+`check_i18n.py` reported 35 problems / 29 unique strings; it now reports
+`i18n OK — 188 ids referenced, round-trip clean`. Extraction only: every English
+value is byte-identical to the literal it replaced, verified against a copy of
+the pre-change source.
+
+- 8 ids were reused rather than minting a duplicate value a translator would
+  have to translate twice: `Success rate`,
+  `Time to first token`, `Generation speed`, `Inter-token latency`,
+  `tokens out`, `Rate limited (429)`, `Unauthorized (401)`, `Other`. The
+  taxonomy in `TAX` and `OUTCOMES` is one set of labels rendered twice, so the
+  two tables share ids too.
+- 22 ids are new — 20 in the dashboard catalog (139 → 159), 2 in the wizard's
+  (27 → 29). The whole non-success status taxonomy landed under
+  `dashboard.common.status.*`, beside the two entries that were already there.
+- The escaping map in
+  [message-catalog-and-escaping](decisions/message-catalog-and-escaping.md) was
+  contradicted by the code — `kpiCards` stopped escaping `k.label` in `77421e2`
+  and the page still said it did — and it never covered `ringGauge`, `legend`,
+  the chart hover tooltips, or the two call sites that `esc()` the value
+  themselves. All five take `tRaw()`. Page corrected.
+- Measured: `--escape-probe` clean, and observed to fail (2 double-escaped runs)
+  when two `tRaw()` calls were flipped to `t()`. `--locale en-XA` actionable
+  untranslated runs 57 → 41; the remainder are prose in template literals,
+  lowercase single-token labels and double-quoted strings, none of which the
+  untagged-string lint can see. Those are not extracted and are still English.
+
 ## [2026-07-29] decision — the standard vocabulary, committed and enforced
 
 Recorded in [standard-vocabulary](decisions/standard-vocabulary.md).

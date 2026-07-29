@@ -140,9 +140,29 @@
       "en": "median & p95 across the time range",
       "hash": "3f0caaba"
     },
+    "dashboard.overview.perf.lower_is_better": {
+      "en": "lower is better",
+      "desc": "Note beside a latency distribution: smaller numbers are better. Lowercase, sits under the card heading.",
+      "hash": "aa8c153c"
+    },
+    "dashboard.overview.perf.higher_is_better": {
+      "en": "higher is better",
+      "desc": "Note beside a throughput distribution: larger numbers are better. Lowercase, sits under the card heading.",
+      "hash": "8cde7e09"
+    },
+    "dashboard.overview.ring.capacity_used": {
+      "en": "Capacity used",
+      "desc": "Ring-gauge label. Share of the key pool's configured requests-per-minute currently in use.",
+      "hash": "9448656c"
+    },
     "dashboard.common.note.tokens_out": {
       "en": "tokens out",
       "hash": "6cfcdef3"
+    },
+    "dashboard.common.note.selected_time_range": {
+      "en": "selected time range",
+      "desc": "Sub-label under a KPI number: the figure covers the time range currently selected in the topbar, not all history.",
+      "hash": "59e32cdb"
     },
     "dashboard.models.tokens_per_min.note": {
       "en": "by model",
@@ -159,6 +179,11 @@
     "dashboard.models.head_to_head.note": {
       "en": "generation speed",
       "hash": "f8b44b7c"
+    },
+    "dashboard.models.cards.note": {
+      "en": "top 4 by tokens out · full list in the table below",
+      "desc": "Note above the leading-model cards. 'top 4' is a count of cards shown.",
+      "hash": "dedd5a12"
     },
     "dashboard.models.ttft.heading": {
       "en": "Time to first token",
@@ -277,6 +302,11 @@
     "dashboard.reliability.pressure.note": {
       "en": "worker exhaustions & per-model caps",
       "hash": "cde0a950"
+    },
+    "dashboard.reliability.pressure.series": {
+      "en": "Capacity errors/min",
+      "desc": "Chart series name: upstream worker-capacity errors per minute.",
+      "hash": "2fd5ae55"
     },
     "dashboard.capacity.keyutil.heading": {
       "en": "Key utilization",
@@ -462,6 +492,76 @@
       "en": "Rate limited (429)",
       "desc": "'429' must survive verbatim.",
       "hash": "2d8d2785"
+    },
+    "dashboard.common.status.success": {
+      "en": "Success",
+      "desc": "Outcome band and stacked-chart series: requests that returned a 2xx status. Noun.",
+      "hash": "c88a0b90"
+    },
+    "dashboard.common.status.rate_limited": {
+      "en": "Rate limited",
+      "desc": "Outcome band: requests the upstream rejected with 429. Past participle describing the requests.",
+      "hash": "a06130a5"
+    },
+    "dashboard.common.status.disconnect": {
+      "en": "Disconnect",
+      "desc": "Outcome band: the client went away before the response finished. Noun, not the imperative verb.",
+      "hash": "acfc5be7"
+    },
+    "dashboard.common.status.timeout_stall": {
+      "en": "Timeout / stall",
+      "desc": "Outcome band grouping upstream timeouts (504) with stalled streams. Two nouns joined by a slash.",
+      "hash": "efe2e882"
+    },
+    "dashboard.common.status.client_error_4xx": {
+      "en": "Client error (4xx)",
+      "desc": "Outcome band for 4xx statuses other than 429. '4xx' is an HTTP status class and must survive verbatim.",
+      "hash": "c2b42c93"
+    },
+    "dashboard.common.status.client_disconnected": {
+      "en": "Client disconnected",
+      "desc": "Non-success reason: the calling client closed the connection before the response finished.",
+      "hash": "61fcc9b2"
+    },
+    "dashboard.common.status.stream_stalled": {
+      "en": "Stream stalled",
+      "desc": "Non-success reason: the upstream stopped emitting tokens and the request was abandoned.",
+      "hash": "2845f98c"
+    },
+    "dashboard.common.status.stream_error": {
+      "en": "Stream error",
+      "desc": "Non-success reason: the upstream stream failed mid-response.",
+      "hash": "38f63d7c"
+    },
+    "dashboard.common.status.upstream_timeout_504": {
+      "en": "Upstream timeout (504)",
+      "desc": "Non-success reason. '504' must survive verbatim.",
+      "hash": "37653bb1"
+    },
+    "dashboard.common.status.bad_request_400": {
+      "en": "Bad request (400)",
+      "desc": "Non-success reason. '400' must survive verbatim.",
+      "hash": "3ce1cfb4"
+    },
+    "dashboard.common.status.forbidden_403": {
+      "en": "Forbidden (403)",
+      "desc": "Non-success reason. '403' must survive verbatim.",
+      "hash": "ae88f5b2"
+    },
+    "dashboard.common.status.not_found_404": {
+      "en": "Not found (404)",
+      "desc": "Non-success reason. '404' must survive verbatim.",
+      "hash": "8bcbdab7"
+    },
+    "dashboard.common.status.bad_gateway_502": {
+      "en": "Bad gateway (502)",
+      "desc": "Non-success reason. '502' must survive verbatim.",
+      "hash": "1c52523b"
+    },
+    "dashboard.common.status.unavailable_503": {
+      "en": "Unavailable (503)",
+      "desc": "Non-success reason. '503' must survive verbatim.",
+      "hash": "f544ed2c"
     },
     "dashboard.capacity.row.session_affinity": {
       "en": "Session affinity",

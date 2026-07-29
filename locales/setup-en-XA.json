@@ -69,6 +69,16 @@
       "desc": "Checkbox label. {key} and {endpoint} are <code>-wrapped literals: npk_… and /v1. Neither is translated.",
       "hash": "fc7a5e75"
     },
+    "setup.step3.api_access_keyed": {
+      "en": "[ÁƤÍ ķéŷ ŕéɋúíŕéđ · ƒíŕşŧ çŀíéñŧ ķéŷ \"đéƒáúŀŧ\" escamotableescam]",
+      "desc": "Review line, shown when the wizard will mint a client key. \"default\" is the key's literal name and must survive verbatim, quotes included.",
+      "hash": "e77044c2"
+    },
+    "setup.step3.api_access_open": {
+      "en": "[ÁƤÍ ķéŷ ŕéɋúíŕéđ — ñó çŀíéñŧ ķéŷ ŷéŧ (/v1 ŕéĵéçŧş éṽéŕŷŧĥíñǥ) escamotableescamotab]",
+      "desc": "Review line, shown when the wizard will not mint a client key. '/v1' is the API path and must survive verbatim.",
+      "hash": "5d421bab"
+    },
     "setup.step3.mintwarn": {
       "en": "[Ŵíŧĥóúŧ á çŀíéñŧ ķéŷ, ŧĥé ƥŕóxŷ şŧíŀŀ ŕéɋúíŕéş áñ ÁƤÍ ķéŷ ƀúŧ ŕéĵéçŧş {b}éṽéŕŷ{/b} /v1 ŕéɋúéşŧ úñŧíŀ ŷóú ɱíñŧ óñé íñ Şéŧŧíñǥş → Áççéşş & ķéŷş. Şķíƥ ŧĥíş óñŀŷ íƒ ŷóú ƥŀáñ ŧó şŵíŧçĥ ŧĥé ÁƤÍ ɱóđé ŧó óƥéñ (úñáúŧĥéñŧíçáŧéđ /v1). escamotableescamotableescamotableescamotableescamotableescamotableescamota]",
       "desc": "{b}...{/b} is bold emphasis. Translators may move the tags to whichever word carries the emphasis.",

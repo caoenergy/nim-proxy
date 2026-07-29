@@ -69,6 +69,16 @@
       "desc": "Checkbox label. {key} and {endpoint} are <code>-wrapped literals: npk_… and /v1. Neither is translated.",
       "hash": "fc7a5e75"
     },
+    "setup.step3.api_access_keyed": {
+      "en": "API key required · first client key \"default\"",
+      "desc": "Review line, shown when the wizard will mint a client key. \"default\" is the key's literal name and must survive verbatim, quotes included.",
+      "hash": "e77044c2"
+    },
+    "setup.step3.api_access_open": {
+      "en": "API key required — no client key yet (/v1 rejects everything)",
+      "desc": "Review line, shown when the wizard will not mint a client key. '/v1' is the API path and must survive verbatim.",
+      "hash": "5d421bab"
+    },
     "setup.step3.mintwarn": {
       "en": "Without a client key, the proxy still requires an API key but rejects {b}every{/b} /v1 request until you mint one in Settings → Access & keys. Skip this only if you plan to switch the API mode to open (unauthenticated /v1).",
       "desc": "{b}...{/b} is bold emphasis. Translators may move the tags to whichever word carries the emphasis.",

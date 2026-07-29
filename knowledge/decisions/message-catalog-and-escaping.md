@@ -124,8 +124,23 @@ stored in a catalog value.
   under a topbar reading "Overview", because the loop sets `#pagetitle` and the
   catalog pass then overwrote it. `cargo test` and `check_i18n.py` both passed
   on that; only a headless render at `#models` showed it.
+- **Which helper escapes is not uniform, and the call site has to know.** The
+  Context inventory above is no longer current: `kpiCards` stopped escaping
+  `k.label` in `77421e2`, so it now matches `metricRow`/`perfBlock`/`tile`/
+  `prow`/`stat` and takes `t()`. The *opposite* contract holds for `ringGauge`
+  (escapes `label` in both the `aria-label` and `.rlabel`), `legend` and both
+  charts' hover tooltips (escape `s.name`), `barList`/`leaderList` (escape
+  `name`/`label`, and must keep escaping — those carry model ids), and any site
+  that wraps the value in `esc()` itself: the reliability error segbar's
+  `title=` and the non-success outcomes table. All of those take `tRaw()`, as
+  do `textContent` and `setAttribute`. Reading the sink is the only way to
+  choose, and `--escape-probe` is the only check that tells a wrong choice
+  apart from a right one — it fails on entity text in the DOM.
 - Message ids are always spelled out at the call site, never built by
   concatenation. `tRaw('dashboard.nav.tab.' + tab)` is invisible to a static
-  linter, which is the one thing that stops English creeping back.
+  linter, which is the one thing that stops English creeping back. The status
+  taxonomy is the case that most invites the shortcut: `REASONS` is keyed by
+  HTTP status, so `t('dashboard.common.status.' + s)` would work and would be
+  unlintable. Every entry is written out instead.
 - The settings surface (~79 strings) is deliberately not extracted; it lands in
   0.6.7.
