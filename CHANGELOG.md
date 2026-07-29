@@ -24,6 +24,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   about a megabyte to a `FROM scratch` image. Point an offline viewer or a
   client generator at the file instead.
 
+- Two vocabulary checks. `locale-v1` gains **frozen**: units, HTTP status
+  codes and API identifiers (`rpm`, `tok/s`, `429`, `/v1`, `NIM`, `TTFT`) must
+  survive verbatim in every translation, because a machine translator will
+  otherwise render `rpm` as `tr/min` and produce a locale that passes every
+  other check while being wrong. The i18n lint gains a **retired-term** check
+  so a standardized interface cannot drift back apart one label at a time. The
+  vocabulary they enforce is now recorded in
+  `knowledge/decisions/standard-vocabulary.md`.
+
+  The frozen check found a defect on its first run: the `en-XA` pseudolocale
+  was accenting those tokens, rendering `NÎM` and a mangled `/v1` across nine
+  messages — in the one locale that exists to prove layout. Generator fixed and
+  `en-XA` regenerated.
+
 - A render gate, `scripts/render_check.js`: it loads the dashboard against
   captured API payloads, walks all five tabs, hovers every chart with real
   pointer input, and fails on any uncaught page error. `--escape-probe`

@@ -183,6 +183,59 @@ def lint_untagged(name: str, raw: str) -> list:
     return errors
 
 
+
+# Terms retired by knowledge/decisions/standard-vocabulary.md. Reintroducing one
+# is how a standardized interface drifts back apart: nothing else in the tree
+# notices, and the next translation pass bakes the drift into eight languages.
+#
+# Multi-word and distinctive only, on purpose. Single ambiguous words are NOT
+# listed: "window" is still correct for the rate-limit rolling window ("0 / 40
+# in window"), "lane" is still correct in metric labels, "Open" and "bench"
+# have unrelated legitimate senses. Banning a word that is both a retired label
+# and a live domain term is the exact mistake that renamed a rate-limit counter
+# during the label sweep.
+RETIRED = {
+    "Harness": "Client",
+    "Harnesses": "Clients",
+    "Conversation stickiness": "Session affinity",
+    "Model-pressure governor": "Model limits",
+    "Where time goes": "Latency breakdown",
+    "Rate-limit pressure": "Throttling",
+    "Historical provisioning": "Capacity history",
+    "Dollars saved": "(removed — no honest per-model rate)",
+    "All retained": "All time",
+    "Earliest retained snapshot": "Oldest data point",
+    "History file": "Data file",
+    "exhaustions/min": "Capacity errors/min",
+    "Lane slot": "Slot",
+    "Avg reply": "Avg response",
+    "Tool-offering": "Requests with tools",
+    "Tool-using requests": "Requests using tools",
+    "No reasoning-token usage seen": "No reasoning tokens",
+    "selected window": "selected time range",
+    "Default dashboard window": "Default time range",
+    "fixed range": "Absolute",
+    "following now": "Live",
+    "rpm free": "Available",
+    "rpm total": "Total",
+    "Now rpm": "Current rate",
+}
+
+
+def lint_retired_vocabulary(name: str, catalog: dict) -> list:
+    """No catalog value may reintroduce a retired term."""
+    out = []
+    for mid, msg in sorted(catalog.items()):
+        text = msg["en"] if isinstance(msg, dict) else msg
+        for old, new in RETIRED.items():
+            if old in text:
+                out.append(
+                    f"{name}: {mid} uses retired term {old!r} — "
+                    f"standard vocabulary says {new!r}"
+                )
+    return out
+
+
 def main() -> int:
     errors = []
     referenced = set()
@@ -313,6 +366,8 @@ def main() -> int:
         page = (ROOT / name).read_text()
         errors += lint_runtime_helpers(name, page)
         errors += lint_untagged(name, page)
+        if 'id="i18n-catalog"' in page:
+            errors += lint_retired_vocabulary(name, load_catalog(page))
 
     if errors:
         print(f"{len(errors)} problem(s):")

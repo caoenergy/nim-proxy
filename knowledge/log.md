@@ -6,6 +6,34 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-29] decision — the standard vocabulary, committed and enforced
+
+Recorded in [standard-vocabulary](decisions/standard-vocabulary.md).
+
+The vocabulary that this whole release applies was decided before any code was
+written and was never committed to the repository — it lived in the planning
+bundle. That single omission is the root cause of most of the drift: nothing
+downstream could check against it, so five spellings of per-minute and three
+names for the model governor survived a pass whose purpose was standardization,
+and later work re-derived the decisions from the code and got them backwards.
+
+- The mapping is now a decision page, and the two enforceable halves are
+  checks: `locale_v1.py`'s `frozen` (a never-translate token the source uses
+  must survive verbatim in every translation) and `check_i18n.py`'s
+  `lint_retired_vocabulary` (no catalog value may reintroduce a retired term).
+- Written test-first: `frozen-token-dropped.json` and its selftest entry landed
+  one commit before the check, observed failing with
+  `expected check 'frozen', got nothing`.
+- One definition of `NEVER_TRANSLATE`, imported by all three scripts. A copied
+  list drifts, and it is about to be load-bearing for eight locales.
+- The retired list is deliberately multi-word: `window` is still correct for
+  the rate-limit window and `lane` for metric labels, so banning the bare words
+  would repeat the label sweep that renamed a rate-limit counter.
+- Lint: the `frozen` check failed on the shipped `en-XA` the first time it ran.
+  `gen_pseudolocale.py` was accenting frozen tokens, rendering `NÎM` and a
+  mangled `/v1` across nine messages — a string no real locale would produce,
+  in the locale that exists to prove layout. Generator fixed, en-XA regenerated.
+
 ## [2026-07-29] decision — a committed render gate, and the two page defects it found
 
 Recorded in [render-gate](decisions/render-gate.md).
