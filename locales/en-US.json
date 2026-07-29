@@ -89,8 +89,8 @@
       "hash": "4876efb7"
     },
     "dashboard.overview.capacity_reliability.heading": {
-      "en": "Capacity &amp; reliability",
-      "hash": "70ca5e3c"
+      "en": "Capacity & reliability",
+      "hash": "fa267d5d"
     },
     "dashboard.overview.performance.heading": {
       "en": "Performance",
@@ -137,8 +137,8 @@
       "hash": "139a5981"
     },
     "dashboard.overview.performance.note": {
-      "en": "median &amp; p95 across the time range",
-      "hash": "89032503"
+      "en": "median & p95 across the time range",
+      "hash": "3f0caaba"
     },
     "dashboard.common.note.tokens_out": {
       "en": "tokens out",
@@ -235,8 +235,8 @@
       "hash": "a7fbda2f"
     },
     "dashboard.reliability.load.heading": {
-      "en": "In flight &amp; queued",
-      "hash": "ed6eeb61"
+      "en": "In flight & queued",
+      "hash": "3a303b5c"
     },
     "dashboard.reliability.queuewait.heading": {
       "en": "Queue wait",
@@ -251,8 +251,8 @@
       "hash": "c2b41afd"
     },
     "dashboard.reliability.security.heading": {
-      "en": "Reliability &amp; security",
-      "hash": "8df08ee7"
+      "en": "Reliability & security",
+      "hash": "def25f10"
     },
     "dashboard.reliability.reqtypes.heading": {
       "en": "Request types",
@@ -275,8 +275,8 @@
       "hash": "87550ec5"
     },
     "dashboard.reliability.pressure.note": {
-      "en": "governor engaged — worker exhaustions &amp; per-model caps",
-      "hash": "7aba62c8"
+      "en": "governor engaged — worker exhaustions & per-model caps",
+      "hash": "3c187458"
     },
     "dashboard.capacity.keyutil.heading": {
       "en": "Key utilization",

@@ -102,10 +102,13 @@ def main() -> int:
             if mid not in catalog:
                 errors.append(f"{name}: data-i18n={mid} has no catalog entry")
                 continue
+            # catalog stores PLAIN text; the runtime escapes on load, so compare
+            # the markup with entities decoded
             want = catalog[mid]["en"]
-            if inner.strip() != want.strip():
+            if htmlmod.unescape(inner).strip() != want.strip():
                 errors.append(
-                    f"{name}: {mid} markup {inner.strip()[:50]!r} != catalog {want[:50]!r}"
+                    f"{name}: {mid} markup {htmlmod.unescape(inner).strip()[:50]!r} "
+                    f"!= catalog {want[:50]!r}"
                 )
 
         for mid, inner in tagged(source, "data-i18n-text"):
@@ -119,6 +122,22 @@ def main() -> int:
                 errors.append(
                     f"{name}: {mid} text node {first[:50]!r} != catalog {want[:50]!r}"
                 )
+
+        # data-i18n-html carries inline markup as placeholders; the element is
+        # emptied in the markup, so there is no text to round-trip against.
+        # What must hold is that every placeholder is one the runtime expands.
+        known = {"{b}", "{/b}", "{key}", "{endpoint}"}
+        for m in re.finditer(r'data-i18n-html="([^"]+)"', source):
+            mid = m.group(1)
+            referenced.add(mid)
+            if mid not in catalog:
+                errors.append(f"{name}: data-i18n-html={mid} has no catalog entry")
+                continue
+            for ph in re.findall(r"\{[^}]*\}", catalog[mid]["en"]):
+                if ph not in known:
+                    errors.append(f"{name}: {mid} uses unknown placeholder {ph}")
+            if "<" in catalog[mid]["en"]:
+                errors.append(f"{name}: {mid} contains raw markup; use a placeholder")
 
         for m in re.finditer(r'data-i18n-attr="([^"]+)"', source):
             for pair in m.group(1).split(","):
