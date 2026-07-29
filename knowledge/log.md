@@ -6,6 +6,35 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-29] decision — a committed render gate, and the two page defects it found
+
+Recorded in [render-gate](decisions/render-gate.md).
+
+An audit of the merged 0.6.6 work found a P0 that every existing check passes:
+`at` was bound three times in `src/dashboard.html`, so every chart threw
+`TypeError` on hover, and because the poll loop's bare `catch` treats a throw
+as connection loss, a healthy proxy rendered a red "Disconnected" badge and
+froze most of the tab. A second, latent defect had `kpiCards` escaping a
+catalog value already escaped at load — invisible in English and in `en-XA`,
+and due to surface as `&#39;` on the first real translation.
+
+- `scripts/render_check.js` runs the page against captured API payloads and
+  fails on any uncaught page error. Committed **before** the fix and observed
+  failing at `src/dashboard.html:945`, per the write-the-check-first rule in
+  [AGENTS.md](../AGENTS.md).
+- This **reverses** the execution plan's decision to ship no browser harness.
+  That call traded the harness for a manual browser review; the review did not
+  happen, the PR merged with its acceptance criterion unmet, and the P0 landed
+  in the gap. The decision page records both sides.
+- Fixtures are captured with failures in them — 504s, disconnects, 429
+  cooldowns, worker exhaustion, `length` finishes. Every previous leak scan
+  measured a healthy proxy, which silently exempts the whole error taxonomy.
+- `scripts/mock_nim.py` honors `max_tokens` so the Truncated column is
+  reachable. `content_filter` is left uncovered rather than faked.
+- Lint: [architecture/dashboard.md](architecture/dashboard.md) described a
+  chart tooltip that never worked in this release. The code is now fixed to
+  match the page, so the description is accurate again rather than aspirational.
+
 ## [2026-07-29] decision — pseudolocale, validator, and untagged-string lint
 
 Fifth change of the 0.6.6 rationalization. Recorded in

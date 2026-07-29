@@ -45,8 +45,10 @@ const escapeProbe = args.includes('--escape-probe');
 /* ---------- locate a browser ---------------------------------------------- */
 
 function findChrome() {
-  if (process.env.CHROME) return process.env.CHROME;
+  // CHROME is a hint, not a promise: if it does not exist, keep looking rather
+  // than spawning a path that is not there.
   const candidates = [
+    process.env.CHROME,
     '/opt/pw-browsers/chromium/chrome-linux/chrome',
     ...expandGlob('/opt/pw-browsers/chromium-*/chrome-linux/chrome'),
     ...expandGlob('/opt/pw-browsers/chromium_headless_shell-*/chrome-linux/headless_shell'),
