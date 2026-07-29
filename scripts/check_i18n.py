@@ -153,6 +153,10 @@ TEXT_NODE = re.compile(r">([^<>]+)<")
 # Attribute values are not text nodes. The localizable ones (title, alt,
 # placeholder, aria-label) have their own check; the rest are machinery.
 ATTR_VALUE = re.compile(r"=\s*$")
+# How far back to look for the machinery that governs a quoted string. Wide
+# enough to cover `document.querySelector(` and `.getAttribute(`, narrow enough
+# that unrelated code earlier on the same line does not grant an exemption.
+NOT_DISPLAY_WINDOW = 30
 # Contexts where a quoted string is machinery, not text for a human.
 NOT_DISPLAY = re.compile(
     r"querySelector|getElementById|createElementNS|setAttribute\(|getAttribute\(|"
@@ -236,12 +240,17 @@ def lint_untagged(name: str, raw: str) -> list:
 
     stripped = strip_comments(scanned)
     for line in stripped.splitlines():
-        if NOT_DISPLAY.search(line):
-            continue
         for m in QUOTED.finditer(line):
             text = m.group(1) if m.group(1) is not None else m.group(2)
+            before = line[: m.start()]
+            # NOT_DISPLAY applies to the string it GOVERNS, not to the whole
+            # line. Matching per line meant one `.toFixed(` anywhere suppressed
+            # every string beside it — which is how 'met', 'missed' and
+            # 'no eligible traffic' render in English on a line CI calls clean.
+            if NOT_DISPLAY.search(before[-NOT_DISPLAY_WINDOW:]):
+                continue
             # `class="logo cdnchip"` is an attribute value, not display text.
-            if ATTR_VALUE.search(line[: m.start()]):
+            if ATTR_VALUE.search(before):
                 continue
             if looks_like_prose(text):
                 errors.append(f"{name}: untagged prose {text!r} — route it through t()")
