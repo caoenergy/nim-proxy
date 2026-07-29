@@ -6,6 +6,23 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-29] decision — Intl formatting keyed to the catalog locale
+
+Fourth change of the 0.6.6 rationalization. Recorded in
+[intl-formatting](decisions/intl-formatting.md).
+
+- Written test-first: `scripts/formatter_fixture.js` and 105 golden cases were
+  committed *before* any formatter was touched, so the migration's diff is the
+  review evidence rather than a claim. Inputs sit on every branch boundary.
+- The fixture immediately earned it — it surfaced two arithmetic bugs in the
+  hand-rolled `fmt` that had been shipping (`999999` → `1000.0K`, `1e12` →
+  `1000.0B`), and caught an inconsistency I introduced myself, where seconds
+  used a different unit style from milliseconds and minutes.
+- Lint: six `toFixed()` calls remain and all six are inside `style=`
+  attributes. Those must NOT be localized — `width:12,3%` is invalid CSS in a
+  comma-decimal locale and collapses the element. Display percentages and
+  layout percentages are now visibly different code paths.
+
 ## [2026-07-29] decision — message catalog and the escape-once contract
 
 Third change of the 0.6.6 rationalization. Extracted the dashboard and setup

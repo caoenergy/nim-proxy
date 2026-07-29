@@ -51,6 +51,14 @@ jobs:
           print(m.group(1))
           PY
           node --check "$RUNNER_TEMP/dash.js"
+      - name: Formatter output is unchanged
+        # Pins number/duration/date/percent output against a golden fixture.
+        # TZ and locale are fixed because these formatters read the catalog
+        # locale and the system zone; an unpinned run encodes the runner.
+        env:
+          TZ: UTC
+          LC_ALL: en_US.UTF-8
+        run: node scripts/formatter_fixture.js --check
 
   coverage:
     name: coverage
