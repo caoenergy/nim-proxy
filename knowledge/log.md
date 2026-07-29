@@ -6,6 +6,38 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-29] decision — message catalog and the escape-once contract
+
+Third change of the 0.6.6 rationalization. Extracted the dashboard and setup
+wizard to an embedded `en-US` catalog (159 messages) behind a `t()` runtime.
+Recorded in [message-catalog-and-escaping](decisions/message-catalog-and-escaping.md).
+
+- Removed the file's only JavaScript-context interpolation before extracting
+  anything. `chipHtml` built an `onerror="..."` attribute containing a JS
+  statement containing single-quoted JS literals, safe only because
+  `initialsOf()` strips to `[A-Za-z0-9 ]` — a monogram helper, not a
+  sanitizer. One catalog candidate reached it.
+- Catalog values are plain text, escaped once at load. This is not a style
+  choice: `metricRow`, `perfBlock`, `tile`, and `prow` interpolate their label
+  into `innerHTML` with no `esc()`, and `kpiCards` escapes `k.label` but not
+  `k.value`/`k.sub`. Escaping at load covers all of them at one point.
+- Lint: two chart hover handlers declared `const t` for a cursor timestamp,
+  which shadowed the new global `t()`. Renamed the locals to `at`. Nothing was
+  broken yet — no `t()` call sat inside those scopes — but the next one added
+  there would have failed silently, and `cargo test` cannot see it.
+- Adversarial review found a user-visible bug the tests could not: `applyStatic`
+  ran after the tab-restore loop, so deep-linking to any non-Overview tab showed
+  that section under a topbar reading "Overview". It also found `sortTable`
+  double-escaping every catalog column header, four blind spots in
+  `check_i18n.py`, `locales/*.json` validated by nothing, an unenforced
+  attribute allowlist, six more `t` shadows, and a dozen half-extracted
+  surfaces. All fixed in-PR; each new check proven to fail on a broken input.
+- Verification is `scripts/check_i18n.py` plus `node --check` on the extracted
+  script bodies plus a headless-Chromium render that mutates three catalog
+  values and confirms the DOM follows. The last one matters: `cargo test`
+  passes on JavaScript that does not parse, and it did — an earlier pass wrote
+  `${...}` into single-quoted strings and only `node --check` caught it.
+
 ## [2026-07-29] ingest — standard vocabulary across the interface
 
 Second change of the 0.6.6 rationalization. Applied the agreed standard

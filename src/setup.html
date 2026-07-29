@@ -62,20 +62,20 @@ details input { margin-top:8px; }
 </head>
 <body>
 <form class="card" id="wiz" autocomplete="off">
-  <h1><span class="brand">NIM</span> PROXY — First-time setup</h1>
-  <p class="sub">Claim this proxy: create the superuser account and add at least one NIM API key.</p>
-  <div class="steps"><span id="s1" class="on" data-n="1">Create account</span><span id="s2" data-n="2">Add NIM keys</span><span id="s3" data-n="3">Review &amp; finish</span></div>
+  <h1><span class="brand">NIM</span> PROXY <span data-i18n="setup.header.title">— First-time setup</span></h1>
+  <p class="sub" data-i18n="setup.header.subtitle">Claim this proxy: create the superuser account and add at least one NIM API key.</p>
+  <div class="steps"><span id="s1" class="on" data-n="1" data-i18n="setup.stepper.step1">Create account</span><span id="s2" data-n="2" data-i18n="setup.stepper.step2">Add NIM keys</span><span id="s3" data-n="3" data-i18n="setup.stepper.step3">Review &amp; finish</span></div>
   <p class="err" id="err"></p>
 
   <section id="step1">
-    <label for="username">Username</label>
-    <input id="username" name="username" autofocus autocomplete="username" placeholder="e.g. admin">
-    <label for="password">Password (10+ characters)</label>
+    <label for="username" data-i18n="setup.step1.username">Username</label>
+    <input id="username" name="username" autofocus autocomplete="username" placeholder="e.g. admin" data-i18n-attr="placeholder:setup.step1.username.placeholder">
+    <label for="password" data-i18n="setup.step1.password">Password (10+ characters)</label>
     <input id="password" name="password" type="password" autocomplete="new-password">
-    <label for="confirm">Confirm password</label>
+    <label for="confirm" data-i18n="setup.step1.confirm">Confirm password</label>
     <input id="confirm" type="password" autocomplete="new-password">
-    <button type="button" class="primary" id="to2">Continue</button>
-    <p class="hint">This account is the superuser — it can never be deleted, and it anchors the key pool.</p>
+    <button type="button" class="primary" id="to2" data-i18n="setup.wizard.continue">Continue</button>
+    <p class="hint" data-i18n="setup.step1.hint">This account is the superuser — it can never be deleted, and it anchors the key pool.</p>
   </section>
 
   <section id="step2" hidden>
@@ -83,48 +83,73 @@ details input { margin-top:8px; }
     <div class="addrow">
       <input class="key" id="newkey" type="password" placeholder="nvapi-…">
       <input class="rpm" id="newrpm" type="number" value="40" min="1" max="10000" title="requests/min">
-      <button type="button" class="ghost" id="addkey">Validate &amp; add</button>
+      <button type="button" class="ghost" id="addkey" data-i18n="setup.step2.addkey">Validate &amp; add</button>
     </div>
     <details>
-      <summary>Advanced — upstream base URL</summary>
+      <summary data-i18n="setup.step2.advanced">Advanced — upstream base URL</summary>
       <input id="baseurl" placeholder="https://integrate.api.nvidia.com">
     </details>
     <div class="row">
-      <button type="button" class="ghost" id="back1">Back</button>
-      <button type="button" class="primary" id="to3" disabled>Continue</button>
+      <button type="button" class="ghost" id="back1" data-i18n="setup.wizard.back">Back</button>
+      <button type="button" class="primary" id="to3" disabled data-i18n="setup.wizard.continue">Continue</button>
     </div>
-    <p class="hint">Keys join the shared pool as yours. Each key's requests-per-minute defaults to NIM's 40.</p>
+    <p class="hint" data-i18n="setup.step2.hint">Keys join the shared pool as yours. Each key's requests-per-minute defaults to NIM's 40.</p>
   </section>
 
   <section id="step3" hidden>
     <div class="review" id="review"></div>
     <label class="opt"><input type="checkbox" id="mintkey" checked>
-      <span>Create my first client API key (<code>npk_…</code>) so clients can call <code>/v1</code> right away</span></label>
-    <p class="warn" id="mintwarn" hidden>Without a client key, the proxy still requires an API key but
-      rejects <b>every</b> /v1 request until you mint one in Settings → Access &amp; keys.
-      Skip this only if you plan to switch the API mode to open (unauthenticated /v1).</p>
+      <span data-i18n-html="setup.step3.mintkey"></span></label>
+    <p class="warn" id="mintwarn" hidden data-i18n-html="setup.step3.mintwarn"></p>
     <div class="row">
-      <button type="button" class="ghost" id="back2">Back</button>
-      <button type="submit" class="primary" id="finish">Create &amp; open dashboard</button>
+      <button type="button" class="ghost" id="back2" data-i18n="setup.wizard.back">Back</button>
+      <button type="submit" class="primary" id="finish" data-i18n="setup.step3.finish">Create &amp; open dashboard</button>
     </div>
   </section>
 
   <section id="step4" hidden>
-    <p class="sub">Setup complete. Point your client at the proxy — the API key below is shown
-      <b>only this once</b> (only its digest is stored).</p>
-    <label>Client base URL</label>
-    <div class="copyrow"><code id="cbase"></code><button type="button" class="ghost" data-copy="cbase">Copy</button></div>
-    <label>Client API key</label>
-    <div class="copyrow"><code id="csecret"></code><button type="button" class="ghost" data-copy="csecret">Copy</button></div>
-    <button type="button" class="primary" id="opendash">Open dashboard</button>
+    <p class="sub" data-i18n-html="setup.step4.intro"></p>
+    <label data-i18n="setup.step4.baseurl">Client base URL</label>
+    <div class="copyrow"><code id="cbase"></code><button type="button" class="ghost" data-copy="cbase" data-i18n="setup.step4.copy">Copy</button></div>
+    <label data-i18n="setup.step4.apikey">Client API key</label>
+    <div class="copyrow"><code id="csecret"></code><button type="button" class="ghost" data-copy="csecret" data-i18n="setup.step4.copy">Copy</button></div>
+    <button type="button" class="primary" id="opendash" data-i18n="setup.step4.opendash">Open dashboard</button>
   </section>
 </form>
 
+<script type="application/json" id="i18n-catalog">{"locale":"en-US","state":"Source","messages":{"setup.header.title":{"en":"— First-time setup","desc":"Follows the untranslated NIM PROXY wordmark.","hash":"f1de6d69"},"setup.header.subtitle":{"en":"Claim this proxy: create the superuser account and add at least one NIM API key.","hash":"4d5df656"},"setup.stepper.step1":{"en":"Create account","hash":"798ca2ce"},"setup.stepper.step2":{"en":"Add NIM keys","hash":"5c728e31"},"setup.stepper.step3":{"en":"Review & finish","hash":"d037a7cf"},"setup.step1.username":{"en":"Username","hash":"e3b89e9d"},"setup.step1.password":{"en":"Password (10+ characters)","hash":"79c07c0e"},"setup.step1.confirm":{"en":"Confirm password","hash":"5ac265f3"},"setup.step1.username.placeholder":{"en":"e.g. admin","desc":"Input placeholder. 'e.g.' needs the locale's own abbreviation; 'admin' is a suggested value.","hash":"d415d634"},"setup.wizard.continue":{"en":"Continue","hash":"31fbef16"},"setup.step1.hint":{"en":"This account is the superuser — it can never be deleted, and it anchors the key pool.","hash":"ffe50a22"},"setup.step2.addkey":{"en":"Validate & add","hash":"15414785"},"setup.step2.advanced":{"en":"Advanced — upstream base URL","hash":"8dd07757"},"setup.wizard.back":{"en":"Back","hash":"76900f1b"},"setup.step2.hint":{"en":"Keys join the shared pool as yours. Each key's requests-per-minute defaults to NIM's 40.","hash":"bba8a612"},"setup.step3.mintkey":{"en":"Create my first client API key ({key}) so clients can call {endpoint} right away","desc":"Checkbox label. {key} and {endpoint} are <code>-wrapped literals: npk_… and /v1. Neither is translated.","hash":"fc7a5e75"},"setup.step3.mintwarn":{"en":"Without a client key, the proxy still requires an API key but rejects {b}every{/b} /v1 request until you mint one in Settings → Access & keys. Skip this only if you plan to switch the API mode to open (unauthenticated /v1).","desc":"{b}...{/b} is bold emphasis. Translators may move the tags to whichever word carries the emphasis.","hash":"2635d060"},"setup.step3.finish":{"en":"Create & open dashboard","hash":"c91cfd01"},"setup.step4.intro":{"en":"Setup complete. Point your client at the proxy — the API key below is shown {b}only this once{/b} (only its digest is stored).","hash":"3a9f6c0b"},"setup.step4.baseurl":{"en":"Client base URL","hash":"32444228"},"setup.step4.apikey":{"en":"Client API key","hash":"f3a91248"},"setup.step4.copy":{"en":"Copy","desc":"Button, imperative verb. Copies the adjacent value to the clipboard.","hash":"e21f935f"},"setup.step4.opendash":{"en":"Open dashboard","desc":"Button, imperative verb phrase. 'Open' is the verb, not the API-mode adjective.","hash":"803f2313"}}}</script>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
 const err = (m) => { $("err").textContent = m || ""; };
 const esc = (s) => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+/* ---------- i18n ----------
+   Catalog values are PLAIN TEXT, escaped once here at load. Inline markup a
+   message needs is expressed as {b}...{/b} / {key} / {endpoint} placeholders
+   and expanded from the fixed table below — never stored as HTML in the
+   catalog, so a translator can move emphasis without being able to inject. */
+const MSG = JSON.parse($("i18n-catalog").textContent).messages;
+const rawMsg = (id) => (MSG[id] === undefined ? id : MSG[id].en);
+const t = (id) => esc(rawMsg(id));
+const INLINE = { "{b}": "<b>", "{/b}": "</b>",
+                 "{key}": "<code>npk_\u2026</code>", "{endpoint}": "<code>/v1</code>" };
+function tHtml(id) {
+  let s = esc(rawMsg(id));
+  for (const k in INLINE) s = s.split(k).join(INLINE[k]);
+  return s;
+}
+function applyStatic(root) {
+  root.querySelectorAll("[data-i18n]").forEach(el => { el.innerHTML = t(el.dataset.i18n); });
+  root.querySelectorAll("[data-i18n-html]").forEach(el => { el.innerHTML = tHtml(el.dataset.i18nHtml); });
+  root.querySelectorAll("[data-i18n-attr]").forEach(el => {
+    el.dataset.i18nAttr.split(",").forEach(pair => {
+      const i = pair.indexOf(":");
+      el.setAttribute(pair.slice(0, i), rawMsg(pair.slice(i + 1)));
+    });
+  });
+}
+applyStatic(document);
 let keys = []; // {key, rpm, models}
 
 function show(n) {
