@@ -1658,9 +1658,16 @@ function renderReliability(c) {
     shed, unauth, logins, cooldown429, cooldownOther, qwS, qwN, upS, upN, ttftS, ttftN, statusG,
     totStreamT, totStreamF, totGen, totToolReq, wsum } = c;
 
+  /* One predicate for "this request succeeded", shared by the error taxonomy,
+     the stacked outcome chart and the availability numerator. They disagreed:
+     the taxonomy excluded only the literal '200', so a 201 or 204 rendered as
+     an "Other" error in the live panel while counting as Success in the chart
+     and in the SLO. */
+  const IS_2XX = s => /^2\d\d$/.test(s);
+
   /* hero: availability vs SLO + error budget */
   const success = [...statusG.entries()]
-    .filter(([status]) => /^2\d\d$/.test(status))
+    .filter(([status]) => IS_2XX(status))
     .reduce((n, [, value]) => n + value, 0);
   const eligible = [...statusG.entries()]
     .filter(([status]) => status !== 'disconnect' && !/^4\d\d$/.test(status))
@@ -1708,10 +1715,11 @@ function renderReliability(c) {
     ['Rate limited', s => s === '429', 'var(--amber)'],
     ['Disconnect', s => s === 'disconnect', 'var(--blue)'],
     ['Timeout / stall', s => s === '504' || s === 'stall', 'var(--red)'],
+    ['Client error (4xx)', s => /^4\d\d$/.test(s) && s !== '429', 'var(--violet, #8B7BB8)'],
     ['5xx', s => /^5\d\d$/.test(s) && s !== '504', '#C15F3C'],
     ['Other', () => true, 'var(--ink-3)'],
   ];
-  const taxCounts = []; let seen = new Set(['200']);
+  const taxCounts = []; let seen = new Set([...statusG.keys()].filter(IS_2XX));
   for (const [label, match, color] of TAX) {
     let n = 0;
     for (const [s, v] of statusG) if (!seen.has(s) && match(s)) { n += v; seen.add(s); }
@@ -1739,10 +1747,11 @@ function renderReliability(c) {
      error breakdown above (success prepended), first match wins so each
      status lands in exactly one band. */
   const OUTCOMES = [
-    ['Success', css('--green'), s => /^2\d\d$/.test(s)],
+    ['Success', css('--green'), IS_2XX],
     ['Rate limited', css('--amber'), s => s === '429'],
     ['Disconnect', css('--blue'), s => s === 'disconnect'],
     ['Timeout / stall', css('--red'), s => s === '504' || s === 'stall'],
+    ['Client error (4xx)', 'var(--violet, #8B7BB8)', s => /^4\d\d$/.test(s) && s !== '429'],
     ['5xx', '#C15F3C', s => /^5\d\d$/.test(s) && s !== '504'],
     ['Other', css('--ink-3'), () => true],
   ];
