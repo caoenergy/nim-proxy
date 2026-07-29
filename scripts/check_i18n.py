@@ -162,6 +162,10 @@ def looks_like_prose(text: str) -> bool:
         return False
     if text.startswith(("#", ".", "/", "--", "http")):
         return False
+    # CSS values look like prose to a word counter: `var(--violet, #8B7BB8)`
+    # has two words and starts with a letter. They are style, never text.
+    if text.startswith("var(") or re.match(r"^[a-z-]+\(", text) or "#" in text:
+        return False
     if not re.search(r"[A-Za-z]{3}", text):
         return False
     words = text.split()
