@@ -386,7 +386,6 @@ pub async fn api_config(
         body["server"] = serde_json::json!({
             "base_url": sc.upstream.base_url,
             "limits": sc.limits,
-            "pricing": sc.pricing,
             "history": {
                 "days": sc.history.days,
                 "available_from": history.available_from,
@@ -647,21 +646,6 @@ admin_section!(
             max_inflight: req.max_inflight,
             strict_passthrough: req.strict_passthrough,
         };
-    }
-);
-
-#[derive(Deserialize)]
-pub struct PricingReq {
-    ref_price_in: f64,
-    ref_price_out: f64,
-}
-
-admin_section!(
-    pricing,
-    PricingReq,
-    |cand: &mut StoredConfig, req: PricingReq| {
-        cand.pricing.ref_price_in = req.ref_price_in;
-        cand.pricing.ref_price_out = req.ref_price_out;
     }
 );
 

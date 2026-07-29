@@ -159,7 +159,7 @@ td {
 td.l { text-align: left; color: var(--ink-1); }
 td.best { color: var(--green-lt); font-weight: 600; }
 td .sw { margin-right: 8px; vertical-align: baseline; }
-.dim { color: var(--ink-4); } .warnc { color: var(--amber-lt); } .critc { color: var(--red); } .savec { color: var(--green-lt); }
+.dim { color: var(--ink-4); } .warnc { color: var(--amber-lt); } .critc { color: var(--red); }
 
 /* ---------- key-value lists, bars, leaderboards ---------- */
 .kv { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--hairline); font-size: 12.5px; }
@@ -556,8 +556,8 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
       </div>
       <div class="card">
         <h2>Rate-limit hits per minute</h2>
-        <div id="chart-benches"></div>
-        <div class="legend" id="legend-benches"></div>
+        <div id="chart-cooldowns"></div>
+        <div class="legend" id="legend-cooldowns"></div>
       </div>
     </div>
     <div class="card">
@@ -598,7 +598,6 @@ const fmt = n => !isFinite(n) ? '–'
   : Math.abs(n) >= 100 ? Math.round(n).toLocaleString()
   : Math.abs(n) >= 10 ? n.toFixed(1).replace(/\.0$/,'')
   : n.toFixed(2).replace(/\.?0+$/, '');
-const money = n => '$' + (n >= 1000 ? fmt(n) : n.toFixed(2));
 const secs = s => !isFinite(s) ? '–' : s < 1 ? Math.round(s*1000)+' ms' : s < 90 ? s.toFixed(1)+' s' : Math.round(s/60)+' min';
 const ago = s => { s = Math.max(0, Math.round(s));
   const d = Math.floor(s/86400), h = Math.floor(s%86400/3600), m = Math.floor(s%3600/60);
@@ -650,7 +649,7 @@ let nowData = null;
 let nowRows = [];
 let mode = { kind: 'following', preset: 'default', paused: false, from: 0, to: 0 };
 let cfg = {
-  lanes: 0, rpm: 40, rpms: [], capacity_rpm: 0, price_in: 0.5, price_out: 2.0,
+  lanes: 0, rpm: 40, rpms: [], capacity_rpm: 0,
   started: Date.now()/1000, version: '', auth: false, default_window_days: 30,
   retention_days: 30, slo_target_percent: 99.9,
 };
@@ -1004,21 +1003,20 @@ function ringGauge(el, ratio, text, color, label, sub) {
 const ICONS = {
   pulse: '<path d="M1 8h3l2-5 3 11 2-6h4"/>',
   stack: '<path d="M8 1.5l6 3-6 3-6-3zM2 8l6 3 6-3M2 11.5l6 3 6-3"/>',
-  coin: '<path d="M8 1.5A6.5 6.5 0 108 14.5 6.5 6.5 0 008 1.5zM8 4.5v7M9.8 6a2 2 0 00-3.6 1.2c0 2 3.6 1 3.6 2.8A2 2 0 016.2 10.5"/>',
   check: '<path d="M2.5 8.5l3.5 3.5 7.5-8"/>',
   clock: '<path d="M8 4v4l2.5 1.5M8 1.5A6.5 6.5 0 108 14.5 6.5 6.5 0 008 1.5z"/>',
   bolt: '<path d="M9 1.5L3 9h4l-1 5.5L13 7H9z"/>',
   grid: '<path d="M2 8h5M2 4h9M2 12h7"/>',
 };
-function sparkSvg(pts, green, hero) {
+function sparkSvg(pts, hero) {
   if (!pts || pts.length < 2) return '';
   const W = 300, H = hero ? 58 : 44, vs = pts.map(p => p.v);
   const vmax = Math.max(1e-9, ...vs);
   const X = i => W * i / (vs.length - 1), Y = v => 4 + (H - 8) * (1 - Math.min(v, vmax) / vmax);
   const d = vs.map((v, i) => (i ? 'L' : 'M') + X(i).toFixed(1) + ',' + Y(v).toFixed(1)).join('');
   return `<svg class="kpispark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">` +
-    `<path d="${d}L${W},${H}L0,${H}Z" fill="url(#${green ? 'gGreen' : 'gMuted'})"/>` +
-    `<path d="${d}" fill="none" stroke="${green ? MED : '#8E967F'}" stroke-width="1.5"/></svg>`;
+    `<path d="${d}L${W},${H}L0,${H}Z" fill="url(#gMuted)"/>` +
+    `<path d="${d}" fill="none" stroke="#8E967F" stroke-width="1.5"/></svg>`;
 }
 /* trend chip: second half of the window vs the first half */
 function deltaChip(pts, downIsGood) {
@@ -1032,14 +1030,14 @@ function deltaChip(pts, downIsGood) {
   const good = downIsGood ? d <= 0 : d >= 0;
   return `<span class="chip ${good ? 'good' : 'bad'}" title="second half of this window vs the first">${d >= 0 ? '+' : ''}${Math.abs(d) >= 10 ? d.toFixed(0) : d.toFixed(1)}%</span>`;
 }
-/* k: {icon, label, value, sub, delta?, valColor?, pts?, green?} */
+/* k: {icon, label, value, sub, delta?, pts?} */
 function kpiCards(el, defs, hero) {
   el.innerHTML = defs.map(k =>
     `<div class="kpi${hero ? ' hero' : ''}">` +
     `<div class="kpihead"><span class="kpilabel"><svg viewBox="0 0 16 16">${ICONS[k.icon] || ''}</svg>${esc(k.label)}</span>${k.delta || ''}</div>` +
-    `<div class="kpival"${k.valColor ? ` style="color:${k.valColor}"` : ''}>${k.value}</div>` +
+    `<div class="kpival">${k.value}</div>` +
     `<div class="kpisub">${k.sub || ''}</div>` +
-    sparkSvg(k.pts, k.green, hero) + `</div>`).join('');
+    sparkSvg(k.pts, hero) + `</div>`).join('');
 }
 
 /* one metric-list row: label, right-aligned mono value, optional tone */
@@ -1159,11 +1157,9 @@ function render() {
   const reqModels = wgroups('nimproxy_requests_total', 'model', l => l.path === '/v1/chat/completions');
   const models = [...new Set([...ctok.keys(), ...ptok.keys(), ...reqModels.keys()])].filter(m => m !== 'none');
   models.sort((a,b) => (ctok.get(b)||0) - (ctok.get(a)||0));
-  let saved = 0, allP = 0, allC = 0;
+  let allP = 0, allC = 0;
   for (const m of models) {
-    const p = ptok.get(m) || 0, ct = ctok.get(m) || 0;
-    allP += p; allC += ct;
-    saved += p/1e6*cfg.price_in + ct/1e6*cfg.price_out;
+    allP += ptok.get(m) || 0; allC += ctok.get(m) || 0;
   }
   const wsum = name => windowed(s => sum(s.rows, name));
   const ttftS = wsum('nimproxy_ttft_seconds_sum'), ttftN = wsum('nimproxy_ttft_seconds_count');
@@ -1184,16 +1180,6 @@ function render() {
   const truncPct = m => finTotal.get(m) ? (finLen.get(m) || 0) / finTotal.get(m) * 100 : NaN;
   const reasonPct = m => ctok.get(m) ? (reasoningByModel.get(m) || 0) / ctok.get(m) * 100 : NaN;
   const pct = v => isFinite(v) ? v.toFixed(v && v < 10 ? 1 : 0) + '%' : '–';
-  const modelSaved = m => (ptok.get(m)||0)/1e6*cfg.price_in + (ctok.get(m)||0)/1e6*cfg.price_out;
-
-  /* cumulative dollars within the view */
-  const base = samples[0];
-  const savedAt = s => {
-    let v = 0;
-    v += (sum(s.rows, 'nimproxy_prompt_tokens_total') - sum(base.rows, 'nimproxy_prompt_tokens_total')) / 1e6 * cfg.price_in;
-    v += (sum(s.rows, 'nimproxy_completion_tokens_total') - sum(base.rows, 'nimproxy_completion_tokens_total')) / 1e6 * cfg.price_out;
-    return Math.max(0, v);
-  };
 
   /* ----- shared proxy / capacity aggregates ----- */
   const reqPts = rateSeries(s => sum(s.rows, 'nimproxy_requests_total'));
@@ -1232,28 +1218,26 @@ function render() {
   const totStreamF = [...streamF.values()].reduce((a, b) => a + b, 0);
   const totGen = totStreamT + totStreamF;
   const totToolReq = [...toolReqs.values()].reduce((a, b) => a + b, 0);
-  const clientSaved = cl => (cP.get(cl)||0)/1e6*cfg.price_in + (cC.get(cl)||0)/1e6*cfg.price_out;
 
   /* ----- shared reliability / security counters ----- */
   const shed = windowed(s => sum(s.rows, 'nimproxy_shed_total'));
   const unauth = windowed(s => sum(s.rows, 'nimproxy_unauthorized_total'));
   const logins = windowed(s => sum(s.rows, 'nimproxy_login_failures_total'));
-  const bench429 = windowed(s => sum(s.rows, 'nimproxy_lane_benched_total', l => l.status === '429'));
-  const benchOther = windowed(s => sum(s.rows, 'nimproxy_lane_benched_total', l => l.status !== '429'));
+  const cooldown429 = windowed(s => sum(s.rows, 'nimproxy_lane_cooldown_total', l => l.status === '429'));
+  const cooldownOther = windowed(s => sum(s.rows, 'nimproxy_lane_cooldown_total', l => l.status !== '429'));
   const qwS = wsum('nimproxy_queue_wait_seconds_sum'), qwN = wsum('nimproxy_queue_wait_seconds_count');
   const upS = wsum('nimproxy_upstream_seconds_sum'), upN = wsum('nimproxy_upstream_seconds_count');
   const statusG = wgroups('nimproxy_requests_total', 'status');
 
   const c = {
     last, rows, windowLabel,
-    ptok, ctok, reqModels, models, saved, allP, allC,
+    ptok, ctok, reqModels, models, allP, allC,
     wsum, ttftS, ttftN, tpsS, tpsN,
     okByModel, errByModel, ttftMS, ttftMC, tpsMS, tpsMC, errRate, errPct,
-    tpotMS, tpotMC, finTotal, finLen, reasoningByModel, tpotAvg, truncPct, reasonPct, pct, modelSaved,
-    savedAt,
+    tpotMS, tpotMC, finTotal, finLen, reasoningByModel, tpotAvg, truncPct, reasonPct, pct,
     reqPts, capacityPoints, curRpm, avgRpm, peakRpm, capacity, rpmNow, capRatio, capColor, wreq, wok, okRatio, okColor,
-    cReq, cP, cC, clients, streamT, streamF, toolReqs, totStreamT, totStreamF, totGen, totToolReq, clientSaved,
-    shed, unauth, logins, bench429, benchOther, qwS, qwN, upS, upN, statusG,
+    cReq, cP, cC, clients, streamT, streamF, toolReqs, totStreamT, totStreamF, totGen, totToolReq,
+    shed, unauth, logins, cooldown429, cooldownOther, qwS, qwN, upS, upN, statusG,
   };
   (RENDERERS[activeTab] || renderOverview)(c);
 }
@@ -1264,8 +1248,8 @@ const clientChip = cl =>
 
 /* ===== overview ===== */
 function renderOverview(c) {
-  const { windowLabel, saved, capRatio, capColor, okRatio, okColor, wreq, wok, allP, allC,
-    reqPts, savedAt, rows, shed, unauth, logins, bench429, rpmNow, capacity, curRpm,
+  const { windowLabel, capRatio, capColor, okRatio, okColor, wreq, wok, allP, allC,
+    reqPts, rows, shed, unauth, logins, cooldown429, rpmNow, capacity, curRpm,
     models, ctok, clients, cC, errRate } = c;
   const ctokPts = rateSeries(s => sum(s.rows, 'nimproxy_completion_tokens_total'));
   const okPts = samples.slice(1).map((s, i) => {
@@ -1273,15 +1257,11 @@ function renderOverview(c) {
     const dok = sum(s.rows, 'nimproxy_requests_total', l => l.status === '200') - sum(samples[i].rows, 'nimproxy_requests_total', l => l.status === '200');
     return dr > 0 ? { t: s.t, v: Math.max(0, Math.min(100, dok / dr * 100)) } : null;
   }).filter(Boolean);
-  const savedPts = samples.map(s => ({ t: s.t, v: savedAt(s) }));
-  const savedDiffs = savedPts.slice(1).map((p, i) => ({ t: p.t, v: Math.max(0, p.v - savedPts[i].v) }));
   kpiCards($('o-kpis'), [
     { icon: 'pulse', label: 'Requests', value: fmt(wreq), sub: windowLabel, delta: deltaChip(reqPts), pts: reqPts },
     { icon: 'stack', label: 'Tokens out', value: fmt(allC), sub: `${fmt(allP)} in`, delta: deltaChip(ctokPts), pts: ctokPts },
     { icon: 'check', label: 'Success rate', value: wreq ? (okRatio * 100).toFixed(2).replace(/\.?0+$/, '') + '%' : '–',
       sub: `${fmt(wok)} of ${fmt(wreq)}`, delta: deltaChip(okPts), pts: okPts },
-    { icon: 'coin', label: 'Dollars saved', value: money(saved), sub: 'vs reference pricing',
-      valColor: MED, delta: deltaChip(savedDiffs), pts: savedPts, green: true },
   ], true);
 
   $('o-reqnow').textContent = fmt(curRpm) + ' now';
@@ -1292,12 +1272,12 @@ function renderOverview(c) {
     'Capacity used · Now', `${fmt(rpmNow)} / ${fmt(capacity)} rpm · ${cfg.lanes} lane${cfg.lanes === 1 ? '' : 's'}`);
   const errShare = wreq ? (wreq - wok) / wreq * 100 : 0;
   ringGauge($('o-ring-ok'), okRatio, wreq ? Math.round(okRatio * 100) + '%' : '–', okColor,
-    'Success rate', `errors ${errShare.toFixed(errShare && errShare < 10 ? 1 : 0)}% · ${fmt(bench429)} benched`);
+    'Success rate', `errors ${errShare.toFixed(errShare && errShare < 10 ? 1 : 0)}% · ${fmt(cooldown429)} cooldowns`);
   const sul = shed + unauth + logins;
   $('o-health').innerHTML =
     metricRow('Active now', fmt(sum(rows, 'nimproxy_active_requests'))) +
     metricRow('Queued', fmt(sum(rows, 'nimproxy_queue_depth'))) +
-    metricRow('Rate-limit benches', fmt(bench429), bench429 > 0 ? 'warn' : 'zero') +
+    metricRow('Rate-limit cooldowns', fmt(cooldown429), cooldown429 > 0 ? 'warn' : 'zero') +
     metricRow('Shed · 401 · failed logins', `${fmt(shed)} · ${fmt(unauth)} · ${fmt(logins)}`, sul > 0 ? 'crit' : 'zero');
 
   const perfBlock = (label, note, p50, p95, fmtV) => {
@@ -1330,7 +1310,7 @@ function renderOverview(c) {
 function renderModels(c) {
   const { models, ptok, ctok, reqModels, allP, allC, windowLabel,
     ttftS, ttftN, tpsS, tpsN, okByModel, ttftMS, ttftMC, tpsMS, tpsMC, errRate, errPct,
-    finTotal, reasoningByModel, tpotAvg, truncPct, reasonPct, pct, modelSaved } = c;
+    finTotal, reasoningByModel, tpotAvg, truncPct, reasonPct, pct } = c;
 
   const chatReqs = [...reqModels.values()].reduce((a, b) => a + b, 0);
   const qmed = (metric, f) => { const v = quantile(wbuckets(metric, f), 0.5); return isFinite(v) ? v : NaN; };
@@ -1438,7 +1418,6 @@ function renderModels(c) {
       <div class="mstats">
         ${stat('requests', fmt(reqModels.get(m) || 0))}
         ${stat('tokens out', fmt(ct))}
-        ${stat('saved', money(modelSaved(m)), 'savec')}
         ${stat('TTFT', ttftMC.get(m) ? secs(avgTtft(m)) : '–')}
         ${stat('tok/s', tpsMC.get(m) ? fmt(avgTps(m)) : '–')}
         ${stat('errors', errPct(m), isFinite(e) && e > 0 ? 'critc' : 'dim')}
@@ -1450,27 +1429,26 @@ function renderModels(c) {
   sortTable($('table-models'), 'models', [
     { label: 'Model', align: 'l', str: true }, { label: 'Requests' }, { label: 'Tokens out' },
     { label: 'Avg TTFT' }, { label: 'Avg tok/s' }, { label: 'TPOT' }, { label: 'Avg reply' },
-    { label: 'Truncated' }, { label: 'Reasoning' }, { label: 'Errors' }, { label: 'Saved' },
+    { label: 'Truncated' }, { label: 'Reasoning' }, { label: 'Errors' },
   ], models.map(m => {
     const ct = ctok.get(m) || 0, ok = okByModel.get(m) || 0, e = errRate(m);
     return {
       vals: [m, reqModels.get(m) || 0, ct, avgTtft(m), avgTps(m), tpotAvg(m), ok ? ct / ok : NaN,
-        truncPct(m), reasonPct(m), e, modelSaved(m)],
+        truncPct(m), reasonPct(m), e],
       cells: [`<i class="sw" style="background:${publisher(m).color}"></i>${esc(m)}`,
         fmt(reqModels.get(m) || 0), fmt(ct),
         ttftMC.get(m) ? secs(avgTtft(m)) : '–', tpsMC.get(m) ? fmt(avgTps(m)) : '–',
         isFinite(tpotAvg(m)) ? secs(tpotAvg(m)) : '–', ok ? fmt(ct / ok) + ' tok' : '–',
         `<span class="${truncPct(m) >= 1 ? '' : 'dim'}">${pct(truncPct(m))}</span>`,
         `<span class="${reasonPct(m) >= 1 ? '' : 'dim'}">${pct(reasonPct(m))}</span>`,
-        `<span class="${isFinite(e) && e > 0 ? 'critc' : 'dim'}">${errPct(m)}</span>`,
-        `<span class="savec">${money(modelSaved(m))}</span>`],
+        `<span class="${isFinite(e) && e > 0 ? 'critc' : 'dim'}">${errPct(m)}</span>`],
     };
   }), { defaultIdx: 2, maxH: 440, minW: 900 });
 }
 
 /* ===== clients: what each agent is doing ===== */
 function renderClients(c) {
-  const { clients, cReq, cC, wsum, streamT, streamF, totStreamT, totGen, totToolReq, clientSaved } = c;
+  const { clients, cReq, cC, wsum, streamT, streamF, totStreamT, totGen, totToolReq } = c;
   const avgByKey = (sumN, cntN) => {
     const s = wgroups(sumN, 'client'), n = wgroups(cntN, 'client');
     return cl => n.get(cl) ? s.get(cl) / n.get(cl) : NaN;
@@ -1503,21 +1481,20 @@ function renderClients(c) {
     barList($('h-maxtok'), maxTokClients.map(cl => ({ name: cl, v: maxTokAvg(cl), color: clientColor(cl) })), fmt);
   sortTable($('table-harness'), 'harness', [
     { label: 'Harness', align: 'l', str: true }, { label: 'Requests' }, { label: 'Tokens out' },
-    { label: 'Tools/req' }, { label: 'Msgs/req' }, { label: 'Streaming' }, { label: 'Saved' },
+    { label: 'Tools/req' }, { label: 'Msgs/req' }, { label: 'Streaming' },
   ], clients.map(cl => ({
-    vals: [cl, cReq.get(cl) || 0, cC.get(cl) || 0, toolsAvg(cl), msgsAvg(cl), streamPct(cl), clientSaved(cl)],
+    vals: [cl, cReq.get(cl) || 0, cC.get(cl) || 0, toolsAvg(cl), msgsAvg(cl), streamPct(cl)],
     cells: [`<i class="sw" style="background:${clientColor(cl)}"></i>${esc(cl)}`,
       fmt(cReq.get(cl) || 0), fmt(cC.get(cl) || 0),
       isFinite(toolsAvg(cl)) ? fmt(toolsAvg(cl)) : '–', isFinite(msgsAvg(cl)) ? fmt(msgsAvg(cl)) : '–',
-      isFinite(streamPct(cl)) ? Math.round(streamPct(cl)) + '%' : '–',
-      `<span class="savec">${money(clientSaved(cl))}</span>`],
+      isFinite(streamPct(cl)) ? Math.round(streamPct(cl)) + '%' : '–'],
   })), { defaultIdx: 2, maxH: 420, minW: 620 });
 }
 
 /* ===== reliability (was Proxy) ===== */
 function renderReliability(c) {
-  const { rows, windowLabel, reqPts, wreq, wok, okRatio, clients, cReq, cP, cC, clientSaved,
-    shed, unauth, logins, bench429, benchOther, qwS, qwN, upS, upN, ttftS, ttftN, statusG,
+  const { rows, windowLabel, reqPts, wreq, wok, okRatio, clients, cReq, cP, cC,
+    shed, unauth, logins, cooldown429, cooldownOther, qwS, qwN, upS, upN, ttftS, ttftN, statusG,
     totStreamT, totStreamF, totGen, totToolReq, wsum } = c;
 
   /* hero: availability vs SLO + error budget */
@@ -1675,8 +1652,8 @@ function renderReliability(c) {
     metricRow('Active now', fmt(act)) +
     metricRow('Queued', fmt(que)) +
     metricRow('Shed (overload 503)', fmt(shed), shed > 0 ? 'crit' : 'zero') +
-    metricRow('Rate-limit benches (429)', fmt(bench429), bench429 > 0 ? 'warn' : 'zero') +
-    metricRow('Other benches (5xx)', fmt(benchOther), benchOther > 0 ? 'warn' : 'zero') +
+    metricRow('Rate-limit cooldowns', fmt(cooldown429), cooldown429 > 0 ? 'warn' : 'zero') +
+    metricRow('Upstream error cooldowns', fmt(cooldownOther), cooldownOther > 0 ? 'warn' : 'zero') +
     metricRow('Unauthorized (401)', fmt(unauth), unauth > 0 ? 'crit' : 'zero') +
     metricRow('Failed logins', fmt(logins), logins > 0 ? 'crit' : 'zero');
   const jsonMode = windowed(s => sum(s.rows, 'nimproxy_json_mode_total'));
@@ -1691,19 +1668,18 @@ function renderReliability(c) {
 
   sortTable($('table-clients'), 'clients', [
     { label: 'Client', align: 'l', str: true }, { label: 'Requests' }, { label: 'Tokens in' },
-    { label: 'Tokens out' }, { label: 'Saved' },
+    { label: 'Tokens out' },
   ], clients.map(cl => ({
-    vals: [cl, cReq.get(cl) || 0, cP.get(cl) || 0, cC.get(cl) || 0, clientSaved(cl)],
+    vals: [cl, cReq.get(cl) || 0, cP.get(cl) || 0, cC.get(cl) || 0],
     cells: [`<i class="sw" style="background:${clientColor(cl)}"></i>${esc(cl)}`,
-      fmt(cReq.get(cl) || 0), fmt(cP.get(cl) || 0), fmt(cC.get(cl) || 0),
-      `<span class="savec">${money(clientSaved(cl))}</span>`],
+      fmt(cReq.get(cl) || 0), fmt(cP.get(cl) || 0), fmt(cC.get(cl) || 0)],
   })), { defaultIdx: 3, maxH: 420, minW: 560 });
 }
 
 /* ===== capacity (was Keys) ===== */
 const LANE_COLORS = ['#76B900', '#4D6BFE', '#D9A521', '#16B8C0', '#615CED', '#EE6002'];
 function renderCapacity(c) {
-  const { capacity, rpmNow, capRatio, capColor, bench429, capacityPoints } = c;
+  const { capacity, rpmNow, capRatio, capColor, cooldown429, capacityPoints } = c;
 
   /* hero: current saturation uses only the current `/now` rate and config */
   const satPct = Math.min(1, capRatio);
@@ -1757,7 +1733,7 @@ function renderCapacity(c) {
   const prow = (l, v, color) => `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0"><span style="font-size:12.5px;color:var(--ink-2)">${l}</span><span style="font:600 15px var(--mono);color:${color || 'var(--ink-1)'}">${v}</span></div>`;
   $('k-pressure').innerHTML =
     `<div class="hlabel" style="margin-bottom:12px">Rate-limit pressure</div>` +
-    prow('429s this window', fmt(bench429), bench429 > 0 ? 'var(--amber)' : 'var(--ink-3)') +
+    prow('429s this window', fmt(cooldown429), cooldown429 > 0 ? 'var(--amber)' : 'var(--ink-3)') +
     prow('Conversation stickiness', stickyTxt) +
     prow('Lane slots · Now', cfg.lanes);
 
@@ -1765,8 +1741,8 @@ function renderCapacity(c) {
      window counts remain selected-window values; neither domain is subtracted
      from the other. Slot numbers are explicitly not durable key identities. */
   const laneWindow = wgroups('nimproxy_lane_requests_total', 'lane');
-  const lane429 = wgroups('nimproxy_lane_benched_total', 'lane', l => l.status === '429');
-  const laneOther = wgroups('nimproxy_lane_benched_total', 'lane', l => l.status !== '429');
+  const lane429 = wgroups('nimproxy_lane_cooldown_total', 'lane', l => l.status === '429');
+  const laneOther = wgroups('nimproxy_lane_cooldown_total', 'lane', l => l.status !== '429');
   const totalLane = [...laneWindow.values()].reduce((a, b) => a + b, 0) || 1;
   const laneColor = i => LANE_COLORS[i % LANE_COLORS.length];
   const lanes = Array.from({ length: cfg.lanes }, (_, i) => {
@@ -1781,16 +1757,16 @@ function renderCapacity(c) {
     name: l.name, v: l.util * 100, color: l.util >= 0.9 ? css('--amber') : laneColor(l.i),
   })), v => Math.round(v) + '%', 100);
 
-  const benchSeries = lanes.slice(0, 6).map(l => ({
+  const cooldownSeries = lanes.slice(0, 6).map(l => ({
     name: l.name, color: laneColor(l.i),
-    pts: rateSeries(s => sum(s.rows, 'nimproxy_lane_benched_total', ll => ll.lane === String(l.i) && ll.status === '429')),
+    pts: rateSeries(s => sum(s.rows, 'nimproxy_lane_cooldown_total', ll => ll.lane === String(l.i) && ll.status === '429')),
   }));
-  lineChart($('chart-benches'), benchSeries, fmt, { height: 150 });
-  legend($('legend-benches'), benchSeries);
+  lineChart($('chart-cooldowns'), cooldownSeries, fmt, { height: 150 });
+  legend($('legend-cooldowns'), cooldownSeries);
 
   sortTable($('table-lanes'), 'lanes', [
     { label: 'Lane', align: 'l', str: true }, { label: 'Requests' }, { label: 'Share' },
-    { label: 'Now rpm' }, { label: '429s' }, { label: 'Other benches' },
+    { label: 'Now rpm' }, { label: '429s' }, { label: 'Upstream error cooldowns' },
   ], lanes.map(l => ({
     vals: [l.name, l.cur, l.cur / totalLane * 100, l.currentRpm, l.b429, l.bOther],
     cells: [`<i class="sw" style="background:${laneColor(l.i)}"></i>${esc(l.name)}`,
@@ -2042,7 +2018,7 @@ function renderServer() {
       <h2>Model-pressure governor
         <span style="margin-left:auto;display:inline-flex;align-items:center;gap:8px"><span class="kmeta">adaptive</span>
         <button class="tog" role="switch" id="gov-tog" aria-checked="${!!sv.governor.enabled}"></button></span></h2>
-      <p class="shint">Absorbs NIM worker-exhaustion per model without benching keys. Each model self-tunes: engages on the first exhaustion, climbs while stable, dissolves after a long clean stretch. Set an override only if you know a model's ceiling.</p>
+      <p class="shint">Absorbs NIM worker-exhaustion per model without cooling down keys. Each model self-tunes: engages on the first exhaustion, climbs while stable, dissolves after a long clean stretch. Set an override only if you know a model's ceiling.</p>
       <div>${ovr.map(([m, cap], i) =>
         `<span class="ochip"><span title="${esc(m)}">${esc(m)}</span><b>${+cap} max</b><button data-govdel="${i}" title="Remove override">×</button></span>`).join('')
         || '<span class="kmeta">no overrides — fully adaptive</span>'}</div>
@@ -2052,14 +2028,6 @@ function renderServer() {
         <button class="gbtn" id="gov-add">+ override</button>
       </div>
       <div class="serr" id="gov-err"></div>
-    </div>
-    <div class="card mb">
-      <h2>Pricing <button class="pbtn" id="save-pricing" style="margin-left:auto">Save</button></h2>
-      <div class="limgrid" style="margin-top:6px">
-        ${num('sv-pin', 'Reference $ / 1M in', sv.pricing.ref_price_in, '', '0.01')}
-        ${num('sv-pout', 'Reference $ / 1M out', sv.pricing.ref_price_out, '', '0.01')}
-      </div>
-      <div class="serr" id="pricing-err"></div>
     </div>
     <div class="card">
       <h2>History &amp; dashboard <button class="pbtn" id="save-history" style="margin-left:auto">Save</button></h2>
@@ -2117,15 +2085,6 @@ function renderServer() {
     if (!model || !(cap >= 1)) return note('gov-err', 'Give a model id and a cap ≥ 1.');
     try { await sPost('/api/settings/governor', { set_override: { model, cap } }); await loadSettings(); }
     catch (e) { note('gov-err', e.message); }
-  });
-  $('save-pricing').addEventListener('click', async () => {
-    const pin = +$('sv-pin').value, pout = +$('sv-pout').value;
-    if (!isFinite(pin) || !isFinite(pout)) return note('pricing-err', 'Prices need numeric values.');
-    try {
-      await sPost('/api/settings/pricing', { ref_price_in: pin, ref_price_out: pout });
-      await loadSettings();
-      note('pricing-err', 'Saved.', true);
-    } catch (e) { note('pricing-err', e.message); }
   });
   $('save-history').addEventListener('click', async () => {
     const defaultDays = Math.round(+$('sv-default-days').value);
@@ -2290,7 +2249,7 @@ function applyNowConfig(next) {
     version: next.version || '', started: +next.started || Date.now()/1000,
     lanes: +next.lanes || 0, rpms: next.rpms || [], rpm: Math.max(0, ...(next.rpms || [40])),
     capacity_rpm: +next.capacity_rpm || 0,
-    price_in: +next.price_in || 0, price_out: +next.price_out || 0, auth: !!next.auth,
+    auth: !!next.auth,
     default_window_days: +next.default_window_days || 30,
     retention_days: +next.retention_days || 0,
     slo_target_percent: +next.slo_target_percent || 99.9,

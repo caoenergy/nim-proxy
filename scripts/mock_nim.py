@@ -95,7 +95,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # NIM's second, orthogonal constraint: a per-model worker-concurrency
         # cap shared across ALL keys. The proxy's governor must absorb this
-        # without benching lanes (key failover cannot help).
+        # without putting lanes in cooldown (key failover cannot help).
         model = req.get("model", "none")
         if ARGS.worker_slots:
             with LOCK:

@@ -141,7 +141,7 @@ burns — all from counts and sizes, never message content.
 
 Five persona-aligned tabs, each ordered at-a-glance → trends → detail:
 
-- **Overview** — the one-screen landing: dollars saved, capacity and success-rate ring gauges, request/token/savings sparklines, a health strip, and top models & harnesses.
+- **Overview** — the one-screen landing: capacity and success-rate ring gauges, request and token sparklines, a health strip, and top models & harnesses.
 - **Models** — ranked model cards, TTFT / generation-speed / inter-token-latency / upstream-latency charts, tokens-per-minute, tool-call volume, truncation and reasoning-share breakdowns, and a head-to-head scorecard.
 - **Clients** — what each agent is *doing*: tool intensity, conversation depth, sampling fingerprint, requested output budget, streaming-vs-buffered mix, and a per-harness leaderboard.
 - **Reliability** — availability against the configured SLO (99.9% by default) with an error budget, requests-by-outcome over time, where time goes (queue / first token / generation), an error taxonomy, an hour-of-day heatmap, and a model-pressure card when the governor engages.
@@ -169,8 +169,8 @@ your workload.
 
 **Settings.** Everything app-level is managed here: NIM keys (per-key rpm,
 enable/disable), client API keys, the open/keyed API mode, upstream URL,
-limits, pricing, default dashboard window, history retention, availability
-SLO, the model-pressure governor, and users. Saves validate, persist, and apply
+limits, default dashboard window, history retention, availability SLO, the
+model-pressure governor, and users. Saves validate, persist, and apply
 live. The config file itself is read at boot; an out-of-band edit to
 `DATA_DIR/config.json` requires a restart.
 
@@ -209,9 +209,9 @@ not an environment variable consumed by nim-proxy.
 Everything else is a Settings control: NIM keys (per-key rpm, enable/disable,
 ownership), the upstream base URL, client API keys and the open/keyed API
 mode, limits (`max_wait`, `heartbeat`, `stream_idle`, `request_timeout`,
-`models_ttl`, `max_inflight`, `strict_passthrough`), reference pricing,
-default dashboard window, history retention, availability SLO, the
-model-pressure governor, and users & roles.
+`models_ttl`, `max_inflight`, `strict_passthrough`), default dashboard
+window, history retention, availability SLO, the model-pressure governor, and
+users & roles.
 
 ## Security & deployment
 
@@ -299,7 +299,7 @@ The build and release path is hardened to the OpenSSF baseline (scored weekly by
 | `nimproxy_queue_wait_seconds` | — | Time waiting for a rate-limit slot |
 | `nimproxy_queue_depth` / `nimproxy_active_requests` | — | Live load gauges |
 | `nimproxy_lane_requests_total` | lane | Requests per key lane |
-| `nimproxy_lane_benched_total` | lane, status | Upstream 429/5xx/connect per lane |
+| `nimproxy_lane_cooldown_total` | lane, status | Upstream 429/5xx/connect per lane |
 | `nimproxy_affinity_total` | result | Conversation routing: `sticky` / `spill` / `none` |
 | `nimproxy_unauthorized_total` | — | Rejected API requests |
 | `nimproxy_login_failures_total` | — | Failed dashboard logins |

@@ -6,6 +6,35 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-29] decision — lane cooldown naming, savings metric removed
+
+First change of the 0.6.6 presentation-layer rationalization.
+
+- Retired the `bench` idiom for the post-backoff lane state in favor of
+  **cooldown**, which the `cooldown_until` field already used. Renamed across
+  `src/`, `tests/`, `scripts/`, `knowledge/`, and the `README.md` metrics table;
+  `nimproxy_lane_benched_total` → `nimproxy_lane_cooldown_total`;
+  `proxy::bench` → `proxy::enter_cooldown`. Recorded in
+  [lane-cooldown-naming](decisions/lane-cooldown-naming.md), including why a
+  read-time history alias was rejected in favor of a bounded, documented gap.
+- Removed the estimated-savings metric and everything feeding it: the
+  `Dollars saved` KPI, three `Saved` table columns, `money()`, the `Pricing`
+  settings card and config block, `/api/settings/pricing`, and the pricing
+  validation branch. Recorded in
+  [no-estimated-savings-metric](decisions/no-estimated-savings-metric.md).
+  `REF_PRICE_IN`/`REF_PRICE_OUT` deliberately stay in the legacy-env warning
+  list. New regression test proves a 0.6.5 store carrying a `pricing` block
+  still loads.
+- Lint: `knowledge/architecture/key-pool.md` and `governor.md` described the
+  state as "benching" while `pool.rs` already named the field `cooldown_until`
+  — the pages and the code now agree. Adversarial review of the change also
+  caught `README.md` and `architecture/dashboard.md` still advertising the
+  deleted savings KPI and sparklines, and both breaking-change notes naming
+  `/api/dashboard` where the removed fields were actually emitted by
+  `/api/dashboard/now`; all corrected in-PR. Removing the savings card
+  orphaned the `valColor` and `green` options on `kpiCards`/`sparkSvg` — it
+  was their only caller — so the unreachable branches went with it.
+
 ## [2026-07-28] ingest — prepare v0.6.5 maintenance release
 
 - Promoted the accumulated maintenance, dashboard-history corrections, and
@@ -408,7 +437,7 @@ v0.6.0 amendment.
 - **Model-pressure governor** (new component page
   [governor](architecture/governor.md)): classifies NIM's per-model
   worker-exhaustion error apart from 429s and backs off the **model** (never
-  benches the lane); adaptive AIMD (engage at half in-flight, +1/stable-min,
+  cools down the lane); adaptive AIMD (engage at half in-flight, +1/stable-min,
   dissolve after 30 clean min) with optional pinned caps. New metrics
   `nimproxy_worker_exhausted_total` / `nimproxy_model_inflight` /
   `nimproxy_model_limit`; a Reliability "Model pressure" card appears once

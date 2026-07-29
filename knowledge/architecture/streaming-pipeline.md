@@ -20,7 +20,7 @@ For a `stream: true` chat request:
    interval a `: heartbeat` comment goes out (send failure = client gone →
    the granted slot is never wasted on a dead request).
 4. **Send + triage**: 400-after-injection → retry untouched and remember the
-   model; 429/500/502/503/504 → bench the lane, `: retrying` comment, loop
+   model; 429/500/502/503/504 → cool down the lane, `: retrying` comment, loop
    (instant failover to other lanes); other non-2xx → relay as an in-stream
    `error` event; success → pipe.
 5. **Race the absolute deadline**: when the caller supplies
