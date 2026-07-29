@@ -654,7 +654,14 @@ const MED = '#A7D65A', P95 = '#6F7767';   // quantile pair: filled median, muted
    own compact notation would kick in at 1,000 ("1K"); this dashboard shows
    exact counts up to 10,000 because request counts in the hundreds are
    meaningful and "1.2K" is not. */
-const LOCALE = I18N.locale || 'en-US';
+/* A malformed tag (e.g. the POSIX spelling "en_US") makes every Intl
+   constructor below throw at module scope, which would leave the page dead
+   rather than mis-formatted. Fall back loudly instead. */
+const LOCALE = (() => {
+  const tag = I18N.locale || 'en-US';
+  try { new Intl.NumberFormat(tag); return tag; }
+  catch { console.error('invalid catalog locale', tag, '- falling back to en-US'); return 'en-US'; }
+})();
 const NF = (opts) => new Intl.NumberFormat(LOCALE, opts);
 const NUM_COMPACT = NF({ notation: 'compact', maximumFractionDigits: 1 });
 const NUM_GROUPED = NF({ maximumFractionDigits: 0 });
@@ -678,14 +685,25 @@ const SCOPE_TIME = DTF({ month: 'short', day: 'numeric', hour: '2-digit', minute
 /* Percentages shown to the operator. NOT for CSS: `style="width:12.3%"` must
    stay locale-independent, because a comma-decimal locale would emit
    `width:12,3%`, which is invalid CSS and silently collapses the element.
-   Every toFixed() left in a style= attribute is deliberate for that reason. */
+   Every toFixed() that remains is either inside a style= attribute or SVG
+   path/geometry — both machine formats, never read by a human. */
 const PCT_0 = NF({ style: 'percent', maximumFractionDigits: 0 });
 const PCT_1 = NF({ style: 'percent', maximumFractionDigits: 1 });
 const PCT_2 = NF({ style: 'percent', maximumFractionDigits: 2 });
 const PCT_3 = NF({ style: 'percent', maximumFractionDigits: 3 });
+/* Trend chips carry an explicit sign; Intl places it per locale. */
+const PCT_SIGNED_0 = NF({ style: 'percent', maximumFractionDigits: 0, signDisplay: 'exceptZero' });
+const PCT_SIGNED_1 = NF({ style: 'percent', maximumFractionDigits: 1, signDisplay: 'exceptZero' });
 /* ratio in 0..1 */
 const pctOf = (r, digits) => (digits >= 3 ? PCT_3 : digits === 2 ? PCT_2 : digits === 1 ? PCT_1 : PCT_0).format(r);
 const NO_VALUE = '–';
+/* Chart X-axis label. Shared by both chart builders so there is exactly one
+   threshold to get wrong, and so the fixture can pin the real one. */
+const axisLabel = (ms, spanMs) => (spanMs > 36e5 * 26 ? DAY_SHORT : TIME_HM).format(ms);
+/* Intl.DateTimeFormat throws RangeError on a non-finite time, where
+   toLocaleString() used to return "Invalid Date". A throw here escapes the
+   template it sits in and blanks a whole panel, so degrade to a placeholder. */
+const at = (fmtr, ms) => (Number.isFinite(ms) ? fmtr.format(ms) : NO_VALUE);
 
 const fmt = n => !isFinite(n) ? NO_VALUE
   : Math.abs(n) >= 1e4 ? NUM_COMPACT.format(n)
@@ -901,9 +919,7 @@ function lineChart(el, series, unitFmt, opts = {}) {
     if (i > 0) g += `<text x="${W-3}" y="${y-4}" text-anchor="end">${unitFmt(v)}</text>`;
   }
   const span = t1 - t0;
-  const tlab = ms => span > 36e5 * 26
-    ? DAY_SHORT.format(ms)
-    : TIME_HM.format(ms);
+  const tlab = ms => axisLabel(ms, span);
   g += `<text x="0" y="${H-4}" fill="${css('--ink-4')}">${tlab(t0)}</text><text x="${W}" y="${H-4}" text-anchor="end" fill="${css('--ink-4')}">${tlab(t1)}</text>`;
   for (const s of live) {
     const d = s.pts.map((p,i) => `${i?'L':'M'}${X(p.t).toFixed(1)},${Y(p.v).toFixed(1)}`).join('');
@@ -926,7 +942,7 @@ function lineChart(el, series, unitFmt, opts = {}) {
     const mx = X(best.t);
     xh.setAttribute('x1', mx); xh.setAttribute('x2', mx);
     let dots = '';
-    let html = `<div class="t">${STAMP.format(best.t)}</div>`;
+    let html = `<div class="t">${at(STAMP, best.t)}</div>`;
     for (const s of live) {
       let p = s.pts[0];
       for (const q of s.pts) if (Math.abs(q.t - best.t) < Math.abs(p.t - best.t)) p = q;
@@ -977,9 +993,7 @@ function stackChart(el, series, unitFmt, opts = {}) {
     if (i > 0) g += `<text x="${W-3}" y="${y-4}" text-anchor="end">${unitFmt(v)}</text>`;
   }
   const span = t1 - t0;
-  const tlab = ms => span > 36e5 * 26
-    ? DAY_SHORT.format(ms)
-    : TIME_HM.format(ms);
+  const tlab = ms => axisLabel(ms, span);
   g += `<text x="0" y="${H-4}" fill="${css('--ink-4')}">${tlab(t0)}</text><text x="${W}" y="${H-4}" text-anchor="end" fill="${css('--ink-4')}">${tlab(t1)}</text>`;
   // Cumulative bands drawn top→bottom: each fills to the baseline, painting
   // over the shorter (lower) bands, so band k occupies [cum(k-1), cum(k)].
@@ -1004,7 +1018,7 @@ function stackChart(el, series, unitFmt, opts = {}) {
     let dots = '';
     for (let k = bands.length - 1; k >= 0; k--)
       dots += `<circle cx="${mx}" cy="${Y(cum[k][bi])}" r="3" fill="${bands[k].color}" stroke="${css('--bg')}" stroke-width="1.5"/>`;
-    let html = `<div class="t">${STAMP.format(ts[bi])}</div>`;
+    let html = `<div class="t">${at(STAMP, ts[bi])}</div>`;
     for (const s of bands)
       html += `<div class="row"><span><i class="sw" style="background:${s.color}"></i>${esc(s.name)}</span><b>${unitFmt(at(s, bi))}</b></div>`;
     html += `<div class="row" style="border-top:1px solid var(--hairline);margin-top:3px;padding-top:4px"><span>total</span><b>${unitFmt(totals[bi])}</b></div>`;
@@ -1130,7 +1144,7 @@ function deltaChip(pts, downIsGood) {
   const d = (b - a) / a * 100;
   if (!isFinite(d) || Math.abs(d) < 0.05) return '';
   const good = downIsGood ? d <= 0 : d >= 0;
-  return `<span class="chip ${good ? 'good' : 'bad'}" title="${t('dashboard.common.kpi.delta_tooltip')}">${d >= 0 ? '+' : ''}${Math.abs(d) >= 10 ? d.toFixed(0) : d.toFixed(1)}%</span>`;
+  return `<span class="chip ${good ? 'good' : 'bad'}" title="${t('dashboard.common.kpi.delta_tooltip')}">${(Math.abs(d) >= 10 ? PCT_SIGNED_0 : PCT_SIGNED_1).format(d / 100)}</span>`;
 }
 /* k: {icon, label, value, sub, delta?, pts?} */
 function kpiCards(el, defs, hero) {
@@ -1289,7 +1303,7 @@ function render() {
   const ttftMS = wgroups('nimproxy_ttft_seconds_sum', 'model'), ttftMC = wgroups('nimproxy_ttft_seconds_count', 'model');
   const tpsMS = wgroups('nimproxy_tokens_per_second_sum', 'model'), tpsMC = wgroups('nimproxy_tokens_per_second_count', 'model');
   const errRate = m => { const e = errByModel.get(m) || 0, all = e + (okByModel.get(m) || 0); return all ? e / all * 100 : NaN; };
-  const errPct = m => { const v = errRate(m); return isFinite(v) ? `${v.toFixed(v ? 1 : 0)}%` : '–'; };
+  const errPct = m => { const v = errRate(m); return isFinite(v) ? pctOf(v / 100, v ? 1 : 0) : NO_VALUE; };
   // Quality maps shared by the model table, finish-reason panel, and scorecard.
   const tpotMS = wgroups('nimproxy_tpot_seconds_sum', 'model'), tpotMC = wgroups('nimproxy_tpot_seconds_count', 'model');
   const finTotal = wgroups('nimproxy_finish_reason_total', 'model');
@@ -1387,11 +1401,11 @@ function renderOverview(c) {
   lineChart($('o-traffic'), [{ name: 'req/min', color: MED, pts: reqPts, area: true }], fmt, { height: 220 });
 
   $('o-rings').innerHTML = '<div class="ringwrap" id="o-ring-cap"></div><div class="ringwrap" id="o-ring-ok"></div>';
-  ringGauge($('o-ring-cap'), capRatio, Math.round(capRatio * 100) + '%', capColor,
+  ringGauge($('o-ring-cap'), capRatio, pctOf(capRatio, 0), capColor,
     'Capacity used', `${fmt(rpmNow)} / ${fmt(capacity)} rpm · ${cfg.lanes} key${cfg.lanes === 1 ? '' : 's'}`);
   const errShare = wreq ? (wreq - wok) / wreq * 100 : 0;
-  ringGauge($('o-ring-ok'), okRatio, wreq ? Math.round(okRatio * 100) + '%' : '–', okColor,
-    'Success rate', `errors ${errShare.toFixed(errShare && errShare < 10 ? 1 : 0)}% · ${fmt(cooldown429)} cooldowns`);
+  ringGauge($('o-ring-ok'), okRatio, wreq ? pctOf(okRatio, 0) : NO_VALUE, okColor,
+    'Success rate', `errors ${pctOf(errShare / 100, errShare && errShare < 10 ? 1 : 0)} · ${fmt(cooldown429)} cooldowns`);
   $('o-health').innerHTML =
     metricRow(t('dashboard.common.row.active_now'), fmt(sum(rows, 'nimproxy_active_requests'))) +
     metricRow(t('dashboard.common.row.queued'), fmt(sum(rows, 'nimproxy_queue_depth'))) +
@@ -1587,13 +1601,13 @@ function renderClients(c) {
   const tile = (label, v, unit) => `<div class="tile"><div class="tlabel">${label}</div><div class="tval">${v}${unit ? `<span class="unit">${unit}</span>` : ''}</div></div>`;
   $('h-kpis').innerHTML =
     tile(t('dashboard.clients.tile.clients'), clients.length) +
-    tile(t('dashboard.clients.tile.streaming_share'), totGen ? Math.round(totStreamT / totGen * 100) + '%' : '–') +
+    tile(t('dashboard.clients.tile.streaming_share'), totGen ? pctOf(totStreamT / totGen, 0) : NO_VALUE) +
     tile(t('dashboard.clients.tile.avg_tools'), oToolsN ? fmt(oTools / oToolsN) : '–') +
     tile(t('dashboard.clients.tile.avg_messages'), oMsgsN ? fmt(oMsgs / oMsgsN) : '–') +
-    tile(t('dashboard.clients.tile.requests_using_tools'), totGen ? Math.round(totToolReq / totGen * 100) + '%' : '–');
+    tile(t('dashboard.clients.tile.requests_using_tools'), totGen ? pctOf(totToolReq / totGen, 0) : NO_VALUE);
   barList($('h-toolint'), clients.map(cl => ({ name: cl, v: toolsAvg(cl), color: clientColor(cl) })), fmt);
   barList($('h-depth'), clients.map(cl => ({ name: cl, v: msgsAvg(cl), color: clientColor(cl) })), fmt);
-  barList($('h-temp'), clients.map(cl => ({ name: cl, v: tempAvg(cl), color: clientColor(cl) })), v => v.toFixed(2));
+  barList($('h-temp'), clients.map(cl => ({ name: cl, v: tempAvg(cl), color: clientColor(cl) })), v => NUM_2DP.format(v));
   barList($('h-streammix'), clients.map(cl => ({ name: cl, v: streamPct(cl), color: clientColor(cl) })), v => Math.round(v) + '%', 100);
   /* requested output budget — avg of the max_tokens the client asked for.
      Hidden until at least one client sent a cap. */
@@ -1845,7 +1859,7 @@ function renderCapacity(c) {
         <span style="font-size:34px;font-weight:600;letter-spacing:-1px;color:${shortRpm > 0 ? 'var(--amber)' : 'var(--ink-1)'}">${fmt(shortRpm)}</span>
         <span style="font:400 12px var(--mono);color:var(--ink-3)">Peak shortfall · rpm</span></div>
       <div style="font:400 11.5px var(--mono);color:var(--ink-25);margin-top:6px">
-        avg ${isFinite(averageUtil) ? Math.round(averageUtil * 100) + '%' : '–'} · peak ${Math.round(peak.rpm / peak.capacity * 100)}%
+        avg ${isFinite(averageUtil) ? pctOf(averageUtil, 0) : NO_VALUE} · peak ${pctOf(peak.rpm / peak.capacity, 0)}
         of capacity at the time${unknownCapacity ? ` · ${unknownCapacity} interval${unknownCapacity === 1 ? '' : 's'} with no capacity data` : ''}
       </div>`;
   }
@@ -2107,8 +2121,8 @@ function renderServer() {
   const ovr = Object.entries(sv.governor.overrides || {});
   const retainedFrom = sv.history.available_from == null
     ? 'No data yet'
-    : STAMP.format(+sv.history.available_from * 1000);
-  const historyBytes = new Intl.NumberFormat().format(+sv.history.file_bytes || 0);
+    : at(STAMP, +sv.history.available_from * 1000);
+  const historyBytes = NUM_GROUPED.format(+sv.history.file_bytes || 0);
   $('setbody').innerHTML = `
     <div class="card mb">
       <h2>API access mode
@@ -2401,8 +2415,8 @@ function presetLabel() {
   return ({ '3600': '1h', '21600': '6h', '86400': '24h', '604800': '7d', '2592000': '30d' })[mode.preset] || '';
 }
 
-const scopeDate = seconds => DAY_SHORT.format(seconds * 1000);
-const scopeTime = seconds => SCOPE_TIME.format(seconds * 1000);
+const scopeDate = seconds => at(DAY_SHORT, seconds * 1000);
+const scopeTime = seconds => at(SCOPE_TIME, seconds * 1000);
 
 function updateScope() {
   if (!rangeData) return;

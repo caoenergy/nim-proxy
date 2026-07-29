@@ -42,12 +42,11 @@ const block = grab(
 );
 const scopeDate = grab(/const scopeDate = [^\n]*\n/, "scopeDate");
 const scopeTime = grab(/const scopeTime = [^\n]*\n/, "scopeTime");
-// Mirrors the two chart axis-label call sites and the hover timestamp, which
-// are inline in the chart builders rather than named functions.
-const axis = `
-const axisLabel = (ms, spanSecs) => spanSecs > 86400 * 2 ? DAY_SHORT.format(ms) : TIME_HM.format(ms);
-const stamp = ms => STAMP.format(ms);
-`;
+// axisLabel and the non-finite guard `at` are real shared definitions inside
+// the formatting block, so nothing here re-implements them. An earlier version
+// hand-wrote an axisLabel whose threshold was wrong in both value and unit, so
+// it pinned the harness rather than the page.
+const axis = "const stamp = ms => at(STAMP, ms);";
 
 // The formatters now read their locale from the shipped catalog, so take it
 // from the same place the page does rather than assuming en-US.
@@ -62,7 +61,7 @@ const preamble = `const I18N = ${JSON.stringify({ locale: catalog.locale })};`;
 const F = {};
 new Function(
   `${preamble}\n${block}\n${scopeDate}\n${scopeTime}\n${axis}\n` +
-    `Object.assign(this, { fmt, secs, ago, scopeDate, scopeTime, axisLabel, stamp });`
+    `Object.assign(this, { fmt, secs, ago, scopeDate, scopeTime, axisLabel, stamp, pctOf });`
 ).call(F);
 
 // Fixed vectors. Chosen to sit on every branch boundary in each function —
@@ -90,13 +89,23 @@ for (const s of DURATIONS) row("secs", s, F.secs(s));
 for (const s of AGES) row("ago", s, F.ago(s));
 for (const t of TIMES) row("scopeDate", t, F.scopeDate(t));
 for (const t of TIMES) row("scopeTime", t, F.scopeTime(t));
-for (const t of TIMES) row("axisLabel.short", t, F.axisLabel(t * 1000, 3600));
-for (const t of TIMES) row("axisLabel.long", t, F.axisLabel(t * 1000, 86400 * 30));
+// Either side of the real 26-hour threshold, in the real unit (ms).
+for (const t of TIMES) row("axisLabel.hours", t, F.axisLabel(t * 1000, 36e5 * 25));
+for (const t of TIMES) row("axisLabel.days", t, F.axisLabel(t * 1000, 36e5 * 27));
 for (const t of TIMES) row("stamp", t, F.stamp(t * 1000));
-// percentages and fixed-precision metrics go through toFixed at 39 sites
-for (const v of [0, 0.5, 1, 9.94, 9.96, 10, 99.99, 100]) {
-  row("pct1", v, v.toFixed(1) + "%");
-  row("pct0", v, v.toFixed(0) + "%");
+
+// Display percentages, exercising the REAL pctOf. These previously called
+// toFixed inside this harness, so they were identical before and after the
+// migration by construction and could not detect a change to pctOf at all.
+for (const r of [0, 0.005, 0.05, 0.5, 0.947, 0.9995, 0.99999, 1]) {
+  for (const digits of [0, 1, 2, 3]) row(`pctOf.${digits}`, r, F.pctOf(r, digits));
+}
+
+// Non-finite input: Intl.DateTimeFormat throws where toLocaleString returned
+// a string, and a throw escapes the template it sits in.
+for (const bad of [NaN, Infinity]) {
+  row("stamp.nonfinite", bad, F.stamp(bad));
+  row("scopeDate.nonfinite", bad, F.scopeDate(bad));
 }
 
 const out = lines.join("\n") + "\n";

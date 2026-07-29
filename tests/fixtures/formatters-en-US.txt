@@ -66,20 +66,20 @@ scopeTime	1751331600	Jul 1, 01:00 AM
 scopeTime	1755216000	Aug 15, 12:00 AM
 scopeTime	1767225600	Jan 1, 12:00 AM
 scopeTime	1767270896	Jan 1, 12:34 PM
-axisLabel.short	0	12:00 AM
-axisLabel.short	1000000000	01:46 AM
-axisLabel.short	1751328000	12:00 AM
-axisLabel.short	1751331600	01:00 AM
-axisLabel.short	1755216000	12:00 AM
-axisLabel.short	1767225600	12:00 AM
-axisLabel.short	1767270896	12:34 PM
-axisLabel.long	0	Jan 1
-axisLabel.long	1000000000	Sep 9
-axisLabel.long	1751328000	Jul 1
-axisLabel.long	1751331600	Jul 1
-axisLabel.long	1755216000	Aug 15
-axisLabel.long	1767225600	Jan 1
-axisLabel.long	1767270896	Jan 1
+axisLabel.hours	0	12:00 AM
+axisLabel.hours	1000000000	01:46 AM
+axisLabel.hours	1751328000	12:00 AM
+axisLabel.hours	1751331600	01:00 AM
+axisLabel.hours	1755216000	12:00 AM
+axisLabel.hours	1767225600	12:00 AM
+axisLabel.hours	1767270896	12:34 PM
+axisLabel.days	0	Jan 1
+axisLabel.days	1000000000	Sep 9
+axisLabel.days	1751328000	Jul 1
+axisLabel.days	1751331600	Jul 1
+axisLabel.days	1755216000	Aug 15
+axisLabel.days	1767225600	Jan 1
+axisLabel.days	1767270896	Jan 1
 stamp	0	1/1/1970, 12:00:00 AM
 stamp	1000000000	9/9/2001, 1:46:40 AM
 stamp	1751328000	7/1/2025, 12:00:00 AM
@@ -87,19 +87,39 @@ stamp	1751331600	7/1/2025, 1:00:00 AM
 stamp	1755216000	8/15/2025, 12:00:00 AM
 stamp	1767225600	1/1/2026, 12:00:00 AM
 stamp	1767270896	1/1/2026, 12:34:56 PM
-pct1	0	0.0%
-pct0	0	0%
-pct1	0.5	0.5%
-pct0	0.5	1%
-pct1	1	1.0%
-pct0	1	1%
-pct1	9.94	9.9%
-pct0	9.94	10%
-pct1	9.96	10.0%
-pct0	9.96	10%
-pct1	10	10.0%
-pct0	10	10%
-pct1	99.99	100.0%
-pct0	99.99	100%
-pct1	100	100.0%
-pct0	100	100%
+pctOf.0	0	0%
+pctOf.1	0	0%
+pctOf.2	0	0%
+pctOf.3	0	0%
+pctOf.0	0.005	1%
+pctOf.1	0.005	0.5%
+pctOf.2	0.005	0.5%
+pctOf.3	0.005	0.5%
+pctOf.0	0.05	5%
+pctOf.1	0.05	5%
+pctOf.2	0.05	5%
+pctOf.3	0.05	5%
+pctOf.0	0.5	50%
+pctOf.1	0.5	50%
+pctOf.2	0.5	50%
+pctOf.3	0.5	50%
+pctOf.0	0.947	95%
+pctOf.1	0.947	94.7%
+pctOf.2	0.947	94.7%
+pctOf.3	0.947	94.7%
+pctOf.0	0.9995	100%
+pctOf.1	0.9995	100%
+pctOf.2	0.9995	99.95%
+pctOf.3	0.9995	99.95%
+pctOf.0	0.99999	100%
+pctOf.1	0.99999	100%
+pctOf.2	0.99999	100%
+pctOf.3	0.99999	99.999%
+pctOf.0	1	100%
+pctOf.1	1	100%
+pctOf.2	1	100%
+pctOf.3	1	100%
+stamp.nonfinite	NaN	–
+scopeDate.nonfinite	NaN	–
+stamp.nonfinite	Infinity	–
+scopeDate.nonfinite	Infinity	–

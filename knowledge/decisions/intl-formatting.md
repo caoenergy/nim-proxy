@@ -44,8 +44,9 @@ Thresholds are deliberately **unchanged**. `Intl`'s own compact notation begins
 at 1,000 (`1K`); this dashboard shows exact counts up to 10,000 because request
 counts in the hundreds are meaningful to an operator and `1.2K` is not.
 
-**CSS percentages are excluded, and this is the important part.** Six
-`toFixed()` calls remain, every one of them inside a `style=` attribute.
+**CSS percentages are excluded, and this is the important part.** The
+`toFixed()` calls that remain are inside `style=` attributes or SVG path
+geometry — both machine formats, never read by a human.
 `style="width:12.3%"` must stay locale-independent: a comma-decimal locale would
 emit `width:12,3%`, which is invalid CSS and silently collapses the element to
 zero width. Display percentages go through `Intl` with `style: 'percent'`;
@@ -58,10 +59,13 @@ days of history.
 
 ## Consequences
 
-- Eleven formatter outputs change in en-US, each recorded in
-  `tests/fixtures/formatters-en-US.txt`. Two are bug fixes (`999999` → `1M`,
-  `1e12` → `1T`), five drop a redundant trailing `.0`, four change the seconds
-  unit from `s` to the locale-correct `sec`, and one gains thousands grouping.
+- Formatter outputs change in en-US; the golden fixture records them. Two are
+  bug fixes (`999999` → `1M`, `1e12` → `1T`), four drop a redundant trailing
+  `.0`, four change the seconds unit from `s` to the locale-correct `sec`, and
+  one gains thousands grouping. Rounding also moves from `Math.round`
+  (ties toward +∞) to Intl's half-expand, so `-100.5` now renders `-101` rather
+  than `-100`; the compact tiers still top out at `T`, so values above `1e15`
+  read `1000T`.
 - `secs()` now reads `1.0 sec` rather than `1.0 s`. Slightly longer, but it is
   what `Intl` considers correct for en-US and it matches the `ms`/`min` forms,
   which already used a space and an abbreviation.
@@ -70,5 +74,15 @@ days of history.
   to run unless `TZ=UTC`. An unpinned fixture would encode whichever machine
   last wrote it.
 - Verified in a second locale: `de-DE` yields `1,2 Mio.`, `1,5 Sek.`, `50 %`
-  with the non-breaking space German uses. That is the whole point of the change
-  and it is now demonstrable rather than assumed.
+  with the non-breaking space German uses. Note the compact tiers are CLDR's,
+  not ours: German has no thousands abbreviation (`12345` → `12.345`) and
+  Japanese uses 万. The "sized for 12.3K" intent behind the ≥1e4 threshold holds
+  for en and fr only.
+- The catalog's `locale` is validated before any formatter is constructed. A
+  malformed tag — the POSIX `en_US` spelling, say — would otherwise throw at
+  module scope, before a single function was defined, leaving the page
+  completely dead rather than mis-formatted. It falls back to `en-US` and logs.
+- `Intl.DateTimeFormat` throws `RangeError` on a non-finite time where
+  `toLocaleString()` returned `"Invalid Date"`. Every date call site goes
+  through a guard, because a throw escapes the template it sits in and blanks a
+  whole panel rather than one label.
