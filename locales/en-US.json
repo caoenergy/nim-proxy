@@ -271,12 +271,12 @@
       "hash": "bd2367b1"
     },
     "dashboard.reliability.pressure.heading": {
-      "en": "Model pressure",
-      "hash": "87550ec5"
+      "en": "Model limits",
+      "hash": "43e77160"
     },
     "dashboard.reliability.pressure.note": {
-      "en": "governor engaged — worker exhaustions & per-model caps",
-      "hash": "3c187458"
+      "en": "worker exhaustions & per-model caps",
+      "hash": "cde0a950"
     },
     "dashboard.capacity.keyutil.heading": {
       "en": "Key utilization",
@@ -468,8 +468,8 @@
       "hash": "0596f708"
     },
     "dashboard.capacity.row.slots_in_use": {
-      "en": "Slots in use",
-      "hash": "c6d01760"
+      "en": "Enabled keys",
+      "hash": "226de726"
     },
     "dashboard.clients.tile.clients": {
       "en": "Clients",

@@ -271,12 +271,12 @@
       "hash": "bd2367b1"
     },
     "dashboard.reliability.pressure.heading": {
-      "en": "[Móđéŀ ƥŕéşşúŕé escam]",
-      "hash": "87550ec5"
+      "en": "[Móđéŀ ŀíɱíŧş esca]",
+      "hash": "43e77160"
     },
     "dashboard.reliability.pressure.note": {
-      "en": "[ǥóṽéŕñóŕ éñǥáǥéđ — ŵóŕķéŕ éxĥáúşŧíóñş & ƥéŕ-ɱóđéŀ çáƥş escamotableescamota]",
-      "hash": "3c187458"
+      "en": "[ŵóŕķéŕ éxĥáúşŧíóñş & ƥéŕ-ɱóđéŀ çáƥş escamotablee]",
+      "hash": "cde0a950"
     },
     "dashboard.capacity.keyutil.heading": {
       "en": "[Ķéŷ úŧíŀíẑáŧíóñ escam]",
@@ -468,8 +468,8 @@
       "hash": "0596f708"
     },
     "dashboard.capacity.row.slots_in_use": {
-      "en": "[Şŀóŧş íñ úşé esca]",
-      "hash": "c6d01760"
+      "en": "[Éñáƀŀéđ ķéŷş esca]",
+      "hash": "226de726"
     },
     "dashboard.clients.tile.clients": {
       "en": "[Çŀíéñŧş es]",

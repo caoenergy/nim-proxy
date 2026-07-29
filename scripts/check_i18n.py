@@ -219,6 +219,9 @@ RETIRED = {
     "rpm free": "Available",
     "rpm total": "Total",
     "Now rpm": "Current rate",
+    "Slots in use": "Enabled keys",
+    "Model pressure": "Model limits",
+    "governor engaged": "(dropped — 'governor' is implementation vocabulary)",
 }
 
 
