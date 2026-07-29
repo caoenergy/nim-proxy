@@ -141,26 +141,26 @@ burns — all from counts and sizes, never message content.
 
 Five persona-aligned tabs, each ordered at-a-glance → trends → detail:
 
-- **Overview** — the one-screen landing: capacity and success-rate ring gauges, request and token sparklines, a health strip, and top models & harnesses.
+- **Overview** — the one-screen landing: capacity and success-rate ring gauges, request and token sparklines, a health strip, and top models & clients.
 - **Models** — ranked model cards, TTFT / generation-speed / inter-token-latency / upstream-latency charts, tokens-per-minute, tool-call volume, truncation and reasoning-share breakdowns, and a head-to-head scorecard.
-- **Clients** — what each agent is *doing*: tool intensity, conversation depth, sampling fingerprint, requested output budget, streaming-vs-buffered mix, and a per-harness leaderboard.
-- **Reliability** — availability against the configured SLO (99.9% by default) with an error budget, requests-by-outcome over time, where time goes (queue / first token / generation), an error taxonomy, an hour-of-day heatmap, and a model-pressure card when the governor engages.
-- **Capacity** — a **Now** saturation bar, historical utilization against the capacity configured at each sample, an exact peak-RPM shortfall, per-lane utilization meters, and 429s-per-minute by lane.
+- **Clients** — what each agent is *doing*: tool intensity, conversation depth, sampling fingerprint, requested output budget, streaming-vs-buffered mix, and a per-client leaderboard.
+- **Reliability** — availability against the configured SLO (99.9% by default) with an error budget, requests-by-outcome over time, a latency breakdown (queue / first token / generation), an error taxonomy, an hour-of-day heatmap, and a model-limits card when the governor engages.
+- **Capacity** — a **Now** saturation bar, historical utilization against the capacity configured at each sample, an exact peak-RPM shortfall, per-key utilization meters, and 429s-per-minute by key.
 
 <div align="center"><img src="docs/assets/dashboard-reliability.png" alt="Reliability tab" width="850"></div>
 
 Every line chart has a hover crosshair with a per-series tooltip; every table is click-to-sort and survives the 3-second live refresh.
 
 **Time ranges & history.** Persisted server history drives every analytical
-tab. The default view follows now across the configured dashboard window
+tab. The default view follows now across the configured default time range
 (30 days by default), so a new server grows naturally from its first sample
 instead of opening on an empty recent slice. The same global selection follows
 you through Overview, Models, Clients, Reliability, and Capacity. Presets
-include 1h/6h/24h/7d/30d and **All retained**; a custom range or the pause
-control freezes the analytical window while current operational values marked
+include 1h/6h/24h/7d/30d and **All time**; a custom range or the pause
+control freezes the analytical time range while current operational values marked
 **Now** keep refreshing. Exact totals do not depend on chart point density.
 
-The dashboard window and data retention are separate Server settings. Both
+The default time range and data retention are separate Server settings. Both
 default to 30 days; retention may be longer than the default view, and `0`
 means unlimited. A finite retention window cannot be shorter than the default
 view. Real history size depends on metric and label cardinality—the old
@@ -169,8 +169,8 @@ your workload.
 
 **Settings.** Everything app-level is managed here: NIM keys (per-key rpm,
 enable/disable), client API keys, the open/keyed API mode, upstream URL,
-limits, default dashboard window, history retention, availability SLO, the
-model-pressure governor, and users. Saves validate, persist, and apply
+limits, default time range, history retention, availability SLO, model
+limits, and users. Saves validate, persist, and apply
 live. The config file itself is read at boot; an out-of-band edit to
 `DATA_DIR/config.json` requires a restart.
 
@@ -209,9 +209,8 @@ not an environment variable consumed by nim-proxy.
 Everything else is a Settings control: NIM keys (per-key rpm, enable/disable,
 ownership), the upstream base URL, client API keys and the open/keyed API
 mode, limits (`max_wait`, `heartbeat`, `stream_idle`, `request_timeout`,
-`models_ttl`, `max_inflight`, `strict_passthrough`), default dashboard
-window, history retention, availability SLO, the model-pressure governor, and
-users & roles.
+`models_ttl`, `max_inflight`, `strict_passthrough`), default time range,
+history retention, availability SLO, model limits, and users & roles.
 
 ## Security & deployment
 

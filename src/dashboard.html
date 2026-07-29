@@ -90,7 +90,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 /* ---------- cards & grids ---------- */
 section[hidden] { display: none; }
 .card { background: var(--card); border: 1px solid var(--card-border); border-radius: 16px; padding: 16px 20px; min-width: 0; }
-.card h2 { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 500; margin: 0 0 10px; color: var(--ink-1); }
+.card h2 { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; font-size: 14px; font-weight: 500; margin: 0 0 10px; color: var(--ink-1); }
 .card h2 .note { font: 400 11.5px var(--mono); color: var(--ink-3); font-weight: 400; }
 .card h2 .hr { margin-left: auto; font: 500 12px var(--mono); color: var(--green-lt); }
 .hic { width: 15px; height: 15px; flex: none; fill: none; stroke: var(--green); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
@@ -323,7 +323,7 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
     <button role="tab" data-tab="settings" aria-selected="false"><span class="nbar"></span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.4"/><path d="M8 1.6v2.1M8 12.3v2.1M1.6 8h2.1M12.3 8h2.1M3.5 3.5L5 5M11 11l1.5 1.5M12.5 3.5L11 5M5 11l-1.5 1.5"/></svg><span class="label">Settings</span></button>
   </nav>
   <div class="foot">
-    <button class="live" id="live" title="Click to freeze/resume the selected window"><span class="dot"></span><span id="liveText">connecting</span></button>
+    <button class="live" id="live" title="Click to freeze/resume the selected time range"><span class="dot"></span><span id="liveText">connecting</span></button>
     <span id="uptime"></span>
     <span id="verinfo"></span>
   </div>
@@ -341,7 +341,7 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
         <button data-range="86400">24h</button>
         <button data-range="604800">7d</button>
         <button data-range="2592000">30d</button>
-        <button data-range="all-retained">All retained</button>
+        <button data-range="all-retained">All time</button>
         <button data-range="custom"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke-width="1.5"><rect x="2" y="3" width="12" height="11" rx="2"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3" stroke-linecap="round"/></svg>Custom</button>
       </div>
     </div>
@@ -372,7 +372,7 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
       </div>
     </div>
     <div class="card mb">
-      <h2><svg class="hic" viewBox="0 0 16 16"><path d="M9 1.5L3 9h4l-1 5.5L13 7H9z"/></svg>Performance <span class="note">median &amp; p95 across the window</span></h2>
+      <h2><svg class="hic" viewBox="0 0 16 16"><path d="M9 1.5L3 9h4l-1 5.5L13 7H9z"/></svg>Performance <span class="note">median &amp; p95 across the time range</span></h2>
       <div class="perf3" id="o-perf"></div>
     </div>
     <div class="grid2">
@@ -381,7 +381,7 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
         <div id="o-topmodels"></div>
       </div>
       <div class="card">
-        <h2><svg class="hic" viewBox="0 0 16 16"><path d="M4 5l-2.5 3L4 11M12 5l2.5 3L12 11M9.5 3l-3 10"/></svg>Top harnesses <span class="note">tokens out</span></h2>
+        <h2><svg class="hic" viewBox="0 0 16 16"><path d="M4 5l-2.5 3L4 11M12 5l2.5 3L12 11M9.5 3l-3 10"/></svg>Top clients <span class="note">tokens out</span></h2>
         <div id="o-topharness"></div>
       </div>
     </div>
@@ -475,7 +475,7 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
       </div>
     </div>
     <div class="card">
-      <h2><svg class="hic" viewBox="0 0 16 16"><path d="M4 5l-2.5 3L4 11M12 5l2.5 3L12 11M9.5 3l-3 10"/></svg>Per harness <span class="note">click a column to sort</span></h2>
+      <h2><svg class="hic" viewBox="0 0 16 16"><path d="M4 5l-2.5 3L4 11M12 5l2.5 3L12 11M9.5 3l-3 10"/></svg>Per client <span class="note">click a column to sort</span></h2>
       <div id="table-harness"></div>
     </div>
   </section>
@@ -551,7 +551,7 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
     </div>
     <div class="grid2">
       <div class="card">
-        <h2>Lane utilization <span class="tag">Now</span></h2>
+        <h2>Key utilization <span class="tag">Now</span></h2>
         <div id="meters"></div>
       </div>
       <div class="card">
@@ -561,7 +561,7 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
       </div>
     </div>
     <div class="card">
-      <h2>Per lane <span class="tag">Now</span><span class="note">click a column to sort</span></h2>
+      <h2>Per key <span class="tag">Now</span><span class="note">click a column to sort</span></h2>
       <div id="table-lanes"></div>
     </div>
   </section>
@@ -780,7 +780,7 @@ function lineChart(el, series, unitFmt, opts = {}) {
   const H = opts.height || 190;
   el.classList.add('chart');
   const live = series.filter(s => s.pts.length > 1);
-  if (!live.length) { el.innerHTML = '<div class="empty">No data in this window</div>'; return; }
+  if (!live.length) { el.innerHTML = '<div class="empty">No data in selected time range</div>'; return; }
   const W = el.clientWidth || 500, PT = 16, PB = 16;
   const t0 = Math.min(...live.map(s => s.pts[0].t));
   const t1 = Math.max(...live.map(s => s.pts[s.pts.length-1].t));
@@ -858,7 +858,7 @@ function stackChart(el, series, unitFmt, opts = {}) {
   const ts = (bands[0] || { pts: [] }).pts.map(p => p.t);
   const at = (s, i) => Math.max(0, s.pts[i] ? s.pts[i].v : 0);
   const totals = ts.map((_, i) => bands.reduce((a, s) => a + at(s, i), 0));
-  if (ts.length < 2 || !totals.some(v => v > 0)) { el.innerHTML = '<div class="empty">No data in this window</div>'; return; }
+  if (ts.length < 2 || !totals.some(v => v > 0)) { el.innerHTML = '<div class="empty">No data in selected time range</div>'; return; }
   const W = el.clientWidth || 500, PT = 16, PB = 16;
   const t0 = ts[0], t1 = ts[ts.length-1];
   let vmax = Math.max(1e-6, ...totals);
@@ -1028,7 +1028,7 @@ function deltaChip(pts, downIsGood) {
   const d = (b - a) / a * 100;
   if (!isFinite(d) || Math.abs(d) < 0.05) return '';
   const good = downIsGood ? d <= 0 : d >= 0;
-  return `<span class="chip ${good ? 'good' : 'bad'}" title="second half of this window vs the first">${d >= 0 ? '+' : ''}${Math.abs(d) >= 10 ? d.toFixed(0) : d.toFixed(1)}%</span>`;
+  return `<span class="chip ${good ? 'good' : 'bad'}" title="second half of this time range vs the first">${d >= 0 ? '+' : ''}${Math.abs(d) >= 10 ? d.toFixed(0) : d.toFixed(1)}%</span>`;
 }
 /* k: {icon, label, value, sub, delta?, pts?} */
 function kpiCards(el, defs, hero) {
@@ -1046,7 +1046,7 @@ const metricRow = (l, v, tone) => `<div class="kv${tone ? ' ' + tone : ''}"><spa
 /* ---------- activity heatmap: weekday x hour, sequential green ramp ---------- */
 const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 function heatmap(el, matrix, vmax) {
-  if (!vmax) { el.innerHTML = '<div class="empty">No data in this window</div>'; return; }
+  if (!vmax) { el.innerHTML = '<div class="empty">No data in selected time range</div>'; return; }
   const CW = 26, CH = 18, GAP = 3, PL = 36, PT = 18;
   const W = PL + 24*(CW+GAP), H = PT + 7*(CH+GAP);
   let g = '';
@@ -1116,7 +1116,7 @@ function chipHtml(pub) {
   if (!pub.slug) return `<span class="logo" style="background:${pub.color}">${initials}</span>`;
   return `<span class="logo" style="background:rgba(255,255,255,0.05)"><img alt="" src="https://unpkg.com/@lobehub/icons-static-svg@latest/icons/${pub.slug}.svg" onerror="${mono}"></span>`;
 }
-/* known-harness colors, stable hash-to-hue for the rest */
+/* known-client colors, stable hash-to-hue for the rest */
 const CLIENT_COLORS = {
   'claude-code': '#C15F3C', 'aider': '#2E7D5B', 'opencode': '#5A6150', 'cline': '#4D6BFE',
   'continue': '#615CED', 'cursor': '#2E96FF', 'roo-code': '#EE6002', 'zed': '#16B8C0',
@@ -1149,7 +1149,7 @@ const TITLES = { overview: 'Overview', models: 'Models', clients: 'Clients', rel
 function render() {
   if (!samples.length) return;
   const last = samples[samples.length-1], rows = nowRows;
-  const windowLabel = 'selected window';
+  const windowLabel = 'selected time range';
 
   /* ----- shared per-model aggregates ----- */
   const ptok = wgroups('nimproxy_prompt_tokens_total', 'model');
@@ -1206,7 +1206,7 @@ function render() {
   const okRatio = wreq ? wok/wreq : 1;
   const okColor = okRatio < 0.9 ? css('--red') : okRatio < 0.99 ? css('--amber') : css('--green');
 
-  /* ----- shared client / harness aggregates ----- */
+  /* ----- shared client aggregates ----- */
   const cReq = wgroups('nimproxy_requests_total', 'client');
   const cP = wgroups('nimproxy_prompt_tokens_total', 'client');
   const cC = wgroups('nimproxy_completion_tokens_total', 'client');
@@ -1242,7 +1242,7 @@ function render() {
   (RENDERERS[activeTab] || renderOverview)(c);
 }
 
-/* client monogram chip (harness leaderboards) */
+/* client monogram chip (client leaderboards) */
 const clientChip = cl =>
   `<span class="logo" style="background:${clientColor(cl)}">${esc(initialsOf(String(cl)))}</span>`;
 
@@ -1269,16 +1269,17 @@ function renderOverview(c) {
 
   $('o-rings').innerHTML = '<div class="ringwrap" id="o-ring-cap"></div><div class="ringwrap" id="o-ring-ok"></div>';
   ringGauge($('o-ring-cap'), capRatio, Math.round(capRatio * 100) + '%', capColor,
-    'Capacity used · Now', `${fmt(rpmNow)} / ${fmt(capacity)} rpm · ${cfg.lanes} lane${cfg.lanes === 1 ? '' : 's'}`);
+    'Capacity used', `${fmt(rpmNow)} / ${fmt(capacity)} rpm · ${cfg.lanes} key${cfg.lanes === 1 ? '' : 's'}`);
   const errShare = wreq ? (wreq - wok) / wreq * 100 : 0;
   ringGauge($('o-ring-ok'), okRatio, wreq ? Math.round(okRatio * 100) + '%' : '–', okColor,
     'Success rate', `errors ${errShare.toFixed(errShare && errShare < 10 ? 1 : 0)}% · ${fmt(cooldown429)} cooldowns`);
-  const sul = shed + unauth + logins;
   $('o-health').innerHTML =
     metricRow('Active now', fmt(sum(rows, 'nimproxy_active_requests'))) +
     metricRow('Queued', fmt(sum(rows, 'nimproxy_queue_depth'))) +
     metricRow('Rate-limit cooldowns', fmt(cooldown429), cooldown429 > 0 ? 'warn' : 'zero') +
-    metricRow('Shed · 401 · failed logins', `${fmt(shed)} · ${fmt(unauth)} · ${fmt(logins)}`, sul > 0 ? 'crit' : 'zero');
+    metricRow('Dropped', fmt(shed), shed > 0 ? 'crit' : 'zero') +
+    metricRow('Unauthorized', fmt(unauth), unauth > 0 ? 'crit' : 'zero') +
+    metricRow('Failed logins', fmt(logins), logins > 0 ? 'crit' : 'zero');
 
   const perfBlock = (label, note, p50, p95, fmtV) => {
     const scale = Math.max(isFinite(p50) ? p50 : 0, isFinite(p95) ? p95 : 0, 1e-9) * 1.25;
@@ -1367,10 +1368,10 @@ function renderModels(c) {
         cells: [`<i class="sw" style="background:${publisher(m).color}"></i>${esc(prettyName(m))}`,
           ...shares.map((v, i) => `<span class="${v >= 0.5 ? FINISH[i][2] : 'dim'}">${pct(v)}</span>`)],
       };
-    }), { defaultIdx: 1, maxH: 300, minW: 460, empty: 'No completions yet' });
+    }), { defaultIdx: 1, maxH: 300, minW: 460, empty: 'No completed requests yet' });
 
   const reasoningModels = models.filter(m => (reasoningByModel.get(m) || 0) > 0);
-  if (!reasoningModels.length) $('meters-reasoning').innerHTML = '<div class="empty">No reasoning-token usage seen</div>';
+  if (!reasoningModels.length) $('meters-reasoning').innerHTML = '<div class="empty">No reasoning tokens</div>';
   else barList($('meters-reasoning'),
     reasoningModels.map(m => ({ name: prettyName(m), v: reasonPct(m), color: publisher(m).color })), pct);
 
@@ -1394,7 +1395,7 @@ function renderModels(c) {
   sortTable($('compare-scorecard'), 'scorecard', [
     { label: 'Model', align: 'l', str: true },
     { label: 'Requests', best: 'max' }, { label: 'TTFT', best: 'min' }, { label: 'tok/s', best: 'max' },
-    { label: 'TPOT', best: 'min' }, { label: 'Avg reply', best: 'max' }, { label: 'Truncated', best: 'min' },
+    { label: 'TPOT', best: 'min' }, { label: 'Avg response', best: 'max' }, { label: 'Truncated', best: 'min' },
     { label: 'Reasoning', best: 'min' }, { label: 'Errors', best: 'min' },
   ], cmp.map(m => ({
     vals: [prettyName(m), reqModels.get(m) || 0, avgTtft(m), avgTps(m), tpotAvg(m), avgReply(m), truncPct(m), reasonPct(m), errRate(m)],
@@ -1428,7 +1429,7 @@ function renderModels(c) {
   $('m-tablecount').textContent = models.length ? `${models.length} model${models.length === 1 ? '' : 's'} · click a column to sort` : '';
   sortTable($('table-models'), 'models', [
     { label: 'Model', align: 'l', str: true }, { label: 'Requests' }, { label: 'Tokens out' },
-    { label: 'Avg TTFT' }, { label: 'Avg tok/s' }, { label: 'TPOT' }, { label: 'Avg reply' },
+    { label: 'Avg TTFT' }, { label: 'Avg tok/s' }, { label: 'TPOT' }, { label: 'Avg response' },
     { label: 'Truncated' }, { label: 'Reasoning' }, { label: 'Errors' },
   ], models.map(m => {
     const ct = ctok.get(m) || 0, ok = okByModel.get(m) || 0, e = errRate(m);
@@ -1462,11 +1463,11 @@ function renderClients(c) {
   const oMsgs = wsum('nimproxy_request_messages_sum'), oMsgsN = wsum('nimproxy_request_messages_count');
   const tile = (label, v, unit) => `<div class="tile"><div class="tlabel">${label}</div><div class="tval">${v}${unit ? `<span class="unit">${unit}</span>` : ''}</div></div>`;
   $('h-kpis').innerHTML =
-    tile('Harnesses', clients.length) +
+    tile('Clients', clients.length) +
     tile('Streaming share', totGen ? Math.round(totStreamT / totGen * 100) + '%' : '–') +
     tile('Avg tools / request', oToolsN ? fmt(oTools / oToolsN) : '–') +
     tile('Avg messages / request', oMsgsN ? fmt(oMsgs / oMsgsN) : '–') +
-    tile('Tool-using requests', totGen ? Math.round(totToolReq / totGen * 100) + '%' : '–');
+    tile('Requests using tools', totGen ? Math.round(totToolReq / totGen * 100) + '%' : '–');
   barList($('h-toolint'), clients.map(cl => ({ name: cl, v: toolsAvg(cl), color: clientColor(cl) })), fmt);
   barList($('h-depth'), clients.map(cl => ({ name: cl, v: msgsAvg(cl), color: clientColor(cl) })), fmt);
   barList($('h-temp'), clients.map(cl => ({ name: cl, v: tempAvg(cl), color: clientColor(cl) })), v => v.toFixed(2));
@@ -1480,7 +1481,7 @@ function renderClients(c) {
   if (maxTokClients.length)
     barList($('h-maxtok'), maxTokClients.map(cl => ({ name: cl, v: maxTokAvg(cl), color: clientColor(cl) })), fmt);
   sortTable($('table-harness'), 'harness', [
-    { label: 'Harness', align: 'l', str: true }, { label: 'Requests' }, { label: 'Tokens out' },
+    { label: 'Client', align: 'l', str: true }, { label: 'Requests' }, { label: 'Tokens out' },
     { label: 'Tools/req' }, { label: 'Msgs/req' }, { label: 'Streaming' },
   ], clients.map(cl => ({
     vals: [cl, cReq.get(cl) || 0, cC.get(cl) || 0, toolsAvg(cl), msgsAvg(cl), streamPct(cl)],
@@ -1523,7 +1524,7 @@ function renderReliability(c) {
   /* hero: where time goes (median-ish composition from windowed averages) */
   const qw = qwN ? qwS / qwN : 0, ttft = ttftN ? ttftS / ttftN : NaN, up = upN ? upS / upN : NaN;
   if (!upN) {
-    $('r-time').innerHTML = `<div class="hlabel">Where time goes <span class="note">avg request, end to end</span></div><div class="empty">No completed requests yet</div>`;
+    $('r-time').innerHTML = `<div class="hlabel">Latency breakdown <span class="note">avg end-to-end</span></div><div class="empty">No completed requests yet</div>`;
   } else {
     const gen = Math.max(0, up - (isFinite(ttft) ? ttft : 0));
     const segs = [
@@ -1533,8 +1534,8 @@ function renderReliability(c) {
     ].filter(s => s.v > 0);
     const tot = segs.reduce((a, s) => a + s.v, 0) || 1;
     $('r-time').innerHTML =
-      `<div style="display:flex;align-items:baseline;gap:10px"><span class="hlabel">Where time goes</span>
-      <span class="note" style="font:400 10px var(--mono);color:var(--ink-3)">avg request, end to end</span>
+      `<div style="display:flex;align-items:baseline;gap:10px"><span class="hlabel">Latency breakdown</span>
+      <span class="note" style="font:400 10px var(--mono);color:var(--ink-3)">avg end-to-end</span>
       <span style="margin-left:auto;font-size:22px;font-weight:600;letter-spacing:-0.5px">${secs(tot)}</span></div>
       <div class="segbar" style="height:16px;margin:16px 0 12px">${segs.map(s => `<div style="width:${(s.v / tot * 100).toFixed(1)}%;background:${s.color}"></div>`).join('')}</div>
       <div class="seglegend">${segs.map(s => `<div class="sl"><span class="sw" style="background:${s.color}"></span><div><div class="sll">${s.label}</div><div class="slv">${secs(s.v)}</div></div></div>`).join('')}</div>`;
@@ -1621,7 +1622,7 @@ function renderReliability(c) {
   const pcard = $('card-pressure');
   pcard.hidden = !(exhausted > 0 || govLimits.length);
   if (!pcard.hidden) {
-    lineChart($('chart-exhaust'), [{ name: 'exhaustions/min', color: css('--amber'),
+    lineChart($('chart-exhaust'), [{ name: 'Capacity errors/min', color: css('--amber'),
       pts: rateSeries(s => sum(s.rows, 'nimproxy_worker_exhausted_total')), area: 'url(#gMuted)' }], fmt, { height: 130 });
     const inflight = groups(rows, 'nimproxy_model_inflight', 'model');
     barList($('pressure-bars'), govLimits.map(([m, cap]) => ({
@@ -1646,12 +1647,12 @@ function renderReliability(c) {
     bad.map(([s, n]) => ({
       vals: [reason(s), n, n / totReq * 100],
       cells: [esc(reason(s)), fmt(n), (n / totReq * 100).toFixed(1) + '%'],
-    })), { defaultIdx: 1, maxH: 240, empty: 'All requests succeeded in this window' });
+    })), { defaultIdx: 1, maxH: 240, empty: 'No errors in this time range' });
 
   $('table-reliability').innerHTML =
     metricRow('Active now', fmt(act)) +
     metricRow('Queued', fmt(que)) +
-    metricRow('Shed (overload 503)', fmt(shed), shed > 0 ? 'crit' : 'zero') +
+    metricRow('Dropped (overload 503)', fmt(shed), shed > 0 ? 'crit' : 'zero') +
     metricRow('Rate-limit cooldowns', fmt(cooldown429), cooldown429 > 0 ? 'warn' : 'zero') +
     metricRow('Upstream error cooldowns', fmt(cooldownOther), cooldownOther > 0 ? 'warn' : 'zero') +
     metricRow('Unauthorized (401)', fmt(unauth), unauth > 0 ? 'crit' : 'zero') +
@@ -1662,7 +1663,7 @@ function renderReliability(c) {
   $('table-reqtypes').innerHTML =
     metricRow('Streaming', `${fmt(totStreamT)}${totGen ? ` (${Math.round(totStreamT / totGen * 100)}%)` : ''}`) +
     metricRow('Buffered', `${fmt(totStreamF)}${totGen ? ` (${Math.round(totStreamF / totGen * 100)}%)` : ''}`) +
-    metricRow('Tool-offering', `${fmt(totToolReq)}${totGen ? ` (${Math.round(totToolReq / totGen * 100)}%)` : ''}`) +
+    metricRow('Requests with tools', `${fmt(totToolReq)}${totGen ? ` (${Math.round(totToolReq / totGen * 100)}%)` : ''}`) +
     metricRow('JSON mode', fmt(jsonMode)) +
     metricRow('Tool choice', tcStr);
 
@@ -1686,25 +1687,25 @@ function renderCapacity(c) {
   const headroom = Math.max(0, capacity - rpmNow);
   $('k-sat').innerHTML =
     `<div style="display:flex;align-items:baseline;gap:10px"><span class="hlabel">Saturation</span><span class="tag">Now</span>
-    <span class="note" style="font:400 10px var(--mono);color:var(--ink-3)">current load vs current aggregate capacity</span>
+    <span class="note" style="font:400 10px var(--mono);color:var(--ink-3)">current load vs total capacity</span>
     <span style="margin-left:auto;font-size:30px;font-weight:600;letter-spacing:-1px;color:${capColor}">${Math.round(satPct * 100)}%</span></div>
     <div style="position:relative;height:20px;background:var(--track);border-radius:6px;overflow:hidden;margin:16px 0 8px">
       <div style="position:absolute;inset:0;width:${(satPct * 100).toFixed(1)}%;background:linear-gradient(90deg,var(--green-dk),var(--green));border-radius:6px"></div>
     </div>
     <div style="display:flex;justify-content:space-between;font:400 11px var(--mono);color:var(--ink-3)">
       <span style="color:var(--ink-2)">${fmt(rpmNow)} / ${fmt(capacity)} rpm</span>
-      <span>${cfg.lanes} enabled lane${cfg.lanes === 1 ? '' : 's'}</span>
-      <span style="color:var(--green-lt)">${fmt(headroom)} rpm free</span>
+      <span>${cfg.lanes} enabled key${cfg.lanes === 1 ? '' : 's'}</span>
+      <span style="color:var(--green-lt)">${fmt(headroom)} rpm available</span>
     </div>`;
 
-  /* Historical comparisons use each bucket's contemporaneous capacity.
+  /* Historical comparisons use each bucket's capacity at the time.
      Legacy buckets without metadata never inherit today's configuration. */
   const knownCapacity = capacityPoints.filter(point => point.capacity != null);
   const unknownCapacity = capacityPoints.length - knownCapacity.length;
   if (!knownCapacity.length) {
     $('k-prov').innerHTML =
-      `<div class="hlabel">Historical provisioning</div>
-      <div class="empty">Capacity unavailable for selected legacy intervals</div>`;
+      `<div class="hlabel">Capacity history</div>
+      <div class="empty">No capacity data for this time range</div>`;
   } else {
     const weightedSeconds = knownCapacity.reduce((n, point) => n + point.duration, 0);
     const averageUtil = weightedSeconds
@@ -1716,13 +1717,13 @@ function renderCapacity(c) {
       point.rpm - point.capacity > best.rpm - best.capacity ? point : best);
     const shortRpm = Math.max(0, Math.ceil(shortfall.rpm - shortfall.capacity));
     $('k-prov').innerHTML =
-      `<div class="hlabel">Historical provisioning</div>
+      `<div class="hlabel">Capacity history</div>
       <div style="display:flex;align-items:baseline;gap:8px;margin-top:12px">
         <span style="font-size:34px;font-weight:600;letter-spacing:-1px;color:${shortRpm > 0 ? 'var(--amber)' : 'var(--ink-1)'}">${fmt(shortRpm)}</span>
-        <span style="font:400 12px var(--mono);color:var(--ink-3)">rpm short at peak</span></div>
+        <span style="font:400 12px var(--mono);color:var(--ink-3)">Peak shortfall · rpm</span></div>
       <div style="font:400 11.5px var(--mono);color:var(--ink-25);margin-top:6px">
         avg ${isFinite(averageUtil) ? Math.round(averageUtil * 100) + '%' : '–'} · peak ${Math.round(peak.rpm / peak.capacity * 100)}%
-        vs contemporaneous capacity${unknownCapacity ? ` · ${unknownCapacity} legacy interval${unknownCapacity === 1 ? '' : 's'} unavailable` : ''}
+        of capacity at the time${unknownCapacity ? ` · ${unknownCapacity} interval${unknownCapacity === 1 ? '' : 's'} with no capacity data` : ''}
       </div>`;
   }
 
@@ -1732,10 +1733,10 @@ function renderCapacity(c) {
   const stickyTxt = sticky + spill ? Math.round(sticky / (sticky + spill) * 100) + '%' : '–';
   const prow = (l, v, color) => `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0"><span style="font-size:12.5px;color:var(--ink-2)">${l}</span><span style="font:600 15px var(--mono);color:${color || 'var(--ink-1)'}">${v}</span></div>`;
   $('k-pressure').innerHTML =
-    `<div class="hlabel" style="margin-bottom:12px">Rate-limit pressure</div>` +
-    prow('429s this window', fmt(cooldown429), cooldown429 > 0 ? 'var(--amber)' : 'var(--ink-3)') +
-    prow('Conversation stickiness', stickyTxt) +
-    prow('Lane slots · Now', cfg.lanes);
+    `<div class="hlabel" style="margin-bottom:12px">Throttling</div>` +
+    prow('Rate limited (429)', fmt(cooldown429), cooldown429 > 0 ? 'var(--amber)' : 'var(--ink-3)') +
+    prow('Session affinity', stickyTxt) +
+    prow('Slots in use', cfg.lanes);
 
   /* Current per-slot utilization comes from adjacent `/now` polls. Selected
      window counts remain selected-window values; neither domain is subtracted
@@ -1748,11 +1749,11 @@ function renderCapacity(c) {
   const lanes = Array.from({ length: cfg.lanes }, (_, i) => {
     const k = String(i);
     const currentRpm = nowLaneRates.get(k) || 0;
-    return { i, name: `Lane slot ${i + 1}`, cur: laneWindow.get(k) || 0, currentRpm,
+    return { i, name: `Slot ${i + 1}`, cur: laneWindow.get(k) || 0, currentRpm,
       util: Math.min(1, currentRpm / Math.max(1, laneRpm(i))),
       b429: lane429.get(k) || 0, bOther: laneOther.get(k) || 0 };
   });
-  if (!lanes.length) $('meters').innerHTML = '<div class="empty">No lanes configured</div>';
+  if (!lanes.length) $('meters').innerHTML = '<div class="empty">No keys configured</div>';
   else barList($('meters'), lanes.map(l => ({
     name: l.name, v: l.util * 100, color: l.util >= 0.9 ? css('--amber') : laneColor(l.i),
   })), v => Math.round(v) + '%', 100);
@@ -1765,15 +1766,15 @@ function renderCapacity(c) {
   legend($('legend-cooldowns'), cooldownSeries);
 
   sortTable($('table-lanes'), 'lanes', [
-    { label: 'Lane', align: 'l', str: true }, { label: 'Requests' }, { label: 'Share' },
-    { label: 'Now rpm' }, { label: '429s' }, { label: 'Upstream error cooldowns' },
+    { label: 'Key', align: 'l', str: true }, { label: 'Requests' }, { label: 'Share' },
+    { label: 'Current rate' }, { label: '429s' }, { label: 'Upstream error cooldowns' },
   ], lanes.map(l => ({
     vals: [l.name, l.cur, l.cur / totalLane * 100, l.currentRpm, l.b429, l.bOther],
     cells: [`<i class="sw" style="background:${laneColor(l.i)}"></i>${esc(l.name)}`,
       fmt(l.cur), (l.cur / totalLane * 100).toFixed(0) + '%', `${fmt(l.currentRpm)} / ${laneRpm(l.i)}`,
       `<span class="${l.b429 ? 'warnc' : 'dim'}">${fmt(l.b429)}</span>`,
       `<span class="${l.bOther ? 'critc' : 'dim'}">${fmt(l.bOther)}</span>`],
-  })), { defaultIdx: 1, maxH: 360, minW: 560, empty: 'No lanes configured' });
+  })), { defaultIdx: 1, maxH: 360, minW: 560, empty: 'No keys configured' });
 }
 
 /* ===== settings — config-driven, not metrics-driven: fetched from
@@ -1785,7 +1786,7 @@ let SET = null, setSub = 'access';
 async function sPost(path, body) {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   let j = {}; try { j = await r.json(); } catch {}
-  if (!r.ok || j.ok === false) throw new Error((j.error && j.error.message) || j.error || `request failed (${r.status})`);
+  if (!r.ok || j.ok === false) throw new Error((j.error && j.error.message) || j.error || `Request failed (${r.status})`);
   return j;
 }
 /* inline feedback next to the control that caused it (textContent — never markup) */
@@ -1827,7 +1828,7 @@ function keyState(k) {
   if (k.in_window != null) return { text: `${+k.in_window} / ${+k.rpm} in window`, cls: 'kstate' };
   return { text: 'unassigned', cls: 'kstate dim' };
 }
-const poolNote = () => `${+SET.pool.enabled} enabled in pool · ${+SET.pool.capacity_rpm} rpm total`;
+const poolNote = () => `${+SET.pool.enabled} enabled in pool · Total ${+SET.pool.capacity_rpm} rpm`;
 const clampInt = (v, lo, hi, dflt) => { const n = Math.round(+v); return isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt; };
 
 async function copyText(text, btn) {
@@ -1860,7 +1861,7 @@ function renderAccess() {
     return `<div class="krow${k.enabled ? '' : ' koff'}">
       <div style="min-width:0">
         <div class="kmask">nvapi-••••${esc(k.last4)}${ownerChip(k.owner)}</div>
-        <div class="kmeta">fp ${esc(String(k.fingerprint).slice(0, 8))} · ${k.lane != null ? `lane ${+k.lane}` : k.enabled ? 'unassigned' : 'off'}</div>
+        <div class="kmeta">fp ${esc(String(k.fingerprint).slice(0, 8))} · ${k.lane != null ? `slot ${+k.lane + 1}` : k.enabled ? 'unassigned' : 'off'}</div>
       </div>
       <span class="${st.cls}" data-ksfp="${esc(k.fingerprint)}">${esc(st.text)}</span>
       <span class="rpmwrap"><input class="sin num" type="number" min="1" max="10000" value="${+k.rpm}" data-rpm="${i}"><span class="unitl">rpm</span></span>
@@ -1891,7 +1892,7 @@ function renderAccess() {
       <div class="serr" id="nk-err"></div>
     </div>
     <div class="card mb">
-      <h2>${admin ? 'Client API keys' : 'My API keys'} <span class="note">bearer tokens your harnesses use</span></h2>
+      <h2>${admin ? 'Client API keys' : 'My API keys'} <span class="note">bearer tokens your clients use</span></h2>
       <div>${ckRows || '<div class="empty">No client keys yet</div>'}</div>
       <div class="addrow">
         <input id="ck-name" class="sin" style="flex:1;min-width:200px" placeholder="name this key, e.g. laptop-cli" maxlength="64" autocomplete="off" spellcheck="false">
@@ -1908,8 +1909,8 @@ function renderAccess() {
         </div>
         <div class="conbox">
           <div class="slabel">API access mode</div>
-          <div class="kmask" style="color:${SET.mode === 'keyed' ? 'var(--green-lt)' : 'var(--amber-lt)'}">● ${SET.mode === 'keyed' ? 'Keyed — bearer required' : 'Open — no key needed'}</div>
-          <div class="kmeta" style="margin-top:4px">${SET.mode === 'keyed' ? 'harnesses authenticate with a client API key' : 'anyone who can reach /v1 can use the pool'}</div>
+          <div class="kmask" style="color:${SET.mode === 'keyed' ? 'var(--green-lt)' : 'var(--amber-lt)'}">● ${SET.mode === 'keyed' ? 'API key required' : 'Open — no authentication'}</div>
+          <div class="kmeta" style="margin-top:4px">${SET.mode === 'keyed' ? 'clients authenticate with a client API key' : 'anyone who can reach /v1 can use the pool'}</div>
         </div>
       </div>
     </div>`;
@@ -1945,7 +1946,7 @@ function renderAccess() {
     $('nk-add').disabled = true; $('nk-add').textContent = 'Validating…';
     try {
       const v = await sPost('/api/settings/validate-key', { key });
-      note('nk-err', `✓ ${Array.isArray(v.models) ? v.models.length : +v.models} models — adding…`, true);
+      note('nk-err', `✓ ${Array.isArray(v.models) ? v.models.length : +v.models} models · Adding…`, true);
       await addKey();
       return;
     } catch (e) {
@@ -1960,7 +1961,7 @@ function renderAccess() {
   });
   for (const el of body.querySelectorAll('[data-ckdel]')) el.addEventListener('click', async () => {
     const ck = SET.client_keys[+el.dataset.ckdel];
-    if (!confirm(`Revoke "${ck.name}"? Harnesses using it stop working immediately.`)) return;
+    if (!confirm(`Revoke "${ck.name}"? Clients using it stop working immediately.`)) return;
     try { await sPost('/api/settings/clients', { remove: ck.name }); await loadSettings(); }
     catch (e) { note('ck-err', e.message); }
   });
@@ -1982,18 +1983,18 @@ function renderServer() {
     <span class="rpmwrap" style="display:flex"><input id="${id}" class="sin" style="width:100%;text-align:right" type="number" min="0"${step ? ` step="${step}"` : ''} value="${+val}">${unit ? `<span class="unitl">${unit}</span>` : ''}</span></div>`;
   const ovr = Object.entries(sv.governor.overrides || {});
   const retainedFrom = sv.history.available_from == null
-    ? 'No retained snapshots yet'
+    ? 'No data yet'
     : new Date(+sv.history.available_from * 1000).toLocaleString();
   const historyBytes = new Intl.NumberFormat().format(+sv.history.file_bytes || 0);
   $('setbody').innerHTML = `
     <div class="card mb">
       <h2>API access mode
         <span class="pills" style="margin-left:auto">
-          <button data-mode="open" aria-pressed="${SET.mode === 'open'}">Open</button>
-          <button data-mode="keyed" aria-pressed="${SET.mode === 'keyed'}">Keyed</button>
+          <button data-mode="open" aria-pressed="${SET.mode === 'open'}">Open (no authentication)</button>
+          <button data-mode="keyed" aria-pressed="${SET.mode === 'keyed'}">API key required</button>
         </span></h2>
-      <p class="shint">Controls <b>/v1</b> harness calls only. <b>Keyed</b> requires a bearer token; <b>Open</b> accepts anyone who can reach /v1 — trusted networks only.</p>
-      ${SET.mode === 'keyed' && !SET.client_keys.length ? '<p class="shint" style="color:var(--amber-lt)">Keyed mode with no client keys locks every harness out — generate one under Access &amp; keys.</p>' : ''}
+      <p class="shint">Controls <b>/v1</b> client calls only. <b>API key required</b> needs a bearer token; <b>Open</b> accepts anyone who can reach /v1 — trusted networks only.</p>
+      ${SET.mode === 'keyed' && !SET.client_keys.length ? '<p class="shint" style="color:var(--amber-lt)">Requiring an API key with no client keys locks every client out — generate one under Access &amp; keys.</p>' : ''}
       <div class="serr" id="mode-err"></div>
     </div>
     <div class="card mb">
@@ -2015,13 +2016,13 @@ function renderServer() {
       <div class="serr" id="limits-err"></div>
     </div>
     <div class="card mb">
-      <h2>Model-pressure governor
+      <h2>Model limits
         <span style="margin-left:auto;display:inline-flex;align-items:center;gap:8px"><span class="kmeta">adaptive</span>
         <button class="tog" role="switch" id="gov-tog" aria-checked="${!!sv.governor.enabled}"></button></span></h2>
       <p class="shint">Absorbs NIM worker-exhaustion per model without cooling down keys. Each model self-tunes: engages on the first exhaustion, climbs while stable, dissolves after a long clean stretch. Set an override only if you know a model's ceiling.</p>
       <div>${ovr.map(([m, cap], i) =>
         `<span class="ochip"><span title="${esc(m)}">${esc(m)}</span><b>${+cap} max</b><button data-govdel="${i}" title="Remove override">×</button></span>`).join('')
-        || '<span class="kmeta">no overrides — fully adaptive</span>'}</div>
+        || '<span class="kmeta">No overrides set</span>'}</div>
       <div class="addrow">
         <input id="gov-model" class="sin" style="flex:1;min-width:200px" placeholder="model id, e.g. moonshotai/kimi-k2.5" autocomplete="off" spellcheck="false">
         <span class="rpmwrap"><input id="gov-cap" class="sin num" type="number" min="1" max="10000" value="8"><span class="unitl">max</span></span>
@@ -2032,7 +2033,7 @@ function renderServer() {
     <div class="card">
       <h2>History &amp; dashboard <button class="pbtn" id="save-history" style="margin-left:auto">Save</button></h2>
       <div class="limgrid" style="margin-top:6px">
-        <div><div class="slabel">Default dashboard window</div>
+        <div><div class="slabel">Default time range</div>
           <span class="rpmwrap" style="display:flex"><input id="sv-default-days" class="sin" style="width:100%;text-align:right" type="number" min="1" step="1" value="${+sv.dashboard.default_window_days}"><span class="unitl">days</span></span></div>
         <div><div class="slabel">History retention · 0 = unlimited</div>
           <span class="rpmwrap" style="display:flex"><input id="sv-retention-days" class="sin" style="width:100%;text-align:right" type="number" min="0" step="1" value="${+sv.history.days}"><span class="unitl">days</span></span></div>
@@ -2040,8 +2041,8 @@ function renderServer() {
           <span class="rpmwrap" style="display:flex"><input id="sv-slo" class="sin" style="width:100%;text-align:right" type="number" min="0.1" max="100" step="0.1" value="${+sv.dashboard.slo_target_percent}"><span class="unitl">%</span></span></div>
       </div>
       <div class="congrid" style="margin-top:16px">
-        <div class="conbox"><div class="slabel">Earliest retained snapshot</div><div class="kmeta" style="display:block">${esc(retainedFrom)}</div></div>
-        <div class="conbox"><div class="slabel">History file</div><div class="kmeta" style="display:block">${esc(historyBytes)} bytes</div></div>
+        <div class="conbox"><div class="slabel">Oldest data point</div><div class="kmeta" style="display:block">${esc(retainedFrom)}</div></div>
+        <div class="conbox"><div class="slabel">Data file</div><div class="kmeta" style="display:block">${esc(historyBytes)} bytes</div></div>
       </div>
       ${sv.history.compaction_pending ? '<p class="shint" style="color:var(--amber-lt)">compaction pending</p>' : ''}
       <div class="serr" id="history-err"></div>
@@ -2091,7 +2092,7 @@ function renderServer() {
     const retention = Math.round(+$('sv-retention-days').value);
     const slo = +$('sv-slo').value;
     if (!isFinite(defaultDays) || defaultDays < 1)
-      return note('history-err', 'Default dashboard window must be at least 1 day.');
+      return note('history-err', 'Default time range must be at least 1 day.');
     if (!isFinite(retention) || retention < 0)
       return note('history-err', 'History retention must be 0 or more days.');
     if (!isFinite(slo) || slo <= 0 || slo > 100)
@@ -2126,7 +2127,7 @@ function renderUsers() {
       : `<span class="note" title="The superuser changes its own password in Account settings">self-managed</span>`}
   </div>`).join('');
   $('setbody').innerHTML = `<div class="card">
-    <h2>Users <span class="note">deleting a user pulls their NIM keys from the pool &amp; stops their harnesses</span></h2>
+    <h2>Users <span class="note">deleting a user pulls their NIM keys from the pool &amp; stops their clients</span></h2>
     <div>${rows}</div>
     <div class="addrow">
       <input id="u-name" class="sin" style="flex:1;min-width:150px" placeholder="new username" autocomplete="off" spellcheck="false">
@@ -2254,7 +2255,7 @@ function applyNowConfig(next) {
     retention_days: +next.retention_days || 0,
     slo_target_percent: +next.slo_target_percent || 99.9,
   };
-  $('verinfo').textContent = `v${cfg.version} · ${cfg.lanes} lanes · auth ${cfg.auth ? 'on' : 'off'}`;
+  $('verinfo').textContent = `v${cfg.version} · ${cfg.lanes} keys · auth ${cfg.auth ? 'on' : 'off'}`;
   const defaultButton = document.querySelector('#ranges [data-range="default"]');
   if (defaultButton) defaultButton.textContent = `Default · ${cfg.default_window_days}d`;
 }
@@ -2273,7 +2274,7 @@ function followingBounds() {
 
 function presetLabel() {
   if (mode.preset === 'default') return `Default · ${cfg.default_window_days}d`;
-  if (mode.preset === 'all-retained') return 'All retained';
+  if (mode.preset === 'all-retained') return 'All time';
   return ({ '3600': '1h', '21600': '6h', '86400': '24h', '604800': '7d', '2592000': '30d' })[mode.preset] || '';
 }
 
@@ -2288,27 +2289,27 @@ function updateScope() {
     nowData?.tail?.base_history_revision === rangeData.history_revision ? nowData.tail : null;
   const hasTraffic = mode.paused ? frozenHasTraffic : hasSelectedRequestTraffic(samples);
   if (!hasTraffic) {
-    $('rangeinfo').textContent = 'No traffic in selected window';
+    $('rangeinfo').textContent = 'No data in selected time range';
     return;
   }
   const from = mode.paused ? mode.from : rangeData.window.effective_from ?? mode.from;
   const to = mode.paused ? mode.to : tail?.to ?? rangeData.window.effective_to ?? mode.to;
   if (mode.kind === 'following' && !mode.paused) {
-    $('rangeinfo').textContent = `● Following now    ${presetLabel()}    ${scopeDate(from)} – ${scopeDate(to)}`;
+    $('rangeinfo').textContent = `● Live    ${presetLabel()}    ${scopeDate(from)} – ${scopeDate(to)}`;
   } else {
-    $('rangeinfo').textContent = `○ Fixed range    ${scopeTime(from)} – ${scopeTime(to)}`;
+    $('rangeinfo').textContent = `○ Absolute    ${scopeTime(from)} – ${scopeTime(to)}`;
   }
 }
 
 function syncFollowControl(offline = false) {
   if (offline) {
     $('live').className = 'live down';
-    $('liveText').textContent = 'offline';
+    $('liveText').textContent = 'Disconnected';
     return;
   }
   const following = mode.kind === 'following' && !mode.paused;
   $('live').className = following ? 'live' : 'live idle';
-  $('liveText').textContent = following ? 'following now' : 'fixed range';
+  $('liveText').textContent = following ? 'Live' : 'Absolute';
 }
 
 function rebuildSamples() {
@@ -2397,7 +2398,7 @@ for (const b of document.querySelectorAll('#ranges button')) {
       try {
         if (await refreshSelectedRange()) render();
       } catch {
-        $('rangeinfo').textContent = 'failed to load selected window';
+        $('rangeinfo').textContent = 'Failed to load time range';
       }
     }
   });
@@ -2411,7 +2412,7 @@ $('applyRange').addEventListener('click', async () => {
   try {
     if (await refreshSelectedRange()) render();
   } catch {
-    $('rangeinfo').textContent = 'failed to load selected window';
+    $('rangeinfo').textContent = 'Failed to load time range';
   }
 });
 $('live').addEventListener('click', async () => {
@@ -2429,7 +2430,7 @@ $('live').addEventListener('click', async () => {
     try {
       if (await refreshSelectedRange()) render();
     } catch {
-      $('rangeinfo').textContent = 'failed to resume selected window';
+      $('rangeinfo').textContent = 'Failed to resume time range';
     }
   }
   syncFollowControl();
