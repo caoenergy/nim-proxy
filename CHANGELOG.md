@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The dashboard and setup wizard now render their text from an embedded
+  `en-US` message catalog rather than hardcoded literals — the groundwork for
+  localization. 144 messages so far, covering the static markup of both pages
+  and the analytics call sites; the settings surface follows in 0.6.7.
+
+  No user-visible change in English. `scripts/check_i18n.py` proves it: every
+  tagged element still holds exactly the text its catalog id claims, no id is
+  missing or orphaned, and no message hash is stale.
+
 ### Changed
 
 - Dashboard and setup-wizard labels now use standard ops-dashboard vocabulary

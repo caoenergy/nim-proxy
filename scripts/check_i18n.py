@@ -153,8 +153,12 @@ def main() -> int:
                     f"{name}: {mid} hash {msg.get('hash')} stale, text hashes to {got}"
                 )
 
+        # ids used from JavaScript: t('id') / tRaw('id') / tHtml('id')
+        for m in re.finditer(r"\bt(?:Raw|Html)?\(\s*'([a-z0-9_.]+)'", raw):
+            referenced.add(m.group(1))
+
         for mid in catalog:
-            if mid not in referenced and not mid.startswith("dashboard.js."):
+            if mid not in referenced:
                 errors.append(f"{name}: catalog id {mid} is never referenced (orphan)")
 
     if errors:

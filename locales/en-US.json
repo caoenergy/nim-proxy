@@ -294,6 +294,234 @@
     "dashboard.modal.secret.heading": {
       "en": "One-time secret",
       "hash": "04a195c4"
+    },
+    "dashboard.common.col.requests": {
+      "en": "Requests",
+      "desc": "Table column header. Count of requests in the selected time range.",
+      "hash": "ada27592"
+    },
+    "dashboard.common.col.tokens_out": {
+      "en": "Tokens out",
+      "desc": "Completion tokens generated.",
+      "hash": "da9a58f8"
+    },
+    "dashboard.common.col.tokens_in": {
+      "en": "Tokens in",
+      "desc": "Prompt tokens.",
+      "hash": "0aae0f75"
+    },
+    "dashboard.common.col.model": {
+      "en": "Model",
+      "desc": "Table column header. The model identifier for the row.",
+      "hash": "5e2c614c"
+    },
+    "dashboard.common.col.client": {
+      "en": "Client",
+      "desc": "Table column header. The calling agent or tool, not an end user.",
+      "hash": "0c77fe09"
+    },
+    "dashboard.common.col.key": {
+      "en": "Key",
+      "desc": "Table column header. An upstream NIM API key. Not a keyboard key or a map key.",
+      "hash": "99a52df3"
+    },
+    "dashboard.common.col.share": {
+      "en": "Share",
+      "desc": "Table column header. This row's percentage of the total. Noun, never the verb.",
+      "hash": "29887a5f"
+    },
+    "dashboard.common.col.count": {
+      "en": "Count",
+      "desc": "Table column header. Number of requests with this outcome.",
+      "hash": "37bac495"
+    },
+    "dashboard.common.col.reason": {
+      "en": "Reason",
+      "desc": "Table column header. Why a request did not return 200.",
+      "hash": "f81ab834"
+    },
+    "dashboard.common.col.streaming": {
+      "en": "Streaming",
+      "desc": "Share of this client's requests that used streaming responses.",
+      "hash": "a951c594"
+    },
+    "dashboard.models.col.truncated": {
+      "en": "Truncated",
+      "hash": "d9d9fcf3"
+    },
+    "dashboard.models.col.reasoning": {
+      "en": "Reasoning",
+      "hash": "d8211e24"
+    },
+    "dashboard.models.col.errors": {
+      "en": "Errors",
+      "hash": "cb702378"
+    },
+    "dashboard.models.col.avg_response": {
+      "en": "Avg response",
+      "hash": "0449c134"
+    },
+    "dashboard.models.col.avg_ttft": {
+      "en": "Avg TTFT",
+      "desc": "Column header. 'TTFT' is an abbreviation and must survive verbatim.",
+      "hash": "1a2a2e30"
+    },
+    "dashboard.models.col.avg_tps": {
+      "en": "Avg tok/s",
+      "desc": "Column header. 'tok/s' is a unit and must survive verbatim.",
+      "hash": "cb513f6e"
+    },
+    "dashboard.reliability.col.queue_wait": {
+      "en": "Queue wait",
+      "hash": "d55e1fe8"
+    },
+    "dashboard.reliability.col.first_token": {
+      "en": "First token",
+      "desc": "Latency segment: time to the first token. Do not expand to the TTFT acronym.",
+      "hash": "2b2cc212"
+    },
+    "dashboard.reliability.col.generation": {
+      "en": "Generation",
+      "desc": "Latency segment: token generation after the first token.",
+      "hash": "40536dd8"
+    },
+    "dashboard.capacity.col.current_rate": {
+      "en": "Current rate",
+      "desc": "Column header. The key's instantaneous rate against its configured limit.",
+      "hash": "0e80e3ff"
+    },
+    "dashboard.capacity.col.429s": {
+      "en": "429s",
+      "desc": "Column header. '429' is an HTTP status and must survive verbatim.",
+      "hash": "e3aeda21"
+    },
+    "dashboard.common.status.upstream_error_cooldowns": {
+      "en": "Upstream error cooldowns",
+      "hash": "082e7f63"
+    },
+    "dashboard.common.row.active_now": {
+      "en": "Active now",
+      "desc": "Requests in flight at this instant, not a windowed aggregate.",
+      "hash": "441658c6"
+    },
+    "dashboard.common.row.queued": {
+      "en": "Queued",
+      "hash": "661ff40a"
+    },
+    "dashboard.common.row.rate_limit_cooldowns": {
+      "en": "Rate-limit cooldowns",
+      "hash": "5f009330"
+    },
+    "dashboard.common.row.dropped": {
+      "en": "Dropped",
+      "desc": "Requests shed under overload.",
+      "hash": "739f68fe"
+    },
+    "dashboard.common.row.unauthorized": {
+      "en": "Unauthorized",
+      "hash": "d089c8a9"
+    },
+    "dashboard.common.row.failed_logins": {
+      "en": "Failed logins",
+      "hash": "c4b167af"
+    },
+    "dashboard.reliability.row.dropped_503": {
+      "en": "Dropped (overload 503)",
+      "desc": "'503' is an HTTP status and must survive verbatim.",
+      "hash": "dc219614"
+    },
+    "dashboard.common.status.unauthorized_401": {
+      "en": "Unauthorized (401)",
+      "desc": "'401' must survive verbatim.",
+      "hash": "e31a10f2"
+    },
+    "dashboard.reliability.row.buffered": {
+      "en": "Buffered",
+      "desc": "Opposite of streaming: the whole response returned at once.",
+      "hash": "8e89b290"
+    },
+    "dashboard.common.row.streaming": {
+      "en": "Streaming",
+      "hash": "a951c594"
+    },
+    "dashboard.reliability.row.requests_with_tools": {
+      "en": "Requests with tools",
+      "hash": "904e6992"
+    },
+    "dashboard.reliability.row.json_mode": {
+      "en": "JSON mode",
+      "desc": "'JSON' must survive verbatim; only 'mode' translates.",
+      "hash": "36636e63"
+    },
+    "dashboard.reliability.row.tool_choice": {
+      "en": "Tool choice",
+      "desc": "The API parameter rendered as a label.",
+      "hash": "d3a2c6a3"
+    },
+    "dashboard.common.status.rate_limited_429": {
+      "en": "Rate limited (429)",
+      "desc": "'429' must survive verbatim.",
+      "hash": "2d8d2785"
+    },
+    "dashboard.capacity.row.session_affinity": {
+      "en": "Session affinity",
+      "hash": "0596f708"
+    },
+    "dashboard.capacity.row.slots_in_use": {
+      "en": "Slots in use",
+      "hash": "c6d01760"
+    },
+    "dashboard.clients.tile.clients": {
+      "en": "Clients",
+      "hash": "65a72565"
+    },
+    "dashboard.clients.tile.streaming_share": {
+      "en": "Streaming share",
+      "hash": "5c1a4d52"
+    },
+    "dashboard.clients.tile.avg_tools": {
+      "en": "Avg tools / request",
+      "hash": "6dca1f1e"
+    },
+    "dashboard.clients.tile.avg_messages": {
+      "en": "Avg messages / request",
+      "hash": "a983f199"
+    },
+    "dashboard.clients.tile.requests_using_tools": {
+      "en": "Requests using tools",
+      "hash": "59ea0958"
+    },
+    "dashboard.common.empty.no_traffic": {
+      "en": "No traffic yet",
+      "hash": "aaef1f94"
+    },
+    "dashboard.common.empty.no_data_in_range": {
+      "en": "No data in selected time range",
+      "hash": "458e9291"
+    },
+    "dashboard.common.empty.no_data_yet": {
+      "en": "No data yet",
+      "hash": "e2e18a76"
+    },
+    "dashboard.common.empty.no_completed_requests": {
+      "en": "No completed requests yet",
+      "hash": "597d8faa"
+    },
+    "dashboard.common.empty.no_keys_configured": {
+      "en": "No keys configured",
+      "hash": "8db382fc"
+    },
+    "dashboard.reliability.empty.no_errors": {
+      "en": "No errors in this time range",
+      "hash": "fbbc2eb1"
+    },
+    "dashboard.models.empty.no_reasoning": {
+      "en": "No reasoning tokens",
+      "hash": "f1faf3fa"
+    },
+    "dashboard.capacity.empty.no_capacity_data": {
+      "en": "No capacity data for this time range",
+      "hash": "30f6f8f5"
     }
   }
 }
