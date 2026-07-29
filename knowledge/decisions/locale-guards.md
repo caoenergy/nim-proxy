@@ -76,3 +76,12 @@ decoration: nothing establishes it can.
   value through the URL and script contexts PR 3 spent its effort removing.
 - `en-XA` proves layout mechanically but not **clipping**, which needs eyes.
   That review stays with Thomas, as the plan always had it.
+- **A leak scan is only as good as the page it scans.** The first one ran
+  against the pages at rest, with no API data — where the KPI cards, ring
+  gauges, perf blocks and every table body never render at all. It reported
+  zero English and was measuring almost nothing. Replaying payloads captured
+  from the real binary shows ~20 genuine leaks, listed in
+  `tests/fixtures/locales/REMAINING.md`. Most are the sentence fragments with
+  interpolated counts that PR 3 deferred and PR 4 did not pick up; the rest are
+  labels rendered by `ringGauge` and `perfBlock`. Any future leak scan must run
+  against a populated page.
