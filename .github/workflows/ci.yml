@@ -93,9 +93,14 @@ jobs:
         # --escape-probe additionally catches a render helper escaping a
         # catalog value that was already escaped at load, which is invisible
         # in English and in en-XA.
+        # Both embedded pages. setup.html was proved by hand three separate
+        # times and the gap written up as "known" each time, which is more work
+        # than one committed check and leaves nothing behind.
         run: |
           node scripts/render_check.js
           node scripts/render_check.js --escape-probe
+          node scripts/render_check.js --page setup
+          node scripts/render_check.js --page setup --escape-probe
 
   coverage:
     name: coverage

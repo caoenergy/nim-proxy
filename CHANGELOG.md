@@ -83,8 +83,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   captured payloads contain only `200`, `429`, `504` and `disconnect`, so
   replaying fixtures can never observe the disagreement described under Fixed.
 
-  It covers `src/dashboard.html` only. `src/setup.html` has no render coverage
-  in CI — it passes when driven by hand, but nothing keeps it passing.
+  It covers **both** embedded pages. `--page setup` drives the wizard through
+  its validation errors, key validation, review panel, both states of the
+  client-key option, and the one-time-secret screen; each step asserts the panel
+  it should have revealed is actually visible, so a step that silently does
+  nothing fails rather than measuring step 1 five times. The wizard needs no
+  fixtures — it fetches nothing at load — and its two endpoints are stubbed in
+  the shapes `openapi.json` declares, not shapes chosen to make the page pass.
+
+  The gate also asserts that **both** runtimes refuse to localize an attribute
+  outside `title`/`placeholder`/`aria-label`/`alt`, by running each page's own
+  `applyStatic` over a synthetic element carrying `onclick` and `style`. That
+  invariant was previously prose in a knowledge page and a comment in a lint
+  while only one of the two pages enforced it.
 
 - Localization guards: an `en-XA` pseudolocale (generated, never hand-edited),
   a `locale-v1` validator covering completeness, placeholder parity, formatter

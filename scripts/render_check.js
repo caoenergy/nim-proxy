@@ -29,9 +29,24 @@ const { spawn, execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const FIXTURES = path.join(ROOT, 'tests', 'fixtures', 'api');
-const PAGE = path.join(ROOT, 'src', 'dashboard.html');
 
 const args = process.argv.slice(2);
+// Which embedded page to drive. The dashboard renders from captured payloads;
+// the wizard has no payloads and is driven by filling and clicking instead.
+// Both were being proved by hand-built one-off harnesses, which is more work
+// than one committed check and leaves nothing behind.
+const pageArg = (() => {
+  const i = args.indexOf('--page');
+  return i >= 0 ? args[i + 1] : 'dashboard';
+})();
+if (!['dashboard', 'setup'].includes(pageArg)) {
+  console.error(`unknown --page ${pageArg} (expected: dashboard, setup)`);
+  process.exit(2);
+}
+const IS_SETUP = pageArg === 'setup';
+const PAGE_REL = path.join('src', `${pageArg}.html`);
+const PAGE = path.join(ROOT, PAGE_REL);
+const CATALOG_PREFIX = IS_SETUP ? 'setup-' : '';
 const localeArg = (() => {
   const i = args.indexOf('--locale');
   return i >= 0 ? args[i + 1] : null;
@@ -141,7 +156,9 @@ async function evaluateRaw(browser, sessionId, expression) {
 function buildPage(tmpdir) {
   let html = fs.readFileSync(PAGE, 'utf8');
 
-  const need = ['config.json', 'dashboard.json', 'dashboard-now.json'];
+  // The wizard fetches nothing at load; it only POSTs on user action. Requiring
+  // the dashboard fixtures for it would be a fake dependency.
+  const need = IS_SETUP ? [] : ['config.json', 'dashboard.json', 'dashboard-now.json'];
   for (const f of need) {
     const p = path.join(FIXTURES, f);
     if (!fs.existsSync(p)) {
@@ -154,9 +171,7 @@ function buildPage(tmpdir) {
   );
 
   if (localeArg) {
-    const catalogFile = localeArg === 'en-US'
-      ? 'en-US.json'
-      : `${localeArg}.json`;
+    const catalogFile = `${CATALOG_PREFIX}${localeArg}.json`;
     const cp = path.join(ROOT, 'locales', catalogFile);
     if (!fs.existsSync(cp)) {
       console.error(`missing locale ${path.relative(ROOT, cp)}`);
@@ -215,6 +230,17 @@ window.addEventListener('unhandledrejection', function (e) {
     if (url.includes('/api/config')) body = FIX['config.json'];
     else if (url.includes('/api/dashboard/now')) body = FIX['dashboard-now.json'];
     else if (url.includes('/api/dashboard')) body = FIX['dashboard.json'];
+    // The wizard's only two endpoints. Hand-written rather than captured
+    // because a real /setup claims a proxy and mints a secret; the shapes are
+    // asserted against the Rust handlers by the openapi test.
+    // Shapes taken from openapi.json (ValidateKeyResponse, SetupResponse /
+    // MintedClientKey), not invented — a stub that answers in a shape the
+    // server never sends would prove the page works against fiction. The
+    // openapi test keeps that spec honest against the handlers.
+    else if (url.includes('/setup/validate-key')) body = { ok: true, models: 63 };
+    else if (url.endsWith('/setup')) {
+      body = { ok: true, client_key: { name: 'default', secret: 'npk_probe_secret' } };
+    }
     if (body === null) return Promise.reject(new Error('offline: ' + url));
     return Promise.resolve(new Response(JSON.stringify(body), {
       status: 200, headers: { 'Content-Type': 'application/json' },
@@ -300,7 +326,51 @@ const SCAN_DATA_DERIVED = `
     return [...out].filter(Boolean);
   })()`;
 
-const TABS = ['overview', 'models', 'clients', 'reliability', 'capacity'];
+const DASH_TABS = ['overview', 'models', 'clients', 'reliability', 'capacity'];
+/* The wizard has no tabs and no payloads: it is a form, so it has to be filled
+   and clicked. Each step returns true once the panel it should have revealed is
+   visible, so a step that silently does nothing fails loudly instead of letting
+   the scan measure step 1 four times — the same mistake the dashboard's
+   hash-vs-click bug caused. `errors` deliberately trips the validation paths,
+   which is where eight of the wizard's messages live. */
+const SETUP_STEPS = {
+  errors: `(() => {
+    $('username').value = 'op'; $('password').value = 'short';
+    $('confirm').value = 'mismatch'; $('to2').click();
+    const shown = ($('err').textContent || '').trim();
+    return shown.length > 0 && !$('err').hidden;
+  })()`,
+  step1: `(() => {
+    $('username').value = 'op'; $('password').value = 'probe-password-1';
+    $('confirm').value = 'probe-password-1'; $('to2').click();
+    return !$('step2').hidden;
+  })()`,
+  step2: `(async () => {
+    $('newkey').value = 'nvapi-probe-key';
+    $('addkey').click();
+    for (let i = 0; i < 40 && $('to3').disabled; i++) await new Promise(r => setTimeout(r, 50));
+    return !$('to3').disabled && /63/.test($('keylist').textContent || '');
+  })()`,
+  step3: `(() => {
+    $('to3').click();
+    const reviewed = ($('review').textContent || '').length > 0;
+    // Toggle both ways: apiAccessLine() has two branches and they land in
+    // different sinks — esc() into innerHTML on first render, textContent on
+    // change. Leave it checked so step4 reaches showConnect rather than
+    // navigating to /.
+    $('mintkey').checked = false;
+    $('mintkey').dispatchEvent(new Event('change'));
+    $('mintkey').checked = true;
+    $('mintkey').dispatchEvent(new Event('change'));
+    return !$('step3').hidden && reviewed;
+  })()`,
+  step4: `(async () => {
+    $('finish').click();
+    for (let i = 0; i < 60 && $('step4').hidden; i++) await new Promise(r => setTimeout(r, 50));
+    return !$('step4').hidden;
+  })()`,
+};
+const TABS = IS_SETUP ? Object.keys(SETUP_STEPS) : DASH_TABS;
 
 // The never-translate list has exactly one definition, in check_i18n.py. A JS
 // copy would drift, and this list decides which "untranslated" runs are
@@ -438,6 +508,47 @@ async function main() {
     return r.result.value;
   };
 
+  /* Both runtimes must refuse to localize an attribute outside the allowlist.
+     This was asserted by two knowledge pages and a lint comment while only ONE
+     of the two pages actually enforced it, and the wizard shipped without the
+     guard. Reasoning found that; nothing re-checks it, so assert it in-page on
+     a synthetic element rather than trusting either description. */
+  const attrGuard = await evaluate(`
+    (() => {
+      if (typeof applyStatic !== 'function') return 'applyStatic is not reachable';
+      if (typeof I18N_ATTRS === 'undefined') return 'I18N_ATTRS is not defined';
+      const host = document.createElement('div');
+      // A localizable attribute must be set; a scripting one must be refused.
+      host.innerHTML =
+        '<span id="__probe_ok" data-i18n-attr="title:__missing_id"></span>' +
+        '<span id="__probe_bad" data-i18n-attr="onclick:__missing_id"></span>' +
+        '<span id="__probe_style" data-i18n-attr="style:__missing_id"></span>';
+      document.body.appendChild(host);
+      // The guard reports refusals with console.error, which this gate treats
+      // as a failure — correctly, in general. Silence it for the duration of
+      // the probe only: those two refusals are the behaviour under test, and
+      // the page must keep logging them for real operators.
+      const realError = console.error;
+      console.error = () => {};
+      try { applyStatic(host); }
+      catch (e) { console.error = realError; return 'applyStatic threw: ' + e.message; }
+      finally { console.error = realError; }
+      const ok = host.querySelector('#__probe_ok');
+      const bad = host.querySelector('#__probe_bad');
+      const sty = host.querySelector('#__probe_style');
+      const problems = [];
+      if (!ok.hasAttribute('title')) problems.push('refused an allowlisted attribute (title)');
+      if (bad.hasAttribute('onclick')) problems.push('set onclick= from a catalog id');
+      if (sty.hasAttribute('style')) problems.push('set style= from a catalog id');
+      host.remove();
+      return problems.length ? problems.join('; ') : '';
+    })()`);
+  if (attrGuard) {
+    console.error(`FAIL — ${PAGE_REL} attribute allowlist: ${attrGuard}`);
+    proc.kill('SIGKILL');
+    process.exit(1);
+  }
+
   const untranslatedByTab = new Map();
   const dataDerived = new Set();
   const hovered = [];
@@ -445,7 +556,7 @@ async function main() {
     // Tabs switch on click. `location.hash` is assigned BY that handler, and
     // the hash-to-click bridge runs once at load, so setting the hash after
     // load silently does nothing and every "tab" measures Overview again.
-    const switched = await evaluate(`
+    const switched = await evaluate(IS_SETUP ? SETUP_STEPS[tab] : `
       (() => {
         const b = document.querySelector('#side nav button[data-tab="${tab}"]');
         if (!b) return false;
@@ -453,7 +564,7 @@ async function main() {
         return document.querySelector('#tab-${tab}') ? !document.querySelector('#tab-${tab}').hidden : false;
       })()`);
     if (!switched) {
-      console.error(`FAIL — could not switch to the ${tab} tab; the gate would measure the wrong panels`);
+      console.error(`FAIL — could not reach ${tab} in ${PAGE_REL}; the gate would measure the wrong panels`);
       proc.kill('SIGKILL');
       process.exit(1);
     }
@@ -485,7 +596,24 @@ async function main() {
       // names and client names come from the API, and localizing them would be
       // manipulating data rather than labelling it. Ask the page which strings
       // those are instead of guessing from the fixtures.
-      for (const d of await evaluate(SCAN_DATA_DERIVED)) dataDerived.add(d);
+      if (IS_SETUP) {
+        // The wizard has no API payload to scrape, but it does have inputs —
+        // and every data value on screen is one THIS driver typed, plus the
+        // secret the stub returned. Naming them keeps the report honest:
+        // otherwise the gate calls a masked key and a URL "untranslated" and
+        // the count stops meaning anything.
+        for (const d of await evaluate(`
+          (() => [
+            ($('newkey') && $('newkey').value) || '',
+            (document.querySelector('#keylist code') || {}).textContent || '',
+            ($('baseurl') && $('baseurl').value) || 'https://integrate.api.nvidia.com',
+            ($('cbase') && $('cbase').textContent) || '',
+            ($('csecret') && $('csecret').textContent) || '',
+            'PROXY',
+          ].filter(Boolean))()`)) dataDerived.add(d);
+      } else {
+        for (const d of await evaluate(SCAN_DATA_DERIVED)) dataDerived.add(d);
+      }
       // Per tab, so each run is attributed to the tab it was found on. Tab
       // switching only toggles `hidden`, so a later scan would still SEE this
       // markup — but it would blame the wrong tab, and hover tooltips really
@@ -566,7 +694,7 @@ async function main() {
      not "=== '200'". The captured fixtures only contain 200/429/504/disconnect,
      so replaying them can never observe the disagreement; the predicates
      themselves can, and they are module-scope for exactly this reason. */
-  const predicateFailures = await evaluate(`
+  const predicateFailures = IS_SETUP ? [] : await evaluate(`
     (() => {
       if (typeof IS_2XX !== 'function' || typeof IS_ERR !== 'function')
         return ['IS_2XX / IS_ERR are not reachable at module scope'];
@@ -608,7 +736,9 @@ async function main() {
 
   /* ---------- report ------------------------------------------------------ */
 
-  console.log(`rendered ${TABS.length} tabs, hovered ${hovered.length} charts`);
+  console.log(IS_SETUP
+    ? `drove ${TABS.length} wizard steps in ${PAGE_REL}`
+    : `rendered ${TABS.length} tabs, hovered ${hovered.length} charts`);
 
   if (untranslatedByTab.size) {
     const frozen = frozenTokens();
@@ -668,7 +798,7 @@ async function main() {
       const key = e.text.split('\n')[0] + ':' + (e.line - LINE_OFFSET);
       if (seen.has(key)) continue;
       seen.add(key);
-      console.error(`  src/dashboard.html:${Math.max(1, e.line - LINE_OFFSET)}:${e.col}  ${e.text.split('\n')[0]}`);
+      console.error(`  ${PAGE_REL}:${Math.max(1, e.line - LINE_OFFSET)}:${e.col}  ${e.text.split('\n')[0]}`);
     }
     for (const c of new Set(consoleErrors)) console.error('  console: ' + c);
     process.exit(1);

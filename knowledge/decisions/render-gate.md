@@ -141,9 +141,34 @@ faked.
   as Success on one card and as an error on the card beside it. Fixtures prove
   the page runs; the predicate assertion proves the rule it runs on.
 
-- **`src/setup.html` has no render coverage.** The gate hardcodes the
-  dashboard, and CI runs it on that page only. Setup is reachable by hand with
-  the same harness and passes, but nothing keeps it passing. Recorded as a gap
-  rather than implied by silence.
+- **Both pages are covered.** `--page setup` drives the wizard: it trips the
+  validation errors, adds a key, reaches the review panel, toggles the
+  client-key option both ways, and finishes to the one-time-secret screen.
+  Each step returns true only once the panel it should have revealed is
+  visible, so a step that silently does nothing fails loudly instead of letting
+  the scan measure step 1 five times — the same failure mode as the dashboard's
+  hash-versus-click bug.
+
+  This was owed for a while. The wizard was proved by hand **three separate
+  times** — once for the attribute-allowlist fix, once when its strings were
+  extracted, once by a reviewer — and each time the harness was thrown away and
+  "setup.html has no render coverage" was written up as a known gap. Three
+  throwaway proofs cost more than one committed check and leave nothing behind.
+  Naming a gap is not the same as closing it.
+
+  The wizard needs no fixtures: it fetches nothing at load. Its two endpoints
+  are stubbed in the shapes `openapi.json` declares
+  (`ValidateKeyResponse`, `SetupResponse`/`MintedClientKey`) rather than shapes
+  chosen to make the page work, because a stub answering in a shape the server
+  never sends proves the page works against fiction.
+
+- **Both runtimes are asserted to refuse non-allowlisted attributes.** The gate
+  builds a synthetic element carrying `data-i18n-attr` for `title`, `onclick`
+  and `style`, runs the page's own `applyStatic` over it, and fails unless the
+  first is set and the other two are refused. This existed as prose in
+  [message-catalog-and-escaping](message-catalog-and-escaping.md) and as a
+  comment in `check_i18n.py` while only one of the two pages enforced it.
+  Proved non-vacuous by deleting the guard: `FAIL — src/setup.html attribute
+  allowlist: set onclick= from a catalog id; set style= from a catalog id`.
 - It is not a screenshot test and takes no screenshots. Layout review stays
   human, per the plan's original and still-correct reasoning.
