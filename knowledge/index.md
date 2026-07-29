@@ -37,6 +37,7 @@ the chronology in [log.md](log.md).
 | [message-catalog-and-escaping](decisions/message-catalog-and-escaping.md) | Inline `en-US` catalog behind `t()`; values escaped once at load because four render helpers do not escape their arguments |
 | [intl-formatting](decisions/intl-formatting.md) | Cached `Intl` formatters keyed to the catalog locale; CSS percentages deliberately excluded |
 | [locale-guards](decisions/locale-guards.md) | `en-XA` pseudolocale, `locale-v1` validator, untagged-string lint — every check with a negative fixture written first |
+| [render-gate](decisions/render-gate.md) | A dependency-free headless gate that runs the page against captured payloads; reverses the plan's "no browser harness" call after a P0 shipped in the gap |
 
 ## Research — validated external facts
 

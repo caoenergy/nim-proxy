@@ -1,0 +1,119 @@
+---
+type: Decision
+title: A committed render gate, reversing the plan's "no browser harness" call
+description: >-
+  The 0.6.6 plan rejected a committed browser harness at ladder rung 1 and
+  traded it for a human browser review. The review did not happen and a P0
+  shipped in the gap, so the trade is re-made in the other direction.
+tags: [testing, ci, dashboard, i18n]
+timestamp: 2026-07-29T00:00:00Z
+---
+
+# A committed render gate
+
+## Context
+
+Nothing in this repository executes the embedded pages.
+
+- `cargo test` asserts on served HTML **text**. It never parses or runs the
+  page JavaScript, so it passes on a page that cannot boot.
+- `node --check` proves the syntax parses. Both the `${...}`-inside-single-quotes
+  bug and the `const t` shadow parsed fine.
+- `scripts/formatter_fixture.js` extracts the real formatter bodies but
+  evaluates them in an isolated harness, so it proves the helpers work and says
+  nothing about their call sites.
+- `scripts/check_i18n.py` and `scripts/locale_v1.py` read source text and
+  catalog JSON. Neither renders anything.
+
+The 0.6.6 execution plan considered a Playwright screenshot harness for three
+acceptance criteria and killed it at ladder rung 1 for two of them, correctly:
+extraction is provable by a text round-trip, and `Intl` output is provable by a
+differential table. Both are *stronger* than a screenshot, which cannot see
+hidden-tab or offscreen content. For the third — "`en-XA` renders with zero
+leakage and zero clipping" — the plan assigned a manual browser review to a
+human and explicitly declined to build a harness to avoid a five-minute look.
+
+That reasoning was sound. What broke was the trade: the manual review did not
+happen, the PR merged with its acceptance criterion unmet, and a P0 shipped
+into the integration branch in the gap.
+
+The P0 is the argument. A module-scope `at()` helper collided with two
+pre-existing locals, so every chart threw `TypeError` on hover. Because
+`lineChart` re-applies the last hover on each live re-render and the poll
+loop's bare `catch` treats any throw as connection loss, a healthy proxy
+displayed a red **Disconnected** badge, stopped its uptime clock, and froze
+most of the tab. One console error, nothing in any log, and green on every
+check in CI.
+
+A second, latent defect had the same shape: `kpiCards` escaped a catalog value
+that was already escaped at load. Invisible in English (no KPI label contains
+`&` or `'`) and invisible under `en-XA` (which only adds accents and padding),
+it would have surfaced as `Jetons d&#39;entrée` on the first real translation.
+
+## Options
+
+1. **Keep the plan's position: no harness, rely on human review.** Free, and
+   correct in principle — a person sees clipping and ugliness a script never
+   will. But it failed in exactly the way an unenforced convention fails, and
+   the class of bug it missed is silent rather than obvious.
+2. **Playwright.** The standard answer. It means a `package.json`, a lockfile
+   and a dependency tree in a repository that deliberately has no JavaScript
+   toolchain, and a browser download in CI.
+3. **A committed gate with no dependencies.** Node 22 ships a `WebSocket`
+   client, so the Chrome DevTools Protocol is reachable from a plain script,
+   and GitHub's `ubuntu-latest` image already has a browser. Ladder rung 4:
+   the platform provides it.
+
+## Choice
+
+Option 3. `scripts/render_check.js` renders `src/dashboard.html` against
+captured API payloads, walks all five tabs, hovers every chart with real
+pointer input, and fails on any uncaught page error. Stdlib only, matching the
+convention both existing scripts already declare.
+
+This does **not** replace the human review the plan assigned. Clipping is a
+layout property and the gate does not judge it; the `.bval` wrap on Models at
+900px is real and was found by eye, not by script. The gate covers the silent
+class — a page that throws, a page that never boots, a value escaped twice.
+
+Three properties it needed before it could see anything at all, each of which
+first produced a confident green while exercising nothing:
+
+- **It must block external hosts and wait for the real load event.** The page
+  render-blocks on the Google Fonts stylesheet; offline that hangs rather than
+  fails, the parser never reaches the page's own `<script>`, and a gate that
+  sleeps and then measures the DOM reports that a page which never booted is
+  fine. It now asserts `readyState === 'complete'`.
+- **It must capture unhandled rejections.** The page boots from an `async`
+  IIFE, so a throw there is a rejection, not an exception, and
+  `Runtime.exceptionThrown` does not reliably report it.
+- **It must undo its own line-number shift.** Injected setup moves every line;
+  a gate that reports the wrong line is a gate nobody trusts.
+
+The payloads are **captured, not hand-written**, and deliberately contain
+failures: 504s, client disconnects, 429 rate-limit cooldowns, worker
+exhaustion, affinity spill, and `stop`/`tool_calls`/`length` finish reasons.
+Every leak scan before this one measured a page at rest or a *healthy* proxy,
+and the entire error taxonomy — the `TAX`, `OUTCOMES` and `REASONS` tables —
+only renders when the range contains errors. A fixture without failures
+silently exempts them. `content_filter` remains uncovered because there is no
+honest way to provoke it from a mock, and that gap is recorded rather than
+faked.
+
+## Consequences
+
+- Two CI steps in the existing `check` job, so the required-status-check list
+  in [release.md](../ops/release.md) does not change.
+- `scripts/mock_nim.py` honors `max_tokens` so a capped request finishes with
+  `length`. The dashboard's Truncated column was otherwise unreachable and
+  would have been exempt from every future check.
+- ~27 KB of committed fixtures (gzipped), regenerable per
+  [the fixture README](../../tests/fixtures/api/README.md).
+- The fixtures are a **snapshot of a wire format**. If `/api/dashboard` changes
+  shape, they must be recaptured — the gate will fail loudly rather than
+  silently drift, which is the intended failure mode.
+- `--escape-probe` gives the escape-once rule in
+  [message-catalog-and-escaping](message-catalog-and-escaping.md) an
+  enforcement mechanism instead of a paragraph.
+- It is not a screenshot test and takes no screenshots. Layout review stays
+  human, per the plan's original and still-correct reasoning.

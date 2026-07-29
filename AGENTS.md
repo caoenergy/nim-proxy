@@ -67,7 +67,8 @@ actually covers what you changed:
 |---|---|
 | Rust logic | `cargo test` (unit + e2e), `cargo clippy --all-targets -- -D warnings` |
 | Anything in `dashboard.html` / `setup.html` | `node --check` on each extracted `<script>` — syntax only; necessary, never sufficient |
-| Page *behavior* | render it headless with real API payloads and read the console; nothing else proves the code ran |
+| Page *behavior* | `node scripts/render_check.js` (+ `--escape-probe`) — renders against captured payloads, hovers every chart, fails on any uncaught page error; nothing else proves the code ran |
+| Page *layout* | your eyes. Clipping is a layout property and no script here judges it |
 | Number/date/duration formatting | `TZ=UTC LC_ALL=en_US.UTF-8 node scripts/formatter_fixture.js --check` (golden; extracts the real function bodies, and refuses to run unpinned) |
 | Strings, catalog, any new UI text | `python3 scripts/check_i18n.py` (round-trip + untagged-string lint) |
 | A locale file | `python3 scripts/locale_v1.py --all`; `--selftest` proves the validator still bites |

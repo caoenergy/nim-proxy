@@ -75,6 +75,18 @@ jobs:
         # en-XA is generated, never hand-edited; a stale one silently stops
         # testing the strings that changed.
         run: python3 scripts/gen_pseudolocale.py --check
+      - name: Dashboard renders and survives being driven
+        # `node --check` above proves the page parses; this proves it runs.
+        # It renders the page against captured API payloads, walks every tab
+        # and hovers every chart, and fails on any uncaught page error. The
+        # bug that motivated it threw on hover and made a healthy proxy report
+        # "Disconnected" — green on every other check in this job.
+        # --escape-probe additionally catches a render helper escaping a
+        # catalog value that was already escaped at load, which is invisible
+        # in English and in en-XA.
+        run: |
+          node scripts/render_check.js
+          node scripts/render_check.js --escape-probe
 
   coverage:
     name: coverage
