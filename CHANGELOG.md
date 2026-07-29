@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vocabulary they enforce is now recorded in
   `knowledge/decisions/standard-vocabulary.md`.
 
+  The retired-term check scans the **whole page**, not just catalog values.
+  Scanning values alone was not enough and the gap was live: `rpm total` was
+  rendering in the setup wizard's review panel, outside the catalog, with the
+  check reporting clean. A label that never made it into the catalog still
+  reaches the operator.
+
   The frozen check found a defect on its first run: the `en-XA` pseudolocale
   was accenting those tokens, rendering `NÎM` and a mangled `/v1` across nine
   messages — in the one locale that exists to prove layout. Generator fixed and
@@ -42,12 +48,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A render gate, `scripts/render_check.js`: it loads the dashboard against
   captured API payloads, clicks through all five tabs, hovers every chart with
-  real pointer input, and fails on any uncaught page error. `--escape-probe`
-  additionally fails when a render helper escapes a catalog value that was
-  already escaped at load. No new dependency — Node's built-in WebSocket
-  driving the system browser. It is the only check that proves the page *runs*;
-  `cargo test` asserts on served HTML text and `node --check` proves only that
-  it parses.
+  real pointer input, and fails on any uncaught page error. No new dependency —
+  Node's built-in WebSocket driving the system browser. It is the only check
+  that proves the page *runs*; `cargo test` asserts on served HTML text and
+  `node --check` proves only that it parses.
+
+  `--escape-probe` enforces the escape-once rule in **both** directions. It
+  appends `Ampersand & Quote' <b>Tag</b>` to every catalog value: the `&` and
+  `'` come back as literal `&amp;` / `&#39;` if something escaped an
+  already-escaped value, and the `<b>` parses into a real DOM element if a value
+  reached a raw-HTML sink with no escaping at all. The first version carried no
+  tag and walked text nodes only, which made it a double-escape detector that
+  was blind to the missing-escape direction — the XSS direction — and blind to
+  every attribute sink (`title=`, `aria-label=`). Four deliberate defects were
+  injected to establish that: it caught two and passed the other two green. It
+  now scans `title`, `aria-label`, `placeholder` and `alt` alongside text, and
+  both previously-missed defects fail.
+
+  The gate also asserts the status predicates agree. `IS_2XX` / `IS_ERR` are
+  module-scope in `dashboard.html` specifically so it can evaluate them: the
+  captured payloads contain only `200`, `429`, `504` and `disconnect`, so
+  replaying fixtures can never observe the disagreement described under Fixed.
+
+  It covers `src/dashboard.html` only. `src/setup.html` has no render coverage
+  in CI — it passes when driven by hand, but nothing keeps it passing.
 
 - Localization guards: an `en-XA` pseudolocale (generated, never hand-edited),
   a `locale-v1` validator covering completeness, placeholder parity, formatter
@@ -55,21 +79,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an untagged-string lint. Every check ships with a deliberately broken fixture
   proving it can fail, and all four run in CI.
 
-  The untagged-string lint is **narrower than it sounds**: it recognises a
-  fixed set of render-call shapes and stops at the settings surface. It is a
-  guard against regressions in already-extracted code, not proof that the pages
-  contain no English. `tests/fixtures/locales/REMAINING.md` is the honest
-  inventory of what still leaks.
+  The untagged-string lint had three holes, and **25 English strings were
+  shipping through them with CI green** — including a term this same release
+  retired. All three are closed:
+
+  - It scanned single-quoted strings only, so `src/setup.html`, which uses
+    double quotes throughout, was effectively unscanned. Eight operator-facing
+    error messages sat behind that.
+  - Nothing looked at text nodes inside template literals. `<span
+    class="k">Superuser</span>` is neither a quoted string nor page markup —
+    `strip_scripts()` deletes the script holding it. Sixteen labels lived there,
+    including a `Latency breakdown` literal ten lines from the catalog id for
+    the same words.
+  - The "this is machinery, not text" filter was applied per **line**, so one
+    `.toFixed(` anywhere on a line exempted every string beside it. That is how
+    `no eligible traffic` rendered in English on a line CI called clean.
+
+  It is still not proof that the pages contain no English: the prose detector
+  deliberately ignores lowercase single tokens, because those are usually enum
+  values and metric label values rather than text. `met` and `missed` were found
+  by reading, not by the lint. `tests/fixtures/locales/REMAINING.md` is the
+  measured inventory, and the settings surface remains out of scope until 0.6.7.
 
 - The dashboard and setup wizard now render their text from an embedded
   `en-US` message catalog rather than hardcoded literals — the groundwork for
-  localization. 166 messages so far (139 dashboard, 27 setup), covering the
-  static markup of both pages and the analytics call sites; the settings
-  surface follows in 0.6.7.
+  localization. **225 messages (181 dashboard, 44 setup)**, covering the static
+  markup of both pages, the analytics call sites, the wizard's error messages
+  and the SLO and capacity notes; the settings surface follows in 0.6.7.
 
-  No user-visible change in English. `scripts/check_i18n.py` proves it: every
-  tagged element still holds exactly the text its catalog id claims, no id is
-  missing or orphaned, and no message hash is stale.
+  Sentences with interpolated values are **one message with placeholders**, never
+  concatenated fragments — `Key validation failed: {error}`, not
+  `"Key validation failed: " + e` — because word order moves between languages
+  and a fragment gives a translator nothing to work with.
+
+  Counts go through `Intl.PluralRules` (ladder rung 4). Two hardcoded English
+  ternaries — `enabled key${n === 1 ? '' : 's'}` and
+  `interval${n === 1 ? '' : 's'}` — were English grammar sitting in the render
+  path. Both are now six-category plural sets, spelled out as explicit ids so
+  the orphan check can still see them; `locale-v1` requires exact id parity, so
+  a category absent from the source could never be supplied by a translation,
+  and ar/ru/pl/cy need categories English does not have.
+
+  English output is unchanged, and `tests/fixtures/locales/REMAINING.md` is the
+  measured inventory of what still renders in English — regenerate it from
+  `node scripts/render_check.js --locale en-XA`, which prints the count.
+
+  What proves what here is worth being precise about, because it is easy to
+  overstate. `scripts/check_i18n.py` proves each **tagged element still holds
+  the text its catalog id claims**, that no id is missing or orphaned, and that
+  no hash is stale. It does **not** prove the rendered page is unchanged — it
+  compares markup to catalog, and reworded text on both sides round-trips
+  clean. The claim that the page still *renders* the same rests on
+  `scripts/render_check.js`, and note that `cargo test`'s
+  `assert!(html.contains("…"))` checks cannot support it either: the catalog
+  ships inline in the served HTML, so those assertions match whether or not the
+  render path ever uses the string.
 
 ### Changed
 
@@ -153,6 +217,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   English no KPI label contains an escapable character, so this was invisible —
   it would first have appeared as `&#39;` and `&amp;` in the interface of any
   translated build.
+
+- **Reliability panels no longer contradict each other about what succeeded.**
+  Eight places decided "this request succeeded" by comparing the status label to
+  the literal `'200'`, and the label is whatever the upstream returned, passed
+  through verbatim. A single `204` was simultaneously counted as Success in the
+  stacked outcome chart, as an error in the "Outcomes per minute" chart directly
+  above it, as an `HTTP 204` row in the table directly below, and excluded from
+  the taxonomy entirely — so the Error rate percentage and the segbar rendered
+  inside the *same card* disagreed. There is now one `IS_2XX` / `IS_ERR` pair at
+  module scope and the render gate asserts on it.
+
+- **The setup wizard's `data-i18n-attr` handler had no attribute allowlist.**
+  The dashboard refuses anything outside `title`, `placeholder`, `aria-label`
+  and `alt`; the wizard called `setAttribute()` with whatever attribute name the
+  markup supplied. A markup edit adding `data-i18n-attr="onclick:…"` would have
+  routed a catalog value into an inline event handler, which the
+  Content-Security-Policy permits. Not reachable in the shipped markup, and the
+  static check caught non-allowlisted targets — but both
+  `knowledge/decisions/message-catalog-and-escaping.md` and a comment in
+  `check_i18n.py` asserted the runtime enforced this, and it did not.
+
+- `rpm total` was still rendering in the setup wizard's review panel, a term
+  this release retired, because the retired-term check only read catalog values.
 
 ## [0.6.5] - 2026-07-28
 

@@ -1,45 +1,63 @@
 # Strings still rendering in English
 
-Measured by replaying API payloads captured from the real binary into the page
-and scanning the DOM under `en-XA`. **A scan against the page at rest reports
-almost nothing** — the KPI cards, ring gauges, perf blocks and table bodies only
-exist once data arrives, which is where most of these live.
+Measured, not estimated. Reproduce with:
 
-Reproduce: build a copy of `src/dashboard.html` with `fetch` stubbed to replay
-`/api/config`, `/api/dashboard` and `/api/dashboard/now`, swap the inline
-catalog for `locales/en-XA.json`, render headless, and flag any text run with no
-accented character.
+```
+node scripts/render_check.js --locale en-XA
+```
 
-## Genuine leaks
+The gate replays API payloads captured from the real binary, clicks through all
+five tabs, and reports every DOM text run with no accented character. **A scan
+against the page at rest reports almost nothing** — the KPI cards, ring gauges,
+perf blocks and table bodies only exist once data arrives, which is where most
+of these live.
 
-| String | Where | Why it was missed |
-|---|---|---|
-| `Capacity used` | Overview ring gauge | `ringGauge` label argument |
-| `Success rate` | Overview ring gauge | same |
-| `Time to first token` · `Generation speed` · `Inter-token latency` | Overview perf blocks | `perfBlock` label argument |
-| `lower is better` · `higher is better` | Overview perf blocks | `perfBlock` note argument |
-| `Active now` · `Queued` · `Error rate` | Reliability live panel | rendered by `prow`, not `metricRow` |
-| `errors` | Reliability chart legend | chart series name |
-| `selected time range` | KPI card subs | `windowLabel` const |
-| `Default · 30d` | active range pill | overwritten at runtime by `presetLabel()` |
-| `v0.6.5 · 3 keys · auth off` | sidebar footer | `verinfo`, built by concatenation |
+Last measured at 30 actionable runs (27 further runs are correctly untranslated:
+frozen units, status codes, and data from the API). The gate prints both numbers,
+so this file being stale is detectable rather than a matter of trust.
 
-## Fragments with interpolated counts
+## What is left, by mechanism
 
-These are the ones PR 3 explicitly deferred — they need plural-category
-messages, not string concatenation, and each is one message with placeholders:
+**Chart series names and axis labels.** Passed as arguments to `lineChart`,
+`stackChart` and `legend`, then escaped by those helpers, so they take `tRaw()`
+rather than `t()`:
 
-`0 now` · `2,400 in` · `20 of 20` · `0 / 120 rpm · 3 keys` ·
-`3 enabled keys` · `120 rpm available` · `4 models` · `4 tok` ·
-`SLO 99.9% · met` · `0% used` · `Slot 1`
+`requests` · `errors` · `disconnects` · `active` · `queued` · `median` ·
+`20.0 sec` · `40.0 sec` · `60.0 sec`
 
-`3 enabled keys` and `N intervals with no capacity data` are the two hardcoded
-English plural ternaries. They must be plural-category messages
-(`zero`/`one`/`few`/`many`/`other`) rather than booleans — `cfg.lanes` can be 0,
-and ar/ru/pl/cy need categories English does not have.
+**Composite runs built by concatenation.** Each needs to become one message with
+placeholders, because word order moves:
+
+| Run | Built by |
+|---|---|
+| `v0.6.5 · 3 keys · auth on` | `verinfo`, sidebar footer |
+| `● Live    Default · 30d    Jul 29 – Jul 29` | the topbar row, read as one text run |
+| `Default · 30d` | written into the active pill by `presetLabel()` at runtime, which is why the static markup being tagged is not enough |
+| `errors 42% · 8 cooldowns` | model-card subtitle |
+| `0 / 24 rpm · 3 keys` | capacity ring sub |
+| `median 25 ms` · `median –` | perf-block value prefix |
+| `5 · 0.17/req` | tool-intensity cell |
+| `3.89 tok` | head-to-head bar label |
+| `0 now` | KPI card sub |
+| `3 models` · `Slot 1` | count fragments; `Slot` is the standard term, but the number makes it a message with `{n}` |
+
+**`Proxy`** — sidebar heading, plain untagged text.
+
+## Two things this file is not
+
+It is **not** the settings surface. `renderSettings` and its sub-panels are out
+of scope until 0.6.7 and the gate does not visit that tab at all, so none of
+those strings appear above.
+
+It is **not** a list of everything untranslated in the tree. The gate only sees
+what the captured fixtures cause to render. Paths the fixtures never reach —
+`content_filter` / `Filtered`, the `REASONS` rows for 400/403/404/502/503, the
+`Disconnected` live badge, and every empty state — are tagged in the catalog but
+unverified by any run. `knowledge/decisions/render-gate.md` records that gap.
 
 ## Correctly NOT translated
 
 Model ids (`Kimi K2.5`), publisher names (`DeepSeek`, `Meta`, `Moonshot AI`),
 client names (`local`), monogram letters, rank markers (`#1`), and every unit or
-status code on the never-translate list.
+status code on the never-translate list. These come from the API; localizing
+them would be manipulating data rather than labelling it.

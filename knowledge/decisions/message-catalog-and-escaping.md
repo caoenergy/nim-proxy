@@ -84,6 +84,21 @@ a catalog value into `onclick=` or `style=`, and the CSP permits inline
 handlers. It is enforced now: the runtime accepts only `title`, `placeholder`,
 `aria-label`, and `alt`, and `check_i18n.py` rejects any other target.
 
+**On both pages** — which is worth spelling out, because this paragraph was
+written when it was true of only one. `dashboard.html` had the `I18N_ATTRS`
+guard; `setup.html` did not, and shipped that way while this page and a comment
+in `check_i18n.py` both asserted the runtime enforced it. An adversarial review
+found it by reading the two runtimes side by side rather than trusting either
+description. Demonstrated before fixing: with
+`data-i18n-attr="onclick:setup.step4.copy"` injected into the wizard's markup,
+the unguarded page rendered `onclick="Copy"` on the element and the guarded page
+left the attribute unset.
+
+The lesson is not about this attribute. A knowledge page that says "enforced"
+describes intent until someone runs the two implementations against the same
+hostile input — so when a page claims a runtime invariant, it should say which
+runtimes were checked.
+
 Three tagging mechanisms, chosen so markup structure never changes:
 
 - `data-i18n` — replaces an element's content

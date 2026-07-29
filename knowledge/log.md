@@ -6,6 +6,59 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-29] lint — three holes in the untagged-string check, and what shipped through them
+
+Adversarial review of the integration branch before the release PR. The headline
+is not any single defect but that **CI was green while 25 English strings
+rendered**, one of them a term this release retired.
+
+`check_i18n.py`'s prose scan had three independent blind spots:
+
+- `QUOTED` matched single quotes only, so `setup.html` — double-quoted
+  throughout — was effectively unscanned. Eight operator-facing error messages.
+- Nothing read text nodes inside template literals. `strip_scripts()` deletes
+  the script that holds them and they carry no quotes, so `<span
+  class="k">Superuser</span>` was invisible to both scans. Sixteen labels,
+  including a `Latency breakdown` literal ten lines from the catalog id for the
+  same words, and the retired `rpm total`.
+- `NOT_DISPLAY` was applied per line rather than per match, so one `.toFixed(`
+  anywhere on a line exempted every string on it — `no eligible traffic`.
+
+`lint_retired_vocabulary` also read only catalog values, which is why `rpm total`
+shipped: a label that never entered the catalog still reaches the operator. It
+now scans the whole page.
+
+Honest limit recorded rather than papered over: the prose detector still ignores
+lowercase single tokens, deliberately, because those are usually enum and metric
+label values. `met` and `missed` were found by reading. Counts: 188 → 225
+messages (dashboard 159 → 181, setup 29 → 44); en-XA leakage 41 → 30 actionable
+runs, measured by the gate both times.
+
+Three further defects the same review found, all fixed here:
+
+- Eight status classifiers compared against the literal `'200'` while the label
+  is the upstream status passed through verbatim, so a `204` was counted as
+  Success and as an error on two cards inside the same panel. One `IS_2XX` /
+  `IS_ERR` pair now, at module scope so the gate can assert on it — the captured
+  fixtures contain only 200/429/504/disconnect and can never observe it.
+- `setup.html`'s `applyStatic` had no attribute allowlist while `dashboard.html`
+  did, and [message-catalog-and-escaping](decisions/message-catalog-and-escaping.md)
+  asserted the runtime enforced it. Page corrected, and the correction now names
+  which runtimes were checked.
+- `--escape-probe` was a double-escape detector blind to the missing-escape
+  direction and to every attribute sink. Four injected defects established it:
+  two caught, two green. Both halves recorded in
+  [render-gate](decisions/render-gate.md), along with the fact that `setup.html`
+  has no render coverage in CI at all.
+
+New decision page:
+[plural-categories-not-ternaries](decisions/plural-categories-not-ternaries.md) —
+two counted labels pluralized with `n === 1 ? '' : 's'`, which no lint here can
+see because the English is the absence of a character in one branch.
+
+`tests/fixtures/locales/REMAINING.md` was stale in both directions and is
+rewritten from the gate's output rather than by hand.
+
 ## [2026-07-29] ingest — the last 29 untagged dashboard strings, extracted
 
 `check_i18n.py` reported 35 problems / 29 unique strings; it now reports

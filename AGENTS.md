@@ -50,6 +50,7 @@ decision page is the most common way work here goes wrong.
 | UI text, catalog, labels | `decisions/standard-vocabulary.md`, `decisions/message-catalog-and-escaping.md` |
 | locales, translation | `decisions/locale-guards.md`, `decisions/intl-formatting.md` |
 | numbers, dates, durations | `decisions/intl-formatting.md` |
+| a label with a count in it | `decisions/plural-categories-not-ternaries.md` |
 | page behavior, checks | `decisions/render-gate.md`, `testing/test-strategy.md` |
 | history, retention, rollups | `decisions/reset-aware-dashboard-history.md`, `architecture/metrics-history.md` |
 | config store, settings | `decisions/ui-managed-config-store.md` |
