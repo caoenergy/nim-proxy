@@ -1,3 +1,4 @@
+mod api;
 mod auth;
 mod config;
 mod dispatch;
@@ -6,6 +7,8 @@ mod history;
 mod pool;
 mod proxy;
 mod settings;
+
+pub use api::openapi_json;
 
 // Fuzzing-only re-exports (the modules themselves stay private). Compiled
 // only under cargo-fuzz's `--cfg fuzzing`, so normal builds, coverage, and
@@ -17,7 +20,7 @@ pub use config::fuzz as fuzz_config;
 #[doc(hidden)]
 pub use proxy::fuzz as fuzz_proxy;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -64,14 +67,14 @@ pub struct GovernorSettings {
     /// governor stays dormant until an upstream actually exhausts).
     pub enabled: bool,
     /// Operator-pinned per-model concurrency caps (model id -> max in-flight).
-    pub overrides: HashMap<String, usize>,
+    pub overrides: BTreeMap<String, usize>,
 }
 
 impl Default for GovernorSettings {
     fn default() -> Self {
         Self {
             enabled: true,
-            overrides: HashMap::new(),
+            overrides: BTreeMap::new(),
         }
     }
 }
@@ -178,13 +181,28 @@ fn capacity_snapshot(pool: &Pool) -> history::CapacitySnapshot {
     }
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 struct DashboardQuery {
+    /// Window start, unix seconds. Defaults to `to - default_window_days`.
     from: Option<u64>,
+    /// Window end, unix seconds. Omitting it means "follow now".
     to: Option<u64>,
+    /// Rollup buckets, clamped to 2..=1000. Defaults to 288.
     points: Option<usize>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/dashboard",
+    tag = "dashboard",
+    params(DashboardQuery),
+    responses(
+        (status = 200, description = "Rolled-up history for the window", body = api::DashboardResponse),
+        (status = 400, description = "`from` is not before `to`", body = api::ApiError),
+        (status = 401, description = "No session", body = api::ApiError),
+    ),
+)]
 async fn api_dashboard(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(query): axum::extract::Query<DashboardQuery>,
@@ -202,13 +220,10 @@ async fn api_dashboard(
     if requested_from >= requested_to {
         return (
             StatusCode::BAD_REQUEST,
-            axum::Json(serde_json::json!({
-                "error": {
-                    "message": "from must be less than to",
-                    "type": "proxy_error",
-                    "code": "invalid_time_window",
-                }
-            })),
+            axum::Json(api::ApiError::new(
+                "invalid_time_window",
+                "from must be less than to",
+            )),
         )
             .into_response();
     }
@@ -218,29 +233,41 @@ async fn api_dashboard(
         requested_to,
         query.points.unwrap_or(288).clamp(2, 1000),
     );
-    axum::Json(serde_json::json!({
-        "history_revision": rollup.history_revision,
-        "config_revision": config_revision,
-        "window": {
-            "requested_from": requested_from,
-            "requested_to": requested_to,
-            "following_now": following_now,
-            "effective_from": rollup.effective_from,
-            "effective_to": rollup.effective_to,
-            "available_from": rollup.available_from,
-            "available_to": rollup.available_to,
-            "default_window_days": stored.dashboard.default_window_days,
-            "retention_days": stored.history.days,
+    axum::Json(api::DashboardResponse {
+        config_revision,
+        diagnostics: rollup.diagnostics,
+        history_revision: rollup.history_revision,
+        latest: rollup.latest,
+        points: rollup.points,
+        totals: rollup.totals,
+        window: api::DashboardWindow {
+            available_from: rollup.available_from,
+            available_to: rollup.available_to,
+            default_window_days: stored.dashboard.default_window_days,
+            effective_from: rollup.effective_from,
+            effective_to: rollup.effective_to,
+            following_now,
+            requested_from,
+            requested_to,
+            retention_days: stored.history.days,
         },
-        "totals": rollup.totals,
-        "latest": rollup.latest,
-        "points": rollup.points,
-        "diagnostics": rollup.diagnostics,
-    }))
+    })
     .into_response()
 }
 
-async fn api_dashboard_now(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
+#[utoipa::path(
+    get,
+    path = "/api/dashboard/now",
+    tag = "dashboard",
+    responses(
+        (status = 200, description = "Live registry values plus the configuration they were \
+            sampled under", body = api::DashboardNowResponse),
+        (status = 401, description = "No session", body = api::ApiError),
+    ),
+)]
+async fn api_dashboard_now(
+    State(state): State<Arc<AppState>>,
+) -> axum::Json<api::DashboardNowResponse> {
     let stored = state.store.lock().unwrap();
     let config_revision = state
         .config_revision
@@ -249,24 +276,24 @@ async fn api_dashboard_now(State(state): State<Arc<AppState>>) -> axum::Json<ser
     let now = unix_now();
     let current = state.history.current(now, || state.prometheus.render());
     let history_revision = current.tail.base_history_revision;
-    axum::Json(serde_json::json!({
-        "version": env!("CARGO_PKG_VERSION"),
-        "sampled_at": now,
-        "started": state.started,
-        "auth": stored.client_auth.mode == config::Mode::Keyed,
-        "lanes": pool.len(),
-        "rpms": pool.rpms(),
-        "capacity_rpm": pool.capacity_rpm(),
-        "default_window_days": stored.dashboard.default_window_days,
-        "retention_days": stored.history.days,
-        "slo_target_percent": stored.dashboard.slo_target_percent,
-        "history_revision": history_revision,
-        "config_revision": config_revision,
-        "available_from": current.available_from,
-        "available_to": current.available_to,
-        "metrics": current.metrics,
-        "tail": current.tail,
-    }))
+    axum::Json(api::DashboardNowResponse {
+        auth: stored.client_auth.mode == config::Mode::Keyed,
+        available_from: current.available_from,
+        available_to: current.available_to,
+        capacity_rpm: pool.capacity_rpm(),
+        config_revision,
+        default_window_days: stored.dashboard.default_window_days,
+        history_revision,
+        lanes: pool.len(),
+        metrics: current.metrics,
+        retention_days: stored.history.days,
+        rpms: pool.rpms(),
+        sampled_at: now,
+        slo_target_percent: stored.dashboard.slo_target_percent,
+        started: state.started,
+        tail: current.tail,
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+    })
 }
 
 async fn metrics_text(State(state): State<Arc<AppState>>) -> String {

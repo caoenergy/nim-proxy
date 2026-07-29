@@ -12,13 +12,14 @@
 //! The settings handlers are the only writer; every consumer reads immutable
 //! snapshots (see `AppState::cfg`), so there is no file watching or reload.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 pub const FILE: &str = "config.json";
 
@@ -85,7 +86,7 @@ pub struct ClientAuth {
 
 /// Whether `/v1` requires a client API key. `Keyed` with zero keys rejects
 /// everything — fail closed; the dashboard prompts to create a key.
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
     Open,
@@ -107,20 +108,23 @@ pub struct ClientKey {
     pub owner: String,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+/// Fields are declared in ASCII order because this struct is served verbatim
+/// inside `/api/config`, where declaration order is the wire order — see the
+/// module docs in `src/api.rs`.
+#[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
 pub struct Limits {
-    #[serde(default = "default_max_wait")]
-    pub max_wait_secs: u64,
     #[serde(default = "default_heartbeat")]
     pub heartbeat_secs: u64,
-    #[serde(default = "default_models_ttl")]
-    pub models_ttl_secs: u64,
-    #[serde(default = "default_stream_idle")]
-    pub stream_idle_secs: u64,
-    #[serde(default = "default_request_timeout")]
-    pub request_timeout_secs: u64,
     #[serde(default = "default_max_inflight")]
     pub max_inflight: usize,
+    #[serde(default = "default_max_wait")]
+    pub max_wait_secs: u64,
+    #[serde(default = "default_models_ttl")]
+    pub models_ttl_secs: u64,
+    #[serde(default = "default_request_timeout")]
+    pub request_timeout_secs: u64,
+    #[serde(default = "default_stream_idle")]
+    pub stream_idle_secs: u64,
     #[serde(default)]
     pub strict_passthrough: bool,
 }
@@ -146,7 +150,7 @@ impl Default for HistoryCfg {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
 pub struct DashboardCfg {
     #[serde(default = "default_dashboard_window_days")]
     pub default_window_days: u64,
@@ -163,20 +167,22 @@ impl Default for DashboardCfg {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
 pub struct GovernorCfg {
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// Operator-pinned per-model concurrency caps.
+    /// Operator-pinned per-model concurrency caps. Ordered (not a `HashMap`)
+    /// so both `config.json` and `/api/config` serialize deterministically —
+    /// a hash-ordered map made two saves of the same config differ.
     #[serde(default)]
-    pub overrides: HashMap<String, usize>,
+    pub overrides: BTreeMap<String, usize>,
 }
 
 impl Default for GovernorCfg {
     fn default() -> Self {
         Self {
             enabled: true,
-            overrides: HashMap::new(),
+            overrides: BTreeMap::new(),
         }
     }
 }
@@ -189,7 +195,7 @@ pub struct User {
     pub role: Role,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     /// An admin that can never be deleted (so the last admin can't vanish).

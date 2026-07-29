@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 pub const SAMPLE_SECS: u64 = 300;
 const MAX_EXPOSITION_LINE_BYTES: usize = 1024 * 1024;
@@ -25,10 +26,13 @@ struct MetricKey {
     labels: BTreeMap<String, String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+/// One metric series at one instant. Fields are declared in ASCII order:
+/// this type is served inside `/api/dashboard`, where declaration order is
+/// the wire order — see the module docs in `src/api.rs`.
+#[derive(Clone, Debug, PartialEq, Serialize, ToSchema)]
 pub struct MetricValue {
-    pub metric: String,
     pub labels: BTreeMap<String, String>,
+    pub metric: String,
     pub value: f64,
 }
 
@@ -311,13 +315,14 @@ struct HistoryInner {
     last_sample_boot: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+/// ASCII-ordered: served inside `/api/dashboard` (see `src/api.rs`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, ToSchema)]
 pub struct HistoryDiagnostics {
-    pub valid_samples: usize,
-    pub skipped_records: usize,
-    pub skipped_metric_lines: usize,
-    pub normalized_series: usize,
     pub legacy_resets_inferred: usize,
+    pub normalized_series: usize,
+    pub skipped_metric_lines: usize,
+    pub skipped_records: usize,
+    pub valid_samples: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -328,19 +333,22 @@ pub struct HistoryStatus {
     pub compaction_pending: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+/// ASCII-ordered: served inside `/api/dashboard` (see `src/api.rs`).
+#[derive(Clone, Debug, PartialEq, Serialize, ToSchema)]
 pub struct CapacityRollup {
     pub average_rpm: f64,
     pub latest_rpms: Vec<usize>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+/// ASCII-ordered: served inside `/api/dashboard` (see `src/api.rs`).
+#[derive(Clone, Debug, PartialEq, Serialize, ToSchema)]
 pub struct RollupPoint {
+    /// Absent for a bucket sampled before capacity was recorded.
+    pub capacity: Option<CapacityRollup>,
+    pub duration_seconds: u64,
     pub from: u64,
     pub to: u64,
-    pub duration_seconds: u64,
     pub values: Vec<MetricValue>,
-    pub capacity: Option<CapacityRollup>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -356,7 +364,8 @@ pub struct Rollup {
     pub history_revision: u64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+/// ASCII-ordered: served inside `/api/dashboard/now` (see `src/api.rs`).
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct Tail {
     pub base_history_revision: u64,
     pub from: Option<u64>,
