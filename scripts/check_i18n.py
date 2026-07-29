@@ -408,7 +408,89 @@ def lint_retired_vocabulary(name: str, raw: str) -> list:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Selftest — prove the lints still bite
+#
+# `locale_v1.py --selftest` has done this for the validator since PR 5, with a
+# negative fixture per check. This lint had no equivalent, so every time its
+# holes were closed the injections that proved the fix lived in a scratch
+# directory and evaporated. Three of the four holes below were opened or missed
+# by a change that left `i18n OK` on screen.
+#
+# Fixtures are source snippets rather than files, because the unit under test is
+# a scanner over page source. Each is spliced into a synthetic page and must trip
+# its OWN check; the CONTROL rows must trip nothing, because a lint that flags
+# CSS and class attributes gets switched off.
+
+SELFTEST_CASES = [
+    # (label, snippet, expected: "untagged" | "retired" | None)
+    ("assignment-single", "const zzq = 'Some fresh label here';", "untagged"),
+    ("assignment-double", 'const zzq = "Some fresh label here";', "untagged"),
+    ("equality-compare", "if (x === 'Some fresh label here') {}", "untagged"),
+    ("textContent-sink", "el.textContent = 'Some fresh label here';", "untagged"),
+    ("innerHTML-sink", "el.innerHTML = 'Some fresh label here';", "untagged"),
+    ("adjacent-arg", "bar(v.toFixed(1), 'Some fresh label here');", "untagged"),
+    ("statement-boundary", "el.style.width = w; bar('Some fresh label here');", "untagged"),
+    ("colon-prefixed-prose", "const z = `<div>note: some fresh label</div>`;", "untagged"),
+    ("template-text-node", "const z = `<div><span>Some fresh label</span></div>`;", "untagged"),
+    ("display-call-arg", "prow('Some fresh label here', 1);", "untagged"),
+    ("retired-in-markup", "const z = `<div>Harness</div>`;", "retired"),
+    # A real multi-word retired key, wrapped. NOT "Latency breakdown" — that is
+    # the REPLACEMENT term. Using it here is how a scratch test that grepped for
+    # a substring reported this working when only the prose scan had fired.
+    ("retired-across-newline", "const z = `<div>Where time\n  goes</div>`;", "retired"),
+    ("retired-in-comment", "/* Harness was retired; do not reintroduce */", None),
+    ("css-declaration", "const z = 'display:flex;gap:20px';", None),
+    ("css-single-value", "const z = 'position:relative';", None),
+    ("class-attribute", 'const z = `<div class="logo cdnchip"></div>`;', None),
+    ("real-machinery", "document.querySelector('#tab-models');", None),
+    ("frozen-unit", "const z = 'tok/s';", None),
+    ("lowercase-token", "const z = 'sticky';", None),
+]
+
+SELFTEST_PAGE = """<!doctype html><html><body>
+<script type="application/json" id="i18n-catalog">{"locale":"en-US","messages":{}}</script>
+<script>
+%s
+</script>
+</body></html>
+"""
+
+
+def selftest() -> int:
+    """Each snippet must trip its OWN check; controls must trip nothing."""
+    failures = []
+    for label, snippet, want in SELFTEST_CASES:
+        page = SELFTEST_PAGE % snippet
+        found = set()
+        if lint_untagged("selftest", page):
+            found.add("untagged")
+        if lint_retired_vocabulary("selftest", page):
+            found.add("retired")
+        if want is None:
+            if found:
+                failures.append(f"{label}: expected to pass, tripped {sorted(found)}")
+            else:
+                print(f"  ok  {label:24} passes")
+        elif want not in found:
+            failures.append(
+                f"{label}: expected {want!r}, tripped {sorted(found) or 'nothing'}"
+            )
+        else:
+            print(f"  ok  {label:24} trips {want}")
+
+    if failures:
+        print("\nselftest FAILED:")
+        for f in failures:
+            print("  -", f)
+        return 1
+    print(f"\nselftest ok — {len(SELFTEST_CASES)} cases, every check observed to fail")
+    return 0
+
+
 def main() -> int:
+    if "--selftest" in sys.argv[1:]:
+        return selftest()
     errors = []
     referenced = set()
 

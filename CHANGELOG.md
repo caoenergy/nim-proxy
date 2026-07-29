@@ -120,6 +120,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `.toFixed(` anywhere on a line exempted every string beside it. That is how
     `no eligible traffic` rendered in English on a line CI called clean.
 
+  `scripts/check_i18n.py --selftest` now exists, matching `locale_v1.py`'s. Its
+  19 cases are all real false negatives that once printed `i18n OK`, and the
+  controls are the strings it must never flag — CSS declarations, class
+  attributes, frozen units. It was missing while this lint shipped four separate
+  blind spots, so each round of injections proving a fix lived in a scratch
+  directory and evaporated. Reverting any one of the fixes now fails CI.
+
   A later review pass found a fourth hole that the widening itself opened — the
   "this is an attribute value" guard allowed whitespace before the `=`, which
   exempted every JS assignment and comparison (`const x = 'label'`,

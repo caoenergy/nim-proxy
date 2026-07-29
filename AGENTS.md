@@ -117,8 +117,37 @@ broken.
 
 Write the check first when the change is behavioral. A test that has never
 been observed to fail has not been shown to test anything: make it fail, then
-make it pass. This is why `scripts/locale_v1.py --selftest` exists, and why
-the locale fixtures were committed one commit before the validator.
+make it pass. This is why `scripts/locale_v1.py --selftest` and
+`scripts/check_i18n.py --selftest` exist, and why the locale fixtures were
+committed one commit before the validator.
+
+**A proof you ran by hand is not a proof — it is a rehearsal.** If no committed
+check covers the thing you are about to change, *building that check is the
+first deliverable*, before the change. Not after, and not "noted as a gap."
+
+This is the rule most often broken here, and it is broken by doing extra work,
+not less. `src/setup.html` was verified by a hand-built browser harness **three
+separate times** — the harness thrown away each time and "setup.html has no
+render coverage" written into the CHANGELOG, a knowledge page, and a PR body as
+a known gap. Three throwaway proofs cost more than one committed check and
+leave nothing behind. `check_i18n.py` had no `--selftest` while its lint shipped
+three blind spots, so each round of injections that proved a fix evaporated with
+the scratch directory.
+
+Two tells that you are doing it:
+
+- You are about to write "no check covers this" — that sentence is a work item,
+  not a disclosure.
+- Your Proof line names a command you had to construct in a scratch directory.
+  Ask whether it belongs in `scripts/` instead. If it would catch a regression
+  tomorrow, it does.
+
+Scratch injection is still the right way to prove a *committed* check bites —
+you cannot commit a broken page. Prove it by hand, then make the assertion
+permanent. And assert on **which** check fired, not on a substring of the
+output: a scratch test that grepped for `Latency` reported the retired-term scan
+working when only the prose scan had fired, because `Latency breakdown` is the
+replacement term, not a retired one.
 
 **Report what happened.** If a check was skipped, say it was skipped. A green
 summary that omits the unrun check is worse than no summary.
@@ -154,7 +183,7 @@ actually covers what you changed:
 | Page *behavior* | `node scripts/render_check.js` (+ `--escape-probe`), and `--page setup` for the wizard — renders against captured payloads, hovers every chart, drives the wizard, fails on any uncaught page error; nothing else proves the code ran |
 | Page *layout* | your eyes. Clipping is a layout property and no script here judges it |
 | Number/date/duration formatting | `TZ=UTC LC_ALL=en_US.UTF-8 node scripts/formatter_fixture.js --check` (golden; extracts the real function bodies, and refuses to run unpinned) |
-| Strings, catalog, any new UI text | `python3 scripts/check_i18n.py` (round-trip + untagged-string lint) |
+| Strings, catalog, any new UI text | `python3 scripts/check_i18n.py` (round-trip + untagged-string lint); `--selftest` proves the lint still bites |
 | A locale file | `python3 scripts/locale_v1.py --all`; `--selftest` proves the validator still bites |
 | Any change to English source text | `python3 scripts/gen_pseudolocale.py --check` |
 | Handlers or wire types | `UPDATE_OPENAPI=1 cargo test --test openapi`, then commit `openapi.json` |

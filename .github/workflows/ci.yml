@@ -73,6 +73,11 @@ jobs:
           TZ: UTC
           LC_ALL: en_US.UTF-8
         run: node scripts/formatter_fixture.js --check
+      - name: i18n lint self-test
+        # Same reason as locale-v1's below, and this one was missing while the
+        # lint shipped three separate blind spots. Every case here is a real
+        # false negative that once reported `i18n OK`.
+        run: python3 scripts/check_i18n.py --selftest
       - name: i18n catalog and untagged-string lint
         run: python3 scripts/check_i18n.py
       - name: locale-v1 self-test
