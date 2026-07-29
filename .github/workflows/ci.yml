@@ -56,6 +56,14 @@ jobs:
           PY
             node --check "$RUNNER_TEMP/$page.js"
           done
+      - name: Formatter output is unchanged
+        # Pins number/duration/date/percent output against a golden fixture.
+        # TZ and locale are fixed because these formatters read the catalog
+        # locale and the system zone; an unpinned run encodes the runner.
+        env:
+          TZ: UTC
+          LC_ALL: en_US.UTF-8
+        run: node scripts/formatter_fixture.js --check
       - name: i18n catalog and untagged-string lint
         run: python3 scripts/check_i18n.py
       - name: locale-v1 self-test

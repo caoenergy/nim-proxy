@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Numbers, durations, and dates in the dashboard are formatted with `Intl`,
+  keyed to the interface's locale rather than the browser's. Two long-standing
+  rounding bugs go with it: `999,999` rendered as `1000.0K` instead of `1M`, and
+  values above a trillion rendered as `1000.0B` because there was no `T` tier.
+  Durations now read `1.0 sec` rather than `1.0 s`, matching the `ms` and `min`
+  forms and what `Intl` considers correct for en-US.
+
 - Dashboard and setup-wizard labels now use standard ops-dashboard vocabulary
   throughout. `Harness`/`Harnesses` become **Client**/**Clients**; the
   dashboard's `window` becomes **time range** (the rate-limit rolling window

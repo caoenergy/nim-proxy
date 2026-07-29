@@ -644,18 +644,84 @@ function applyStatic(root) {
 const RAMP = ['#141A0E','#233312','#33501A','#4E7A0F','#76B900','#A7D65A'];
 const MED = '#A7D65A', P95 = '#6F7767';   // quantile pair: filled median, muted p95
 
-/* ---------- formatting ---------- */
-const fmt = n => !isFinite(n) ? '–'
-  : Math.abs(n) >= 1e9 ? (n/1e9).toFixed(1)+'B'
-  : Math.abs(n) >= 1e6 ? (n/1e6).toFixed(1)+'M'
-  : Math.abs(n) >= 1e4 ? (n/1e3).toFixed(1)+'K'
-  : Math.abs(n) >= 100 ? Math.round(n).toLocaleString()
-  : Math.abs(n) >= 10 ? n.toFixed(1).replace(/\.0$/,'')
-  : n.toFixed(2).replace(/\.?0+$/, '');
-const secs = s => !isFinite(s) ? '–' : s < 1 ? Math.round(s*1000)+' ms' : s < 90 ? s.toFixed(1)+' s' : Math.round(s/60)+' min';
+/* ---------- formatting ----------
+   Numbers, durations and dates follow the CATALOG's locale, not the browser's.
+   A dashboard rendered in German should not group thousands the American way
+   because the operator's OS happens to be en-US. Formatters are constructed
+   once — Intl constructors are expensive and these run inside render loops.
+
+   Thresholds are deliberately unchanged from the hand-rolled versions. Intl's
+   own compact notation would kick in at 1,000 ("1K"); this dashboard shows
+   exact counts up to 10,000 because request counts in the hundreds are
+   meaningful and "1.2K" is not. */
+/* A malformed tag (e.g. the POSIX spelling "en_US") makes every Intl
+   constructor below throw at module scope, which would leave the page dead
+   rather than mis-formatted. Fall back loudly instead. */
+const LOCALE = (() => {
+  const tag = I18N.locale || 'en-US';
+  try { new Intl.NumberFormat(tag); return tag; }
+  catch { console.error('invalid catalog locale', tag, '- falling back to en-US'); return 'en-US'; }
+})();
+const NF = (opts) => new Intl.NumberFormat(LOCALE, opts);
+const NUM_COMPACT = NF({ notation: 'compact', maximumFractionDigits: 1 });
+const NUM_GROUPED = NF({ maximumFractionDigits: 0 });
+const NUM_1DP = NF({ maximumFractionDigits: 1 });
+const NUM_2DP = NF({ maximumFractionDigits: 2 });
+const DUR_MS = NF({ style: 'unit', unit: 'millisecond', unitDisplay: 'short', maximumFractionDigits: 0 });
+const DUR_S = NF({ style: 'unit', unit: 'second', unitDisplay: 'short', minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const DUR_MIN = NF({ style: 'unit', unit: 'minute', unitDisplay: 'short', maximumFractionDigits: 0 });
+const AGO_D = NF({ style: 'unit', unit: 'day', unitDisplay: 'narrow', maximumFractionDigits: 0 });
+const AGO_H = NF({ style: 'unit', unit: 'hour', unitDisplay: 'narrow', maximumFractionDigits: 0 });
+const AGO_M = NF({ style: 'unit', unit: 'minute', unitDisplay: 'narrow', maximumFractionDigits: 0 });
+const AGO_S = NF({ style: 'unit', unit: 'second', unitDisplay: 'narrow', maximumFractionDigits: 0 });
+const DTF = (opts) => new Intl.DateTimeFormat(LOCALE, opts);
+const DAY_SHORT = DTF({ month: 'short', day: 'numeric' });
+const TIME_HM = DTF({ hour: '2-digit', minute: '2-digit' });
+/* Explicit components rather than dateStyle:'short', which abbreviates the
+   year to two digits — ambiguous on a dashboard that retains 30+ days. */
+const STAMP = DTF({ year: 'numeric', month: 'numeric', day: 'numeric',
+  hour: 'numeric', minute: '2-digit', second: '2-digit' });
+const SCOPE_TIME = DTF({ month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+/* Percentages shown to the operator. NOT for CSS: `style="width:12.3%"` must
+   stay locale-independent, because a comma-decimal locale would emit
+   `width:12,3%`, which is invalid CSS and silently collapses the element.
+   Every toFixed() that remains is either inside a style= attribute or SVG
+   path/geometry — both machine formats, never read by a human. */
+const PCT_0 = NF({ style: 'percent', maximumFractionDigits: 0 });
+const PCT_1 = NF({ style: 'percent', maximumFractionDigits: 1 });
+const PCT_2 = NF({ style: 'percent', maximumFractionDigits: 2 });
+const PCT_3 = NF({ style: 'percent', maximumFractionDigits: 3 });
+/* Trend chips carry an explicit sign; Intl places it per locale. */
+const PCT_SIGNED_0 = NF({ style: 'percent', maximumFractionDigits: 0, signDisplay: 'exceptZero' });
+const PCT_SIGNED_1 = NF({ style: 'percent', maximumFractionDigits: 1, signDisplay: 'exceptZero' });
+/* ratio in 0..1 */
+const pctOf = (r, digits) => (digits >= 3 ? PCT_3 : digits === 2 ? PCT_2 : digits === 1 ? PCT_1 : PCT_0).format(r);
+const NO_VALUE = '–';
+/* Chart X-axis label. Shared by both chart builders so there is exactly one
+   threshold to get wrong, and so the fixture can pin the real one. */
+const axisLabel = (ms, spanMs) => (spanMs > 36e5 * 26 ? DAY_SHORT : TIME_HM).format(ms);
+/* Intl.DateTimeFormat throws RangeError on a non-finite time, where
+   toLocaleString() used to return "Invalid Date". A throw here escapes the
+   template it sits in and blanks a whole panel, so degrade to a placeholder. */
+const at = (fmtr, ms) => (Number.isFinite(ms) ? fmtr.format(ms) : NO_VALUE);
+
+const fmt = n => !isFinite(n) ? NO_VALUE
+  : Math.abs(n) >= 1e4 ? NUM_COMPACT.format(n)
+  : Math.abs(n) >= 100 ? NUM_GROUPED.format(n)
+  : Math.abs(n) >= 10 ? NUM_1DP.format(n)
+  : NUM_2DP.format(n);
+const secs = s => !isFinite(s) ? NO_VALUE
+  : s < 1 ? DUR_MS.format(Math.round(s * 1000))
+  : s < 90 ? DUR_S.format(s)
+  : DUR_MIN.format(Math.round(s / 60));
+/* Compound elapsed time ("2d 3h"). Intl has no compound-duration formatter, so
+   each component is formatted separately in narrow unit style, which is what
+   produced the hand-written d/h/m/s suffixes in the first place. */
 const ago = s => { s = Math.max(0, Math.round(s));
   const d = Math.floor(s/86400), h = Math.floor(s%86400/3600), m = Math.floor(s%3600/60);
-  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : m ? `${m}m` : `${s}s`; };
+  return d ? `${AGO_D.format(d)} ${AGO_H.format(h)}`
+    : h ? `${AGO_H.format(h)} ${AGO_M.format(m)}`
+    : m ? AGO_M.format(m) : AGO_S.format(s); };
 
 /* ---------- typed dashboard rows ---------- */
 const rowKey = r => r.metric + '\0' +
@@ -853,9 +919,7 @@ function lineChart(el, series, unitFmt, opts = {}) {
     if (i > 0) g += `<text x="${W-3}" y="${y-4}" text-anchor="end">${unitFmt(v)}</text>`;
   }
   const span = t1 - t0;
-  const tlab = ms => span > 36e5 * 26
-    ? new Date(ms).toLocaleDateString([], {month:'short', day:'numeric'})
-    : new Date(ms).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  const tlab = ms => axisLabel(ms, span);
   g += `<text x="0" y="${H-4}" fill="${css('--ink-4')}">${tlab(t0)}</text><text x="${W}" y="${H-4}" text-anchor="end" fill="${css('--ink-4')}">${tlab(t1)}</text>`;
   for (const s of live) {
     const d = s.pts.map((p,i) => `${i?'L':'M'}${X(p.t).toFixed(1)},${Y(p.v).toFixed(1)}`).join('');
@@ -878,7 +942,7 @@ function lineChart(el, series, unitFmt, opts = {}) {
     const mx = X(best.t);
     xh.setAttribute('x1', mx); xh.setAttribute('x2', mx);
     let dots = '';
-    let html = `<div class="t">${new Date(best.t).toLocaleString()}</div>`;
+    let html = `<div class="t">${at(STAMP, best.t)}</div>`;
     for (const s of live) {
       let p = s.pts[0];
       for (const q of s.pts) if (Math.abs(q.t - best.t) < Math.abs(p.t - best.t)) p = q;
@@ -929,9 +993,7 @@ function stackChart(el, series, unitFmt, opts = {}) {
     if (i > 0) g += `<text x="${W-3}" y="${y-4}" text-anchor="end">${unitFmt(v)}</text>`;
   }
   const span = t1 - t0;
-  const tlab = ms => span > 36e5 * 26
-    ? new Date(ms).toLocaleDateString([], {month:'short', day:'numeric'})
-    : new Date(ms).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  const tlab = ms => axisLabel(ms, span);
   g += `<text x="0" y="${H-4}" fill="${css('--ink-4')}">${tlab(t0)}</text><text x="${W}" y="${H-4}" text-anchor="end" fill="${css('--ink-4')}">${tlab(t1)}</text>`;
   // Cumulative bands drawn top→bottom: each fills to the baseline, painting
   // over the shorter (lower) bands, so band k occupies [cum(k-1), cum(k)].
@@ -956,7 +1018,7 @@ function stackChart(el, series, unitFmt, opts = {}) {
     let dots = '';
     for (let k = bands.length - 1; k >= 0; k--)
       dots += `<circle cx="${mx}" cy="${Y(cum[k][bi])}" r="3" fill="${bands[k].color}" stroke="${css('--bg')}" stroke-width="1.5"/>`;
-    let html = `<div class="t">${new Date(ts[bi]).toLocaleString()}</div>`;
+    let html = `<div class="t">${at(STAMP, ts[bi])}</div>`;
     for (const s of bands)
       html += `<div class="row"><span><i class="sw" style="background:${s.color}"></i>${esc(s.name)}</span><b>${unitFmt(at(s, bi))}</b></div>`;
     html += `<div class="row" style="border-top:1px solid var(--hairline);margin-top:3px;padding-top:4px"><span>total</span><b>${unitFmt(totals[bi])}</b></div>`;
@@ -1082,7 +1144,7 @@ function deltaChip(pts, downIsGood) {
   const d = (b - a) / a * 100;
   if (!isFinite(d) || Math.abs(d) < 0.05) return '';
   const good = downIsGood ? d <= 0 : d >= 0;
-  return `<span class="chip ${good ? 'good' : 'bad'}" title="${t('dashboard.common.kpi.delta_tooltip')}">${d >= 0 ? '+' : ''}${Math.abs(d) >= 10 ? d.toFixed(0) : d.toFixed(1)}%</span>`;
+  return `<span class="chip ${good ? 'good' : 'bad'}" title="${t('dashboard.common.kpi.delta_tooltip')}">${(Math.abs(d) >= 10 ? PCT_SIGNED_0 : PCT_SIGNED_1).format(d / 100)}</span>`;
 }
 /* k: {icon, label, value, sub, delta?, pts?} */
 function kpiCards(el, defs, hero) {
@@ -1241,7 +1303,7 @@ function render() {
   const ttftMS = wgroups('nimproxy_ttft_seconds_sum', 'model'), ttftMC = wgroups('nimproxy_ttft_seconds_count', 'model');
   const tpsMS = wgroups('nimproxy_tokens_per_second_sum', 'model'), tpsMC = wgroups('nimproxy_tokens_per_second_count', 'model');
   const errRate = m => { const e = errByModel.get(m) || 0, all = e + (okByModel.get(m) || 0); return all ? e / all * 100 : NaN; };
-  const errPct = m => { const v = errRate(m); return isFinite(v) ? `${v.toFixed(v ? 1 : 0)}%` : '–'; };
+  const errPct = m => { const v = errRate(m); return isFinite(v) ? pctOf(v / 100, v ? 1 : 0) : NO_VALUE; };
   // Quality maps shared by the model table, finish-reason panel, and scorecard.
   const tpotMS = wgroups('nimproxy_tpot_seconds_sum', 'model'), tpotMC = wgroups('nimproxy_tpot_seconds_count', 'model');
   const finTotal = wgroups('nimproxy_finish_reason_total', 'model');
@@ -1250,7 +1312,7 @@ function render() {
   const tpotAvg = m => tpotMC.get(m) ? tpotMS.get(m) / tpotMC.get(m) : NaN;
   const truncPct = m => finTotal.get(m) ? (finLen.get(m) || 0) / finTotal.get(m) * 100 : NaN;
   const reasonPct = m => ctok.get(m) ? (reasoningByModel.get(m) || 0) / ctok.get(m) * 100 : NaN;
-  const pct = v => isFinite(v) ? v.toFixed(v && v < 10 ? 1 : 0) + '%' : '–';
+  const pct = v => isFinite(v) ? pctOf(v / 100, v && v < 10 ? 1 : 0) : NO_VALUE;
 
   /* ----- shared proxy / capacity aggregates ----- */
   const reqPts = rateSeries(s => sum(s.rows, 'nimproxy_requests_total'));
@@ -1331,7 +1393,7 @@ function renderOverview(c) {
   kpiCards($('o-kpis'), [
     { icon: 'pulse', label: t('dashboard.common.col.requests'), value: fmt(wreq), sub: windowLabel, delta: deltaChip(reqPts), pts: reqPts },
     { icon: 'stack', label: t('dashboard.common.col.tokens_out'), value: fmt(allC), sub: `${fmt(allP)} in`, delta: deltaChip(ctokPts), pts: ctokPts },
-    { icon: 'check', label: t('dashboard.common.kpi.success_rate'), value: wreq ? (okRatio * 100).toFixed(2).replace(/\.?0+$/, '') + '%' : '–',
+    { icon: 'check', label: t('dashboard.common.kpi.success_rate'), value: wreq ? pctOf(okRatio, 2) : NO_VALUE,
       sub: `${fmt(wok)} of ${fmt(wreq)}`, delta: deltaChip(okPts), pts: okPts },
   ], true);
 
@@ -1339,11 +1401,11 @@ function renderOverview(c) {
   lineChart($('o-traffic'), [{ name: 'req/min', color: MED, pts: reqPts, area: true }], fmt, { height: 220 });
 
   $('o-rings').innerHTML = '<div class="ringwrap" id="o-ring-cap"></div><div class="ringwrap" id="o-ring-ok"></div>';
-  ringGauge($('o-ring-cap'), capRatio, Math.round(capRatio * 100) + '%', capColor,
+  ringGauge($('o-ring-cap'), capRatio, pctOf(capRatio, 0), capColor,
     'Capacity used', `${fmt(rpmNow)} / ${fmt(capacity)} rpm · ${cfg.lanes} key${cfg.lanes === 1 ? '' : 's'}`);
   const errShare = wreq ? (wreq - wok) / wreq * 100 : 0;
-  ringGauge($('o-ring-ok'), okRatio, wreq ? Math.round(okRatio * 100) + '%' : '–', okColor,
-    'Success rate', `errors ${errShare.toFixed(errShare && errShare < 10 ? 1 : 0)}% · ${fmt(cooldown429)} cooldowns`);
+  ringGauge($('o-ring-ok'), okRatio, wreq ? pctOf(okRatio, 0) : NO_VALUE, okColor,
+    'Success rate', `errors ${pctOf(errShare / 100, errShare && errShare < 10 ? 1 : 0)} · ${fmt(cooldown429)} cooldowns`);
   $('o-health').innerHTML =
     metricRow(t('dashboard.common.row.active_now'), fmt(sum(rows, 'nimproxy_active_requests'))) +
     metricRow(t('dashboard.common.row.queued'), fmt(sum(rows, 'nimproxy_queue_depth'))) +
@@ -1539,13 +1601,13 @@ function renderClients(c) {
   const tile = (label, v, unit) => `<div class="tile"><div class="tlabel">${label}</div><div class="tval">${v}${unit ? `<span class="unit">${unit}</span>` : ''}</div></div>`;
   $('h-kpis').innerHTML =
     tile(t('dashboard.clients.tile.clients'), clients.length) +
-    tile(t('dashboard.clients.tile.streaming_share'), totGen ? Math.round(totStreamT / totGen * 100) + '%' : '–') +
+    tile(t('dashboard.clients.tile.streaming_share'), totGen ? pctOf(totStreamT / totGen, 0) : NO_VALUE) +
     tile(t('dashboard.clients.tile.avg_tools'), oToolsN ? fmt(oTools / oToolsN) : '–') +
     tile(t('dashboard.clients.tile.avg_messages'), oMsgsN ? fmt(oMsgs / oMsgsN) : '–') +
-    tile(t('dashboard.clients.tile.requests_using_tools'), totGen ? Math.round(totToolReq / totGen * 100) + '%' : '–');
+    tile(t('dashboard.clients.tile.requests_using_tools'), totGen ? pctOf(totToolReq / totGen, 0) : NO_VALUE);
   barList($('h-toolint'), clients.map(cl => ({ name: cl, v: toolsAvg(cl), color: clientColor(cl) })), fmt);
   barList($('h-depth'), clients.map(cl => ({ name: cl, v: msgsAvg(cl), color: clientColor(cl) })), fmt);
-  barList($('h-temp'), clients.map(cl => ({ name: cl, v: tempAvg(cl), color: clientColor(cl) })), v => v.toFixed(2));
+  barList($('h-temp'), clients.map(cl => ({ name: cl, v: tempAvg(cl), color: clientColor(cl) })), v => NUM_2DP.format(v));
   barList($('h-streammix'), clients.map(cl => ({ name: cl, v: streamPct(cl), color: clientColor(cl) })), v => Math.round(v) + '%', 100);
   /* requested output budget — avg of the max_tokens the client asked for.
      Hidden until at least one client sent a cap. */
@@ -1583,7 +1645,7 @@ function renderReliability(c) {
   const slo = (nowData?.slo_target_percent ?? 99.9) / 100;
   const availability = eligible ? success / eligible : NaN;
   const availTxt = isFinite(availability)
-    ? (availability * 100).toFixed(availability < 0.9995 ? 2 : 3).replace(/\.?0+$/, '') + '%'
+    ? pctOf(availability, availability < 0.9995 ? 2 : 3)
     : '–';
   const met = isFinite(availability) && availability >= slo;
   const budget = !isFinite(availability) ? 0
@@ -1639,7 +1701,7 @@ function renderReliability(c) {
       <div><div class="tlabel">Queued</div><div style="font-size:26px;font-weight:600;color:var(--amber)">${fmt(que)}</div></div>
     </div>
     <div class="segbar" style="height:8px;border-radius:99px;margin:12px 0">${act + que ? `<div style="width:${(act / (act + que) * 100)}%;background:var(--green)"></div><div style="width:${(que / (act + que) * 100)}%;background:var(--amber)"></div>` : '<div style="width:100%;background:var(--track)"></div>'}</div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--hairline)"><span class="tlabel">Error rate</span><span style="font:600 15px var(--mono);color:${errN ? 'var(--red)' : 'var(--ink-3)'}">${wreq ? (errN / wreq * 100).toFixed(1) + '%' : '–'}</span></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--hairline)"><span class="tlabel">Error rate</span><span style="font:600 15px var(--mono);color:${errN ? 'var(--red)' : 'var(--ink-3)'}">${wreq ? pctOf(errN / wreq, 1) : NO_VALUE}</span></div>
     <div class="segbar" style="height:6px;border-radius:99px;margin-top:8px;gap:1px">${taxCounts.length ? taxCounts.map(x => `<div style="width:${(x.n / taxTot * 100).toFixed(1)}%;background:${x.color}" title="${esc(x.label)}: ${fmt(x.n)}"></div>`).join('') : '<div style="width:100%;background:var(--track)"></div>'}</div>`;
 
   lineChart($('chart-reqrate'), [{ name: 'requests/min', color: MED, pts: reqPts, area: true }], fmt, { height: 150 });
@@ -1721,7 +1783,7 @@ function renderReliability(c) {
     [{ label: t('dashboard.common.col.reason'), align: 'l', str: true }, { label: t('dashboard.common.col.count') }, { label: t('dashboard.common.col.share') }],
     bad.map(([s, n]) => ({
       vals: [reason(s), n, n / totReq * 100],
-      cells: [esc(reason(s)), fmt(n), (n / totReq * 100).toFixed(1) + '%'],
+      cells: [esc(reason(s)), fmt(n), pctOf(n / totReq, 1)],
     })), { defaultIdx: 1, maxH: 240, empty: t('dashboard.reliability.empty.no_errors') });
 
   $('table-reliability').innerHTML =
@@ -1797,7 +1859,7 @@ function renderCapacity(c) {
         <span style="font-size:34px;font-weight:600;letter-spacing:-1px;color:${shortRpm > 0 ? 'var(--amber)' : 'var(--ink-1)'}">${fmt(shortRpm)}</span>
         <span style="font:400 12px var(--mono);color:var(--ink-3)">Peak shortfall · rpm</span></div>
       <div style="font:400 11.5px var(--mono);color:var(--ink-25);margin-top:6px">
-        avg ${isFinite(averageUtil) ? Math.round(averageUtil * 100) + '%' : '–'} · peak ${Math.round(peak.rpm / peak.capacity * 100)}%
+        avg ${isFinite(averageUtil) ? pctOf(averageUtil, 0) : NO_VALUE} · peak ${pctOf(peak.rpm / peak.capacity, 0)}
         of capacity at the time${unknownCapacity ? ` · ${unknownCapacity} interval${unknownCapacity === 1 ? '' : 's'} with no capacity data` : ''}
       </div>`;
   }
@@ -1846,7 +1908,7 @@ function renderCapacity(c) {
   ], lanes.map(l => ({
     vals: [l.name, l.cur, l.cur / totalLane * 100, l.currentRpm, l.b429, l.bOther],
     cells: [`<i class="sw" style="background:${laneColor(l.i)}"></i>${esc(l.name)}`,
-      fmt(l.cur), (l.cur / totalLane * 100).toFixed(0) + '%', `${fmt(l.currentRpm)} / ${laneRpm(l.i)}`,
+      fmt(l.cur), pctOf(l.cur / totalLane, 0), `${fmt(l.currentRpm)} / ${laneRpm(l.i)}`,
       `<span class="${l.b429 ? 'warnc' : 'dim'}">${fmt(l.b429)}</span>`,
       `<span class="${l.bOther ? 'critc' : 'dim'}">${fmt(l.bOther)}</span>`],
   })), { defaultIdx: 1, maxH: 360, minW: 560, empty: t('dashboard.common.empty.no_keys_configured') });
@@ -2059,8 +2121,8 @@ function renderServer() {
   const ovr = Object.entries(sv.governor.overrides || {});
   const retainedFrom = sv.history.available_from == null
     ? 'No data yet'
-    : new Date(+sv.history.available_from * 1000).toLocaleString();
-  const historyBytes = new Intl.NumberFormat().format(+sv.history.file_bytes || 0);
+    : at(STAMP, +sv.history.available_from * 1000);
+  const historyBytes = NUM_GROUPED.format(+sv.history.file_bytes || 0);
   $('setbody').innerHTML = `
     <div class="card mb">
       <h2>API access mode
@@ -2353,10 +2415,8 @@ function presetLabel() {
   return ({ '3600': '1h', '21600': '6h', '86400': '24h', '604800': '7d', '2592000': '30d' })[mode.preset] || '';
 }
 
-const scopeDate = seconds => new Date(seconds * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
-const scopeTime = seconds => new Date(seconds * 1000).toLocaleString([], {
-  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-});
+const scopeDate = seconds => at(DAY_SHORT, seconds * 1000);
+const scopeTime = seconds => at(SCOPE_TIME, seconds * 1000);
 
 function updateScope() {
   if (!rangeData) return;
