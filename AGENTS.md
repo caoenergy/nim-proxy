@@ -16,20 +16,34 @@ auth posture and input sanitizing before editing.
 
 ## How to work here
 
-**Plan → Act → Verify, at every scale.** Not once per release — once per task,
-and again per subtask. A "task" is any edit you are about to make.
+**Every task gets a visible Plan → Act → Verify.** A task is any edit you are
+about to make — not a release, not a PR. Sub-tasks get their own loop.
 
-Before editing, write down three things:
+**The plan is output, not thought.** Before the first tool call that changes a
+file, your reply must contain these four lines. If they are not in the reply,
+you have not planned:
 
-1. **Outcome** — what will be true after this change that is not true now.
-2. **Proof** — the exact command or observation that will show it, *and how it
-   would look if the change were wrong*. If you cannot describe the failing
-   case, you do not have a check; find a different proof.
-3. **Constraint** — which `knowledge/` page governs this area. Read it. The
-   reasoning that limits your change is probably already recorded.
+- **Outcome** — what will be true after this change that is not true now.
+- **Proof** — the exact command, *and what its output looks like if the change
+  is wrong*. No describable failing case means it is not a check; find a
+  different proof.
+- **Constraint** — the `knowledge/` page governing this area, read **before**
+  editing, and what in it limits this change. "Nothing governs this" is a
+  valid answer only after looking.
+- **Rung** — which rung of the ladder below you landed on, and why the ones
+  above it did not apply. **Every change**, not only new files.
 
-Then act. Then run the proof you named — not a different, easier one, and not
+Then act. Then run the proof you named — that one, not an easier one, and not
 a batch of unrelated green checks at the end.
+
+**Numbers are measured, never predicted.** Never write a count, percentage, or
+test total you did not just read from command output. If you expect a number
+to change, run the command and quote what it said.
+
+**A green first run is a claim, not a result.** If a check passes the first
+time, say how you know it could have failed. A check nobody has watched fail
+is decoration — see the traps below for four that passed while the page was
+broken.
 
 Write the check first when the change is behavioral. A test that has never
 been observed to fail has not been shown to test anything: make it fail, then
@@ -53,8 +67,8 @@ this ladder and stop at the first rung that answers:
 6. One line? → one line.
 7. Only then: the minimum that works.
 
-Say which rung you landed on and why the ones above it did not apply. New
-components are pinned at the version you got working (`=x.y.z`).
+The rung goes in the plan above, for every change — not only when adding a
+file. New components are pinned at the version you got working (`=x.y.z`).
 
 ## What proves what
 
