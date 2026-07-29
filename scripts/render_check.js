@@ -43,7 +43,13 @@ const localeArg = (() => {
 const escapeProbe = args.includes('--escape-probe');
 // Appended to every catalog value under --escape-probe. See the mutation below.
 const PROBE_MARKER = 'Ampersand';
-const PROBE_SUFFIX = " Ampersand & Quote' <b>Tag</b>";
+// The `"` is not decoration. An unescaped value interpolated into a quoted
+// attribute inside an innerHTML string breaks OUT of the attribute, and the
+// parser then reads the rest as further attribute names — so a `<b` or `"`
+// shows up as an ATTRIBUTE NAME, which is unambiguous. Scanning attribute
+// VALUES cannot work: getAttribute() decodes entities, so a correctly-escaped
+// value and an unescaped one are byte-identical by the time the DOM has them.
+const PROBE_SUFFIX = ' Ampersand & Quote\' <b>Tag</b> DQ"';
 const PROBE_TAG_TEXT = 'Tag';
 
 /* ---------- locate a browser ---------------------------------------------- */
@@ -538,6 +544,19 @@ async function main() {
           if (!hostText.includes(${JSON.stringify(PROBE_MARKER)})) continue;
           bad.push({ dir: 'missing', text: hostText.trim().slice(0, 70),
                      el: host.className || host.nodeName });
+        }
+        // Attribute-sink under-escaping: the probe's double quote closed the
+        // attribute early, so the parser turned the remainder into attribute
+        // NAMES. A real attribute name can never contain <, ", ' or =.
+        // (No backticks in this comment — it lives inside a template literal.)
+        for (const el of document.querySelectorAll('*')) {
+          for (const a of el.getAttributeNames()) {
+            if (/[<>"'=]/.test(a)) {
+              bad.push({ dir: 'missing',
+                         text: 'attribute-name breakout: ' + a.slice(0, 40),
+                         el: (el.className || el.nodeName) });
+            }
+          }
         }
         return bad;
       })()`);

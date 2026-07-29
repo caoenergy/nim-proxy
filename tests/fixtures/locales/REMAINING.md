@@ -39,7 +39,15 @@ placeholders, because word order moves:
 | `5 · 0.17/req` | tool-intensity cell |
 | `3.89 tok` | head-to-head bar label |
 | `0 now` | KPI card sub |
+| `auto 29` | queue-wait axis mode label |
 | `3 models` · `Slot 1` | count fragments; `Slot` is the standard term, but the number makes it a message with `{n}` |
+
+**Four English plural ternaries live inside these runs** —
+`dashboard.html:1437` (`key(s)`), `:1484`, `:1529`, `:1602` (`model(s)`). They
+are the one shape no check here can see, because the English is the absence of a
+character in one branch rather than a string. They convert when their whole run
+does; see
+[plural-categories-not-ternaries](../../../knowledge/decisions/plural-categories-not-ternaries.md).
 
 **`Proxy`** — sidebar heading, plain untagged text.
 

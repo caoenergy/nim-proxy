@@ -48,6 +48,17 @@ def strip_comments(source: str) -> str:
     return re.sub(r"(?<![:'\"])//[^\n]*", "", source)
 
 
+def blank_comments(source: str) -> str:
+    """Like strip_comments, but preserves line count so reported line numbers
+    still match the file. A multi-line `/* */` collapsed to nothing shifts every
+    line after it."""
+    source = re.sub(
+        r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), source, flags=re.S
+    )
+    source = re.sub(r"<!--.*?-->", lambda m: "\n" * m.group(0).count("\n"), source, flags=re.S)
+    return re.sub(r"(?<![:'\"])//[^\n]*", "", source)
+
+
 def strip_scripts(source: str) -> str:
     """Drop executable <script> bodies; the runtime's own doc comment mentions
     these attribute names and would otherwise be scanned as markup."""
@@ -152,11 +163,21 @@ INTERPOLATION = re.compile(r"\$\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}")
 TEXT_NODE = re.compile(r">([^<>]+)<")
 # Attribute values are not text nodes. The localizable ones (title, alt,
 # placeholder, aria-label) have their own check; the rest are machinery.
-ATTR_VALUE = re.compile(r"=\s*$")
+#
+# The `=` must ABUT the quote, as it does in markup (`class="x"`). Allowing
+# whitespace exempted every JS assignment and comparison — `const x = 'label'`,
+# `el.textContent = 'label'`, `if (s === 'label')` — which is the most common
+# way to write a string in this file, and `.textContent =` is how the page
+# renders labels. Tightening this costs zero findings on either page.
+ATTR_VALUE = re.compile(r"[\w-]=$")
 # How far back to look for the machinery that governs a quoted string. Wide
-# enough to cover `document.querySelector(` and `.getAttribute(`, narrow enough
-# that unrelated code earlier on the same line does not grant an exemption.
+# enough to cover `document.querySelector(` and `.getAttribute(`.
 NOT_DISPLAY_WINDOW = 30
+# ...but the exemption belongs to the string that machinery GOVERNS, not to its
+# neighbours. `bar(y.padStart(3), 'label')` put `padStart(` inside the window
+# while the string is a different argument entirely, so an argument boundary
+# between the two cancels the exemption.
+ARG_BOUNDARY = re.compile(r"[,;]")
 # Contexts where a quoted string is machinery, not text for a human.
 NOT_DISPLAY = re.compile(
     r"querySelector|getElementById|createElementNS|setAttribute\(|getAttribute\(|"
@@ -183,7 +204,14 @@ def looks_like_prose(text: str) -> bool:
         return False
     # A whole inline style attribute is also style: `display:flex;gap:20px`
     # reads as prose to a word counter. CSS declarations, never text.
-    if re.match(r"^[a-z-]+\s*:", text):
+    #
+    # `^[a-z-]+:` alone was too greedy — it exempted `note: …`, `error: …`,
+    # `avg: …`, which are labels. A CSS declaration list either carries a `;`
+    # or its single value has no spaces (`display:flex`, `position:relative`);
+    # prose after the colon has spaces and no semicolon.
+    if re.match(r"^[a-z-]+\s*:", text) and (
+        ";" in text or " " not in text.split(":", 1)[1].strip()
+    ):
         return False
     if text == "use strict":
         return False
@@ -247,7 +275,13 @@ def lint_untagged(name: str, raw: str) -> list:
             # line. Matching per line meant one `.toFixed(` anywhere suppressed
             # every string beside it — which is how 'met', 'missed' and
             # 'no eligible traffic' render in English on a line CI calls clean.
-            if NOT_DISPLAY.search(before[-NOT_DISPLAY_WINDOW:]):
+            window = before[-NOT_DISPLAY_WINDOW:]
+            gov = None
+            for g in NOT_DISPLAY.finditer(window):
+                gov = g
+            # Exempt only if the machinery reaches THIS string — no argument or
+            # statement boundary in between.
+            if gov and not ARG_BOUNDARY.search(window[gov.end():]):
                 continue
             # `class="logo cdnchip"` is an attribute value, not display text.
             if ATTR_VALUE.search(before):
@@ -342,23 +376,35 @@ def lint_retired_vocabulary(name: str, raw: str) -> list:
                     f"standard vocabulary says {new!r}"
                 )
     # Everything outside the catalog block: markup, template literals, quoted
-    # strings. Comments are stripped so a note *about* a retirement is not
-    # itself a violation.
-    outside = strip_comments(
+    # strings. Comments are blanked rather than deleted so a note *about* a
+    # retirement is not itself a violation AND the reported line number still
+    # matches the file — collapsing multi-line /* */ blocks (this file is full
+    # of them) shifted every number after the first one, and the render gate's
+    # own comment says a gate that reports the wrong line is one nobody trusts.
+    outside = blank_comments(
         re.sub(
             r'<script type="application/json" id="i18n-catalog">.*?</script>',
-            "",
+            lambda m: "\n" * m.group(0).count("\n"),
             raw,
             flags=re.S,
         )
     )
-    for lineno, line in enumerate(outside.splitlines(), 1):
-        for old, new in RETIRED.items():
-            if old in line:
-                out.append(
-                    f"{name}:{lineno}: retired term {old!r} outside the catalog — "
-                    f"standard vocabulary says {new!r}"
-                )
+    # Whitespace-insensitive: a retired term wrapped across a line break is the
+    # same term to the operator reading the rendered page. The untagged-prose
+    # scan already spans newlines; this one guards a non-negotiable and must not
+    # be the weaker of the two.
+    flat = re.sub(r"\s+", " ", outside)
+    offsets = [m.start() for m in re.finditer(r"\S+", outside)]
+    for old, new in RETIRED.items():
+        needle = re.sub(r"\s+", " ", old)
+        for m in re.finditer(re.escape(needle), flat):
+            # Map the flattened offset back to a real line number.
+            word_index = flat.count(" ", 0, m.start())
+            src_pos = offsets[word_index] if word_index < len(offsets) else 0
+            out.append(
+                f"{name}:{outside.count(chr(10), 0, src_pos) + 1}: retired term "
+                f"{old!r} outside the catalog — standard vocabulary says {new!r}"
+            )
     return out
 
 

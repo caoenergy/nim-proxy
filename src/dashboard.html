@@ -604,17 +604,23 @@ const esc = s => String(s).replace(/[&<>"']/g, c =>
 const I18N = JSON.parse($('i18n-catalog').textContent);
 const MSG = I18N.messages;
 const rawMsg = id => (MSG[id] === undefined ? id : MSG[id].en);
-/* Placeholder values are escaped too: substitution happens after the message
-   is escaped, so an unescaped param would land raw in metricRow/tile/prow,
-   none of which escape their argument. Callers pass plain values. */
-function fill(s, p) {
+/* Substitution happens AFTER the message is escaped, so an unescaped param
+   would land raw in metricRow/tile/prow, none of which escape their argument.
+   The escaper is a PARAMETER, matching setup.html, because the two helpers need
+   opposite ones: t() lands in innerHTML and must escape its params, while
+   tRaw() lands in textContent and setAttribute, which parse no entities and
+   would render an escaped param as a visible "&amp;". Hardcoding esc() here
+   was latent rather than wrong — no tRaw() call site passes params today — but
+   two same-named functions with different contracts across two files is the
+   trap, not the bug. */
+function fill(s, p, e) {
   if (!p) return s;
-  for (const k in p) s = s.split('{' + k + '}').join(esc(p[k]));
+  for (const k in p) s = s.split('{' + k + '}').join(e(p[k]));
   return s;
 }
 const I18N_ATTRS = new Set(['title', 'placeholder', 'aria-label', 'alt']);
-const t = (id, p) => fill(esc(rawMsg(id)), p);
-const tRaw = (id, p) => fill(rawMsg(id), p);
+const t = (id, p) => fill(esc(rawMsg(id)), p, esc);
+const tRaw = (id, p) => fill(rawMsg(id), p, String);
 /* Static markup carries data-i18n="<id>" for content and
    data-i18n-attr="<attr>:<id>[,<attr>:<id>]" for attributes. */
 function applyStatic(root) {

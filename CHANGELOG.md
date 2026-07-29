@@ -53,17 +53,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that proves the page *runs*; `cargo test` asserts on served HTML text and
   `node --check` proves only that it parses.
 
-  `--escape-probe` enforces the escape-once rule in **both** directions. It
-  appends `Ampersand & Quote' <b>Tag</b>` to every catalog value: the `&` and
-  `'` come back as literal `&amp;` / `&#39;` if something escaped an
-  already-escaped value, and the `<b>` parses into a real DOM element if a value
-  reached a raw-HTML sink with no escaping at all. The first version carried no
-  tag and walked text nodes only, which made it a double-escape detector that
-  was blind to the missing-escape direction — the XSS direction — and blind to
-  every attribute sink (`title=`, `aria-label=`). Four deliberate defects were
-  injected to establish that: it caught two and passed the other two green. It
-  now scans `title`, `aria-label`, `placeholder` and `alt` alongside text, and
-  both previously-missed defects fail.
+  `--escape-probe` enforces the escape-once rule in **both** directions, at both
+  text and attribute sinks. It appends `Ampersand & Quote' <b>Tag</b> DQ"` to
+  every catalog value, and each character is load-bearing:
+
+  - `&` and `'` come back as literal `&amp;` / `&#39;` when something escaped an
+    already-escaped value.
+  - `<b>` parses into a real DOM element when a value reached a raw-HTML text
+    sink unescaped.
+  - `"` closes a quoted attribute early, so an unescaped value at an
+    *attribute* sink makes the parser read the remainder as attribute **names** —
+    and a real attribute name can never contain `<`, `"`, `'` or `=`.
+
+  That last one is not the obvious approach and the obvious approach does not
+  work: `getAttribute()` decodes entities, so a correctly-escaped and an
+  unescaped attribute value are byte-identical by the time the DOM holds them.
+  Scanning attribute values for the tag fires on eight legitimate attributes.
+
+  The first version carried no tag and walked text nodes only, making it a
+  double-escape detector blind to the missing-escape direction — the XSS
+  direction. Established by injection rather than by reading: of the defects
+  tried, the original probe caught a double-escape at a text sink and passed
+  under-escaping at both text and attribute sinks green. All of them now fail,
+  and the detector requires the probe's own marker in the same element so it
+  cannot mistake a legitimate `<b>` for a sink.
 
   The gate also asserts the status predicates agree. `IS_2XX` / `IS_ERR` are
   module-scope in `dashboard.html` specifically so it can evaluate them: the
@@ -85,7 +98,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - It scanned single-quoted strings only, so `src/setup.html`, which uses
     double quotes throughout, was effectively unscanned. Eight operator-facing
-    error messages sat behind that.
+    error messages sat behind that — a ninth was extracted at the same time but
+    the lint never demanded it, because it contains an underscore.
   - Nothing looked at text nodes inside template literals. `<span
     class="k">Superuser</span>` is neither a quoted string nor page markup —
     `strip_scripts()` deletes the script holding it. Sixteen labels lived there,
@@ -95,11 +109,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `.toFixed(` anywhere on a line exempted every string beside it. That is how
     `no eligible traffic` rendered in English on a line CI called clean.
 
-  It is still not proof that the pages contain no English: the prose detector
-  deliberately ignores lowercase single tokens, because those are usually enum
-  values and metric label values rather than text. `met` and `missed` were found
-  by reading, not by the lint. `tests/fixtures/locales/REMAINING.md` is the
-  measured inventory, and the settings surface remains out of scope until 0.6.7.
+  A later review pass found a fourth hole that the widening itself opened — the
+  "this is an attribute value" guard allowed whitespace before the `=`, which
+  exempted every JS assignment and comparison (`const x = 'label'`,
+  `el.textContent = 'label'`, `if (s === 'label')`). Tightening it costs zero
+  findings on either page, so the loose form was pure blind spot. Closed, with
+  the reviewer's eleven injections now caught and three legitimate-string
+  controls still correctly ignored.
+
+  It is still not proof that the pages contain no English, and three specific
+  shapes remain invisible:
+
+  - Lowercase single tokens, ignored deliberately because that shape is usually
+    an enum or metric label value. `met` and `missed` were found by reading.
+  - Prose inside a *nested* template literal, and prose in a template literal
+    with no tags around it (`` `Some label ${x}` ``) — the scan looks for text
+    between `>` and `<`. The two live leaks `errors 42% · 8 cooldowns` and
+    `0 now` are exactly that shape.
+  - An English plural written as control flow (`n === 1 ? '' : 's'`), where the
+    English is the absence of a character rather than a string. Four are still
+    live and named in `knowledge/decisions/plural-categories-not-ternaries.md`.
+
+  `tests/fixtures/locales/REMAINING.md` is the measured inventory, and the
+  settings surface remains out of scope until 0.6.7.
 
 - The dashboard and setup wizard now render their text from an embedded
   `en-US` message catalog rather than hardcoded literals — the groundwork for
@@ -219,9 +251,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   translated build.
 
 - **Reliability panels no longer contradict each other about what succeeded.**
-  Eight places decided "this request succeeded" by comparing the status label to
-  the literal `'200'`, and the label is whatever the upstream returned, passed
-  through verbatim. A single `204` was simultaneously counted as Success in the
+  Seven sites (eight occurrences) decided "this request succeeded" by comparing
+  the status label to the literal `'200'`, and the label is whatever the upstream
+  returned, passed through verbatim. A single `204` was simultaneously counted as Success in the
   stacked outcome chart, as an error in the "Outcomes per minute" chart directly
   above it, as an `HTTP 204` row in the table directly below, and excluded from
   the taxonomy entirely — so the Error rate percentage and the segbar rendered

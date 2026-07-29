@@ -13,7 +13,9 @@ timestamp: 2026-07-29T00:00:00Z
 
 ## Context
 
-Two labels pluralized themselves inline:
+Six labels pluralized themselves inline. Two are converted here; the other four
+are still doing it, and that is stated below rather than left to be discovered.
+The two converted:
 
 ```js
 `${cfg.lanes} enabled key${cfg.lanes === 1 ? '' : 's'}`
@@ -69,11 +71,48 @@ unreferenced, and the check would then demand their deletion. Writing
 - A third counted label should reuse the `KEY_PLURALS` instance rather than
   constructing another `Intl.PluralRules`; the formatter-caching reasoning in
   [intl-formatting](intl-formatting.md) applies unchanged.
-- English output is byte-identical to the ternaries, so this is invisible in the
-  shipped locale — which means the pseudolocale run is the only check that
-  observes it working. `node scripts/render_check.js --locale en-XA` shows the
-  counted runs accented.
-- The untagged-string lint still cannot see a ternary of this shape. If a third
-  one is written, nothing will complain. Recorded here rather than solved,
-  because a lint for "English grammar expressed as control flow" is not a lint
-  anyone knows how to write.
+- English output is byte-identical to the ternaries **for every count either
+  label can reach**, so this is invisible in the shipped locale — which means the
+  pseudolocale run is the only check that observes it working.
+  `node scripts/render_check.js --locale en-XA` shows the counted runs accented.
+
+  Not unconditionally identical, though: the new code wraps the count in
+  `fmt()`, so at n = 1000 the ternary rendered `1000` and the message renders
+  `1,000`, and at 10000 it renders `10K`. Neither is reachable — the rollup
+  budget is clamped to 1000 (`src/history.rs`) and the page requests 288 points,
+  while `cfg.lanes` is a key count — but "byte-identical" is a claim about the
+  code and this is the boundary where it stops being true. One consequence to
+  keep in mind if a counted label ever *can* reach those magnitudes:
+  `select(n)` reads the raw number while the surface shows `10K`, and there are
+  locales whose category depends on the surface form.
+- **Four ternaries of this shape are still live**, found by an adversarial
+  review reading the file rather than by any check:
+
+  | Site | Phrase |
+  |---|---|
+  | `dashboard.html:1437` | `${cfg.lanes} key${… ? '' : 's'}` — Overview ring gauge |
+  | `dashboard.html:1484` | `${models.length} model${… ? '' : 's'}` — Models KPI |
+  | `dashboard.html:1529` | same phrase — finish-reason count |
+  | `dashboard.html:1602` | same phrase — model-table count |
+
+  They are **not** converted here, deliberately. Each sits inside a composite
+  run that is still English end to end — `0 / 24 rpm · 3 keys`, `3 models · click
+  a column to sort` — and is listed under "composite runs built by
+  concatenation" in
+  [REMAINING.md](../../tests/fixtures/locales/REMAINING.md). Converting only the
+  plural half would mint six catalog ids per phrase while the words around them
+  stayed hardcoded, which buys nothing a translator can use. They convert when
+  their whole run does.
+
+  Note that `:1437` is the *same quantity* as the converted
+  `enabled_keys` set — the Capacity hero renders the plural set while the
+  Overview ring renders the ternary. That inconsistency is the cost of the
+  boundary above, and it is visible in the gate's en-XA output as
+  `[overview] "0 / 24 rpm · 3 keys"`.
+
+- The untagged-string lint cannot see a ternary of this shape at all: the
+  English is the *absence* of a character in one branch, not a string. Nothing
+  will complain about a seventh. Recorded rather than solved, because a lint for
+  "English grammar expressed as control flow" is not a lint anyone here knows
+  how to write — which is exactly why four of these survived a pass that was
+  looking for them.
