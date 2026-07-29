@@ -137,7 +137,7 @@
       "hash": "139a5981"
     },
     "dashboard.overview.performance.note": {
-      "en": "[ɱéđíáñ & ƥ95 áçŕóşş ŧĥé ŧíɱé ŕáñǥé escamotablee]",
+      "en": "[ɱéđíáñ & p95 áçŕóşş ŧĥé ŧíɱé ŕáñǥé escamotable]",
       "hash": "3f0caaba"
     },
     "dashboard.common.note.tokens_out": {
@@ -206,7 +206,7 @@
       "hash": "5c1a4d52"
     },
     "dashboard.clients.streammix.note": {
-      "en": "[% şŧŕéáɱéđ esca]",
+      "en": "[% şŧŕéáɱéđ esc]",
       "hash": "0c0b2363"
     },
     "dashboard.clients.maxtok.heading": {
@@ -362,12 +362,12 @@
       "hash": "0449c134"
     },
     "dashboard.models.col.avg_ttft": {
-      "en": "[Áṽǥ ŦŦƑŦ esc]",
+      "en": "[Áṽǥ TTFT e]",
       "desc": "Column header. 'TTFT' is an abbreviation and must survive verbatim.",
       "hash": "1a2a2e30"
     },
     "dashboard.models.col.avg_tps": {
-      "en": "[Áṽǥ ŧóķ/ş esc]",
+      "en": "[Áṽǥ tok/s e]",
       "desc": "Column header. 'tok/s' is a unit and must survive verbatim.",
       "hash": "cb513f6e"
     },
@@ -426,12 +426,12 @@
       "hash": "c4b167af"
     },
     "dashboard.reliability.row.dropped_503": {
-      "en": "[Đŕóƥƥéđ (óṽéŕŀóáđ 503) escamota]",
+      "en": "[Đŕóƥƥéđ (óṽéŕŀóáđ 503) escamot]",
       "desc": "'503' is an HTTP status and must survive verbatim.",
       "hash": "dc219614"
     },
     "dashboard.common.status.unauthorized_401": {
-      "en": "[Úñáúŧĥóŕíẑéđ (401) escamo]",
+      "en": "[Úñáúŧĥóŕíẑéđ (401) escam]",
       "desc": "'401' must survive verbatim.",
       "hash": "e31a10f2"
     },
@@ -449,7 +449,7 @@
       "hash": "904e6992"
     },
     "dashboard.reliability.row.json_mode": {
-      "en": "[ĴŞÓÑ ɱóđé esc]",
+      "en": "[JSON ɱóđé es]",
       "desc": "'JSON' must survive verbatim; only 'mode' translates.",
       "hash": "36636e63"
     },
@@ -459,7 +459,7 @@
       "hash": "d3a2c6a3"
     },
     "dashboard.common.status.rate_limited_429": {
-      "en": "[Ŕáŧé ŀíɱíŧéđ (429) escamo]",
+      "en": "[Ŕáŧé ŀíɱíŧéđ (429) escam]",
       "desc": "'429' must survive verbatim.",
       "hash": "2d8d2785"
     },

@@ -41,6 +41,11 @@ import pathlib
 import re
 import sys
 
+# One definition of the never-translate list, not two. check_i18n guards its
+# main(), so importing it is free of side effects, and a drifting second copy
+# would be worse than the coupling.
+from check_i18n import NEVER_TRANSLATE
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests/fixtures/locales"
 INLINE_OPEN = {"{b}"}
@@ -111,6 +116,19 @@ def validate(source: dict, candidate: dict, name: str) -> list:
         cap = s.get("maxLen")
         if cap and len(text) > cap:
             problems.append(("length", f"{name}: {mid} is {len(text)} chars, cap is {cap}"))
+
+        # Units, HTTP status codes and API identifiers carry the same meaning in
+        # every language. A machine translator will happily render "rpm" as
+        # "tr/min" or "429 retry" as "429 réessai", and the result validates
+        # against every other check while being wrong. Only tokens the SOURCE
+        # actually uses are required, so this never invents a constraint.
+        for token in sorted(NEVER_TRANSLATE):
+            if token in s["en"] and token not in text:
+                problems.append((
+                    "frozen",
+                    f"{name}: {mid} dropped or translated {token!r}, "
+                    f"which must survive verbatim in every locale",
+                ))
 
     return problems
 

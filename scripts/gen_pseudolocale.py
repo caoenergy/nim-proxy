@@ -27,6 +27,10 @@ import pathlib
 import re
 import sys
 
+# One definition of the never-translate list, shared with check_i18n and
+# locale_v1 rather than copied a third time.
+from check_i18n import NEVER_TRANSLATE
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 # Both catalogs: the wizard is half the surface en-XA has to prove out, and it
 # is where the placeholder-bearing messages live.
@@ -43,11 +47,20 @@ ACCENTS = str.maketrans(
 # Padding is Latin text, not filler glyphs, so a reviewer can tell an
 # over-long string from a rendering fault.
 PAD = "escamotable"
-SEGMENT = re.compile(r"(\{[^{}]*\})")
+# Two kinds of run survive untouched: {placeholders}, which must still
+# substitute, and the never-translate tokens, which carry the same meaning in
+# every language. Accenting `NIM` to `NÎM` made en-XA render a string no real
+# locale would ever produce, and hid the fact that the tokens need protecting
+# in translations too. Longest-first so `p50 / p95` wins over `p95`, and
+# `requests/min` over `req/min`.
+_TOKENS = "|".join(
+    re.escape(t) for t in sorted(NEVER_TRANSLATE, key=len, reverse=True)
+)
+SEGMENT = re.compile(r"(\{[^{}]*\}|" + _TOKENS + r")")
 
 
 def pseudo(text: str) -> str:
-    """Accent the prose, leave every {placeholder} alone, pad to ~135%."""
+    """Accent the prose, leave placeholders and frozen tokens alone, pad ~135%."""
     parts = SEGMENT.split(text)
     accented = "".join(p if SEGMENT.fullmatch(p) else p.translate(ACCENTS) for p in parts)
 
