@@ -132,6 +132,43 @@ DISPLAY_CALLS = re.compile(
 )
 SETTINGS_START = re.compile(r"function renderSettings\(")
 
+# The allowlist above only sees five call shapes, so every leak that survived
+# extraction lived in a shape it does not scan: `{name:'…'}` chart series,
+# array-literal taxonomy tables, object-literal reason maps, and bare prose in
+# template literals. This is the documented trap "strings passed as arguments
+# hide from string sweeps" — a lint that reports clean while ~40 English
+# strings render is worse than no lint.
+#
+# So: find quoted PROSE anywhere in the scanned script, and exclude what is
+# provably not display text rather than allowlisting the places prose may sit.
+QUOTED = re.compile(r"'([^'\\\n]{2,})'")
+# Contexts where a quoted string is machinery, not text for a human.
+NOT_DISPLAY = re.compile(
+    r"querySelector|getElementById|createElementNS|setAttribute\(|getAttribute\(|"
+    r"classList|\.style|addEventListener|removeEventListener|localStorage|"
+    r"nimproxy_|labels\[|dataset\.|\.dataset|JSON\.|console\.|new Intl|"
+    r"\.split\(|\.join\(|\.replace\(|padStart|toFixed|encodeURI|fetch\("
+)
+
+
+def looks_like_prose(text: str) -> bool:
+    """Human-facing text: a capitalised word, or two words with a space.
+
+    Deliberately NOT flagged: lowercase single tokens (enum values, metric
+    label values, CSS keywords), anything with an underscore or slash-prefix
+    (identifiers, selectors, paths), and anything already frozen.
+    """
+    if frozen(text) or "${" in text or "_" in text:
+        return False
+    if text.startswith(("#", ".", "/", "--", "http")):
+        return False
+    if not re.search(r"[A-Za-z]{3}", text):
+        return False
+    words = text.split()
+    if len(words) >= 2 and re.match(r"^[A-Za-z]", text):
+        return True
+    return bool(re.match(r"^[A-Z][a-z]{2,}$", text))
+
 
 def lint_runtime_helpers(name: str, raw: str) -> list:
     """Every i18n helper a page CALLS must be defined in that page.
@@ -162,6 +199,11 @@ def lint_untagged(name: str, raw: str) -> list:
     cut = SETTINGS_START.search(js)
     scanned = js[: cut.start()] if cut else js
 
+    # PUBLISHERS maps a model namespace to its vendor's brand name. Brand
+    # names are DATA — they arrive from the model id and are never translated,
+    # so the prose detector must not see this table. Excluded by design.
+    scanned = re.sub(r"const PUBLISHERS = \{.*?\n\};", "", scanned, flags=re.S)
+
     # chipHtml is excluded by design, not by oversight.
     scanned = re.sub(r"function chipHtml\(pub\) \{.*?\n\}", "", scanned, flags=re.S)
 
@@ -170,6 +212,14 @@ def lint_untagged(name: str, raw: str) -> list:
         if frozen(text):
             continue
         errors.append(f"{name}: untagged display string {text!r} — route it through t()")
+
+    for line in strip_comments(scanned).splitlines():
+        if NOT_DISPLAY.search(line):
+            continue
+        for m in QUOTED.finditer(line):
+            text = m.group(1)
+            if looks_like_prose(text):
+                errors.append(f"{name}: untagged prose {text!r} — route it through t()")
 
     # Localizable attributes carrying prose, with no data-i18n-attr beside them.
     markup = strip_scripts(raw)
