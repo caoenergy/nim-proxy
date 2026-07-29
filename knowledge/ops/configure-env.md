@@ -42,7 +42,7 @@ the contract.)
 NIM keys (per-key rpm, enable/disable, ownership), the upstream base URL,
 client API keys and the open/keyed API mode, limits (max_wait, heartbeat,
 stream_idle, request_timeout, models_ttl, max_inflight, strict_passthrough),
-the default dashboard window, history retention days, the
+the default time range, history retention days, the
 availability SLO, the model limits, and users/roles all live in the
 store and are edited from the dashboard. A Settings save validates the
 complete candidate, writes `config.json` atomically, and swaps the live

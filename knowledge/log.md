@@ -31,6 +31,15 @@ the two tables share sort state.
   README dashboard-tour section were updated to name the new labels; the
   `agent harness` prose describing what OpenCode/Codex *are* was deliberately
   left alone.
+- Adversarial review caught the one dangerous rename: the Access &amp; keys chip
+  reads `${k.in_window} / ${k.rpm}`, which is the **rate-limit** rolling
+  window, and a blanket `window` → `time range` pass had turned it into
+  "in range". That is the single place the two meanings had to stay apart, and
+  it is also factually wrong — reverted. Review also found five dashboard
+  `window` strings the pass missed (so two empty-state vocabularies were
+  visible at once), a `Per lane` heading left sitting above a `Key` table, a
+  `lane N` chip beside `Slot N`, `Peak shortfall` rendering without its rpm
+  unit, and a dead `sul` binding orphaned by the composite-row split.
 
 ## [2026-07-29] decision — lane cooldown naming, savings metric removed
 

@@ -157,7 +157,7 @@ tab. The default view follows now across the configured default time range
 instead of opening on an empty recent slice. The same global selection follows
 you through Overview, Models, Clients, Reliability, and Capacity. Presets
 include 1h/6h/24h/7d/30d and **All time**; a custom range or the pause
-control freezes the analytical window while current operational values marked
+control freezes the analytical time range while current operational values marked
 **Now** keep refreshing. Exact totals do not depend on chart point density.
 
 The default time range and data retention are separate Server settings. Both

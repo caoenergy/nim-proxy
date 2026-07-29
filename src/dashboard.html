@@ -90,7 +90,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 /* ---------- cards & grids ---------- */
 section[hidden] { display: none; }
 .card { background: var(--card); border: 1px solid var(--card-border); border-radius: 16px; padding: 16px 20px; min-width: 0; }
-.card h2 { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 500; margin: 0 0 10px; color: var(--ink-1); }
+.card h2 { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; font-size: 14px; font-weight: 500; margin: 0 0 10px; color: var(--ink-1); }
 .card h2 .note { font: 400 11.5px var(--mono); color: var(--ink-3); font-weight: 400; }
 .card h2 .hr { margin-left: auto; font: 500 12px var(--mono); color: var(--green-lt); }
 .hic { width: 15px; height: 15px; flex: none; fill: none; stroke: var(--green); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
@@ -372,7 +372,7 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
       </div>
     </div>
     <div class="card mb">
-      <h2><svg class="hic" viewBox="0 0 16 16"><path d="M9 1.5L3 9h4l-1 5.5L13 7H9z"/></svg>Performance <span class="note">median &amp; p95 across the window</span></h2>
+      <h2><svg class="hic" viewBox="0 0 16 16"><path d="M9 1.5L3 9h4l-1 5.5L13 7H9z"/></svg>Performance <span class="note">median &amp; p95 across the time range</span></h2>
       <div class="perf3" id="o-perf"></div>
     </div>
     <div class="grid2">
@@ -561,7 +561,7 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
       </div>
     </div>
     <div class="card">
-      <h2>Per lane <span class="tag">Now</span><span class="note">click a column to sort</span></h2>
+      <h2>Per key <span class="tag">Now</span><span class="note">click a column to sort</span></h2>
       <div id="table-lanes"></div>
     </div>
   </section>
@@ -780,7 +780,7 @@ function lineChart(el, series, unitFmt, opts = {}) {
   const H = opts.height || 190;
   el.classList.add('chart');
   const live = series.filter(s => s.pts.length > 1);
-  if (!live.length) { el.innerHTML = '<div class="empty">No data in this window</div>'; return; }
+  if (!live.length) { el.innerHTML = '<div class="empty">No data in selected time range</div>'; return; }
   const W = el.clientWidth || 500, PT = 16, PB = 16;
   const t0 = Math.min(...live.map(s => s.pts[0].t));
   const t1 = Math.max(...live.map(s => s.pts[s.pts.length-1].t));
@@ -858,7 +858,7 @@ function stackChart(el, series, unitFmt, opts = {}) {
   const ts = (bands[0] || { pts: [] }).pts.map(p => p.t);
   const at = (s, i) => Math.max(0, s.pts[i] ? s.pts[i].v : 0);
   const totals = ts.map((_, i) => bands.reduce((a, s) => a + at(s, i), 0));
-  if (ts.length < 2 || !totals.some(v => v > 0)) { el.innerHTML = '<div class="empty">No data in this window</div>'; return; }
+  if (ts.length < 2 || !totals.some(v => v > 0)) { el.innerHTML = '<div class="empty">No data in selected time range</div>'; return; }
   const W = el.clientWidth || 500, PT = 16, PB = 16;
   const t0 = ts[0], t1 = ts[ts.length-1];
   let vmax = Math.max(1e-6, ...totals);
@@ -1028,7 +1028,7 @@ function deltaChip(pts, downIsGood) {
   const d = (b - a) / a * 100;
   if (!isFinite(d) || Math.abs(d) < 0.05) return '';
   const good = downIsGood ? d <= 0 : d >= 0;
-  return `<span class="chip ${good ? 'good' : 'bad'}" title="second half of this window vs the first">${d >= 0 ? '+' : ''}${Math.abs(d) >= 10 ? d.toFixed(0) : d.toFixed(1)}%</span>`;
+  return `<span class="chip ${good ? 'good' : 'bad'}" title="second half of this time range vs the first">${d >= 0 ? '+' : ''}${Math.abs(d) >= 10 ? d.toFixed(0) : d.toFixed(1)}%</span>`;
 }
 /* k: {icon, label, value, sub, delta?, pts?} */
 function kpiCards(el, defs, hero) {
@@ -1046,7 +1046,7 @@ const metricRow = (l, v, tone) => `<div class="kv${tone ? ' ' + tone : ''}"><spa
 /* ---------- activity heatmap: weekday x hour, sequential green ramp ---------- */
 const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 function heatmap(el, matrix, vmax) {
-  if (!vmax) { el.innerHTML = '<div class="empty">No data in this window</div>'; return; }
+  if (!vmax) { el.innerHTML = '<div class="empty">No data in selected time range</div>'; return; }
   const CW = 26, CH = 18, GAP = 3, PL = 36, PT = 18;
   const W = PL + 24*(CW+GAP), H = PT + 7*(CH+GAP);
   let g = '';
@@ -1273,7 +1273,6 @@ function renderOverview(c) {
   const errShare = wreq ? (wreq - wok) / wreq * 100 : 0;
   ringGauge($('o-ring-ok'), okRatio, wreq ? Math.round(okRatio * 100) + '%' : '–', okColor,
     'Success rate', `errors ${errShare.toFixed(errShare && errShare < 10 ? 1 : 0)}% · ${fmt(cooldown429)} cooldowns`);
-  const sul = shed + unauth + logins;
   $('o-health').innerHTML =
     metricRow('Active now', fmt(sum(rows, 'nimproxy_active_requests'))) +
     metricRow('Queued', fmt(sum(rows, 'nimproxy_queue_depth'))) +
@@ -1688,7 +1687,7 @@ function renderCapacity(c) {
   const headroom = Math.max(0, capacity - rpmNow);
   $('k-sat').innerHTML =
     `<div style="display:flex;align-items:baseline;gap:10px"><span class="hlabel">Saturation</span><span class="tag">Now</span>
-    <span class="note" style="font:400 10px var(--mono);color:var(--ink-3)">current load vs current aggregate capacity</span>
+    <span class="note" style="font:400 10px var(--mono);color:var(--ink-3)">current load vs total capacity</span>
     <span style="margin-left:auto;font-size:30px;font-weight:600;letter-spacing:-1px;color:${capColor}">${Math.round(satPct * 100)}%</span></div>
     <div style="position:relative;height:20px;background:var(--track);border-radius:6px;overflow:hidden;margin:16px 0 8px">
       <div style="position:absolute;inset:0;width:${(satPct * 100).toFixed(1)}%;background:linear-gradient(90deg,var(--green-dk),var(--green));border-radius:6px"></div>
@@ -1721,7 +1720,7 @@ function renderCapacity(c) {
       `<div class="hlabel">Capacity history</div>
       <div style="display:flex;align-items:baseline;gap:8px;margin-top:12px">
         <span style="font-size:34px;font-weight:600;letter-spacing:-1px;color:${shortRpm > 0 ? 'var(--amber)' : 'var(--ink-1)'}">${fmt(shortRpm)}</span>
-        <span style="font:400 12px var(--mono);color:var(--ink-3)">Peak shortfall</span></div>
+        <span style="font:400 12px var(--mono);color:var(--ink-3)">Peak shortfall · rpm</span></div>
       <div style="font:400 11.5px var(--mono);color:var(--ink-25);margin-top:6px">
         avg ${isFinite(averageUtil) ? Math.round(averageUtil * 100) + '%' : '–'} · peak ${Math.round(peak.rpm / peak.capacity * 100)}%
         of capacity at the time${unknownCapacity ? ` · ${unknownCapacity} interval${unknownCapacity === 1 ? '' : 's'} with no capacity data` : ''}
@@ -1787,7 +1786,7 @@ let SET = null, setSub = 'access';
 async function sPost(path, body) {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   let j = {}; try { j = await r.json(); } catch {}
-  if (!r.ok || j.ok === false) throw new Error((j.error && j.error.message) || j.error || `request failed (${r.status})`);
+  if (!r.ok || j.ok === false) throw new Error((j.error && j.error.message) || j.error || `Request failed (${r.status})`);
   return j;
 }
 /* inline feedback next to the control that caused it (textContent — never markup) */
@@ -1826,7 +1825,7 @@ function renderSettings() {
 function keyState(k) {
   if (!k.enabled) return { text: 'disabled', cls: 'kstate dim' };
   if (k.cooldown_ms > 0) return { text: `cooldown ${Math.ceil(k.cooldown_ms / 1000)}s`, cls: 'kstate warnc' };
-  if (k.in_window != null) return { text: `${+k.in_window} / ${+k.rpm} in range`, cls: 'kstate' };
+  if (k.in_window != null) return { text: `${+k.in_window} / ${+k.rpm} in window`, cls: 'kstate' };
   return { text: 'unassigned', cls: 'kstate dim' };
 }
 const poolNote = () => `${+SET.pool.enabled} enabled in pool · Total ${+SET.pool.capacity_rpm} rpm`;
@@ -1862,7 +1861,7 @@ function renderAccess() {
     return `<div class="krow${k.enabled ? '' : ' koff'}">
       <div style="min-width:0">
         <div class="kmask">nvapi-••••${esc(k.last4)}${ownerChip(k.owner)}</div>
-        <div class="kmeta">fp ${esc(String(k.fingerprint).slice(0, 8))} · ${k.lane != null ? `lane ${+k.lane}` : k.enabled ? 'unassigned' : 'off'}</div>
+        <div class="kmeta">fp ${esc(String(k.fingerprint).slice(0, 8))} · ${k.lane != null ? `slot ${+k.lane + 1}` : k.enabled ? 'unassigned' : 'off'}</div>
       </div>
       <span class="${st.cls}" data-ksfp="${esc(k.fingerprint)}">${esc(st.text)}</span>
       <span class="rpmwrap"><input class="sin num" type="number" min="1" max="10000" value="${+k.rpm}" data-rpm="${i}"><span class="unitl">rpm</span></span>
@@ -2310,7 +2309,7 @@ function syncFollowControl(offline = false) {
   }
   const following = mode.kind === 'following' && !mode.paused;
   $('live').className = following ? 'live' : 'live idle';
-  $('liveText').textContent = following ? 'Live' : 'Idle';
+  $('liveText').textContent = following ? 'Live' : 'Absolute';
 }
 
 function rebuildSamples() {
