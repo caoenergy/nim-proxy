@@ -271,6 +271,17 @@ const SCAN_DATA_DERIVED = `
       try { out.add(prettyName(id)); } catch (e) {}
       try { out.add(publisher(id).name); } catch (e) {}
     }
+    // Anything Intl produces is CLDR data, not catalog text — weekday names and
+    // hour labels are correct-by-construction for the active locale and will
+    // never be accented under en-XA. Ask the page's own cached formatters
+    // rather than hardcoding a list that would drift from them.
+    try { for (const d of DAYS) out.add(d); } catch (e) {}
+    try {
+      for (let h = 0; h < 24; h++) {
+        out.add(HOUR_ONLY.format(Date.UTC(2024, 0, 1, h)));
+        out.add(HOUR_ONLY.formatRange(Date.UTC(2024, 0, 1, h), Date.UTC(2024, 0, 1, h + 1)));
+      }
+    } catch (e) {}
     return [...out].filter(Boolean);
   })()`;
 

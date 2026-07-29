@@ -677,6 +677,25 @@ const AGO_S = NF({ style: 'unit', unit: 'second', unitDisplay: 'narrow', maximum
 const DTF = (opts) => new Intl.DateTimeFormat(LOCALE, opts);
 const DAY_SHORT = DTF({ month: 'short', day: 'numeric' });
 const TIME_HM = DTF({ hour: '2-digit', minute: '2-digit' });
+/* Weekday names and the hour axis are CLDR DATA, not labels: putting them in
+   the catalog would ask a translator to re-key what the platform already has
+   correct for 200+ locales. Formatted in UTC against a reference week so a
+   timezone offset cannot shift which day a name belongs to. */
+const WEEKDAY_SHORT = DTF({ weekday: 'short', timeZone: 'UTC' });
+const HOUR_ONLY = DTF({ hour: 'numeric', timeZone: 'UTC' });
+/* CLDR first day of week: 1=Mon .. 7=Sun. en-US, ja-JP and pt-BR start Sunday;
+   ar-EG and fa-IR start Saturday. getWeekInfo is a method in Chrome and a
+   getter in Firefox; neither exists in older Safari, hence the fallback. */
+const FIRST_DAY = (() => {
+  try {
+    const l = new Intl.Locale(LOCALE);
+    return (typeof l.getWeekInfo === 'function' ? l.getWeekInfo() : l.weekInfo)?.firstDay ?? 1;
+  } catch { return 1; }
+})();
+/* JS getDay() is 0=Sun..6=Sat; CLDR is 1=Mon..7=Sun. One conversion, used by
+   BOTH the axis labels and the row bucketing so they cannot drift apart. */
+const FIRST_DAY_JS = FIRST_DAY % 7;
+const dayRow = jsDay => (jsDay - FIRST_DAY_JS + 7) % 7;
 /* Explicit components rather than dateStyle:'short', which abbreviates the
    year to two digits — ambiguous on a dashboard that retains 30+ days. */
 const STAMP = DTF({ year: 'numeric', month: 'numeric', day: 'numeric',
@@ -1160,7 +1179,9 @@ function kpiCards(el, defs, hero) {
 const metricRow = (l, v, tone) => `<div class="kv${tone ? ' ' + tone : ''}"><span>${l}</span><b>${v}</b></div>`;
 
 /* ---------- activity heatmap: weekday x hour, sequential green ramp ---------- */
-const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+/* 2024-01-01 was a Monday, so offset 0 of the reference week is ISO Monday. */
+const DAYS = Array.from({ length: 7 }, (_, i) =>
+  WEEKDAY_SHORT.format(Date.UTC(2024, 0, 1 + ((FIRST_DAY - 1 + i) % 7))));
 function heatmap(el, matrix, vmax) {
   if (!vmax) { el.innerHTML = `<div class="empty">${t('dashboard.common.empty.no_data_in_range')}</div>`; return; }
   const CW = 26, CH = 18, GAP = 3, PL = 36, PT = 18;
@@ -1174,14 +1195,14 @@ function heatmap(el, matrix, vmax) {
       g += `<rect x="${PL + h*(CW+GAP)}" y="${PT + d*(CH+GAP)}" width="${CW}" height="${CH}" rx="3" fill="${color}" data-d="${d}" data-h="${h}"/>`;
     }
   }
-  for (const h of [0, 6, 12, 18]) g += `<text x="${PL + h*(CW+GAP)}" y="${PT-6}">${h}:00</text>`;
+  for (const h of [0, 6, 12, 18]) g += `<text x="${PL + h*(CW+GAP)}" y="${PT-6}">${HOUR_ONLY.format(Date.UTC(2024, 0, 1, h))}</text>`;
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px">${g}</svg>`;
   el.querySelector('svg').addEventListener('mousemove', ev => {
     const c = ev.target.closest('rect');
     if (!c) { hideTip(); return; }
     const d = +c.dataset.d, h = +c.dataset.h;
     showTip(ev.clientX, ev.clientY,
-      `<div class="t">${DAYS[d]} ${h}:00–${h+1}:00</div><div class="row"><span>requests</span><b>${fmt(matrix[d][h])}</b></div>`);
+      `<div class="t">${DAYS[d]} ${HOUR_ONLY.formatRange(Date.UTC(2024, 0, 1, h), Date.UTC(2024, 0, 1, h + 1))}</div><div class="row"><span>${t('dashboard.common.col.requests')}</span><b>${fmt(matrix[d][h])}</b></div>`);
   });
   el.querySelector('svg').addEventListener('mouseleave', hideTip);
 }
@@ -1747,7 +1768,7 @@ function renderReliability(c) {
   let hmax = 0;
   for (let i = 1; i < samples.length; i++) {
     const d = new Date(samples[i].t);
-    const day = (d.getDay() + 6) % 7;
+    const day = dayRow(d.getDay());
     const v = Math.max(0, sum(samples[i].rows, 'nimproxy_requests_total') - sum(samples[i-1].rows, 'nimproxy_requests_total'));
     matrix[day][d.getHours()] += v;
     hmax = Math.max(hmax, matrix[day][d.getHours()]);
