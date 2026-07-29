@@ -6,6 +6,47 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-29] decision — typed API responses and a generated openapi.json
+
+Part of the 0.6.6 rationalization. Replaced the ~20 hand-built
+`serde_json::json!` response bodies in `src/settings.rs` (plus the two in
+`src/lib.rs`) with `derive(Serialize, ToSchema)` structs in a new `src/api.rs`,
+then generated `openapi.json` from them with `utoipa` (pinned `=5.5.0`).
+Recorded in [typed-responses-and-generated-openapi](decisions/typed-responses-and-generated-openapi.md).
+
+- The finding that shaped the whole change: the *old* responses were
+  **ASCII-key-ordered**, not insertion-ordered. `serde_json::Map` is a
+  `BTreeMap` without the `preserve_order` feature, so every `json!` body
+  emitted sorted keys, while `derive(Serialize)` emits declaration order. A
+  struct written in reading order would have silently reshaped every response.
+  Every wire struct is therefore declared ASCII-sorted, four existing types
+  (`MetricValue`, `RollupPoint`, `HistoryDiagnostics`, `config::Limits`) were
+  reordered to match what they already serialized as, and
+  `api::field_order_stays_ascii_sorted` guards the rule.
+- `config::GovernorCfg::overrides` moved `HashMap` → `BTreeMap` for the same
+  reason. Serialized directly it would have been hash-ordered; the side effect
+  is that `config.json` is now byte-deterministic across saves.
+- Byte-identity was proved, not assumed. A throwaway harness captured raw
+  response bytes for 31 request/response pairs — both `/api/config` role
+  views, both dashboard endpoints with and without traffic, every settings
+  write, every error branch — before and after the refactor, and compared them
+  key-for-key at every nesting level. The ~85 settings tests in `tests/e2e.rs`
+  are **unmodified**.
+- `/api/config`'s role filter is now a type: `server`/`users` are
+  `Option<..>` that are `None` for a `user` role, so the body is built
+  admin-only rather than built-then-augmented.
+- Spec covers 14 operations — the 12 `/api/*` routes plus `POST /setup` and
+  `POST /setup/validate-key`, both flagged unauthenticated (they run before
+  any user exists and 404 once one does). `/v1` is excluded on purpose: that
+  contract belongs to the upstream.
+- No served UI. `utoipa-scalar`/`utoipa-redoc` fetch JS from a CDN the
+  dashboard CSP forbids, and bundling would add ~1 MB to a `FROM scratch`
+  image. Ship the file.
+- Drift is a build failure: CI's `check` job regenerates the spec and runs
+  `git diff --exit-code -- openapi.json`. Because `info.version` tracks
+  `CARGO_PKG_VERSION`, a release bump makes the spec stale — added to step 1
+  of [Cutting a release](ops/release.md).
+
 ## [2026-07-29] decision — message catalog and the escape-once contract
 
 Third change of the 0.6.6 rationalization. Extracted the dashboard and setup
