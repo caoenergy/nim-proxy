@@ -24,10 +24,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   about a megabyte to a `FROM scratch` image. Point an offline viewer or a
   client generator at the file instead.
 
+- A render gate, `scripts/render_check.js`: it loads the dashboard against
+  captured API payloads, walks all five tabs, hovers every chart with real
+  pointer input, and fails on any uncaught page error. `--escape-probe`
+  additionally fails when a render helper escapes a catalog value that was
+  already escaped at load. No new dependency — Node's built-in WebSocket
+  driving the system browser. It is the only check that proves the page *runs*;
+  `cargo test` asserts on served HTML text and `node --check` proves only that
+  it parses.
+
+- Localization guards: an `en-XA` pseudolocale (generated, never hand-edited),
+  a `locale-v1` validator covering completeness, placeholder parity, formatter
+  syntax, raw markup, inline balance, source-hash freshness and length caps, and
+  an untagged-string lint. Every check ships with a deliberately broken fixture
+  proving it can fail, and all four run in CI.
+
+  The untagged-string lint is **narrower than it sounds**: it recognises a
+  fixed set of render-call shapes and stops at the settings surface. It is a
+  guard against regressions in already-extracted code, not proof that the pages
+  contain no English. `tests/fixtures/locales/REMAINING.md` is the honest
+  inventory of what still leaks.
+
 - The dashboard and setup wizard now render their text from an embedded
   `en-US` message catalog rather than hardcoded literals — the groundwork for
-  localization. 159 messages so far, covering the static markup of both pages
-  and the analytics call sites; the settings surface follows in 0.6.7.
+  localization. 166 messages so far (139 dashboard, 27 setup), covering the
+  static markup of both pages and the analytics call sites; the settings
+  surface follows in 0.6.7.
 
   No user-visible change in English. `scripts/check_i18n.py` proves it: every
   tagged element still holds exactly the text its catalog id claims, no id is
@@ -48,6 +70,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read by name, so nothing migrates), and `governor.overrides` is now
   serialized in sorted order, making repeated saves of the same configuration
   byte-identical.
+
+- Numbers, durations, and dates in the dashboard are formatted with `Intl`,
+  keyed to the interface's locale rather than the browser's. Two long-standing
+  rounding bugs go with it: `999,999` rendered as `1000.0K` instead of `1M`, and
+  values above a trillion rendered as `1000.0B` because there was no `T` tier.
+  Durations now read `1.0 sec` rather than `1.0 s`, matching the `ms` and `min`
+  forms and what `Intl` considers correct for en-US.
 
 - Dashboard and setup-wizard labels now use standard ops-dashboard vocabulary
   throughout. `Harness`/`Harnesses` become **Client**/**Clients**; the
@@ -91,6 +120,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and no migration runs. `REF_PRICE_IN` / `REF_PRICE_OUT` remain in the
   legacy-env warning list so an upgrader who still sets them is told they do
   nothing.
+
+### Fixed
+
+- Hovering any time-series chart no longer breaks the dashboard. A
+  module-scope date helper introduced in this release collided with two
+  pre-existing local bindings of the same name, so every chart threw on hover.
+  Because the chart re-applies the last hover position on each live re-render
+  and the poll loop treats any error as a lost connection, resting the cursor
+  over a chart made a perfectly healthy proxy display a red **Disconnected**
+  badge, stop its uptime clock, and leave most of the tab frozen at stale
+  values. Only ever present on unreleased 0.6.6 builds.
+
+- KPI card labels no longer double-escape. Catalog values are escaped once when
+  the catalog loads, and the KPI helper escaped its label a second time. In
+  English no KPI label contains an escapable character, so this was invisible —
+  it would first have appeared as `&#39;` and `&amp;` in the interface of any
+  translated build.
 
 ## [0.6.5] - 2026-07-28
 

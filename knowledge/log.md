@@ -6,6 +6,35 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-29] decision — a committed render gate, and the two page defects it found
+
+Recorded in [render-gate](decisions/render-gate.md).
+
+An audit of the merged 0.6.6 work found a P0 that every existing check passes:
+`at` was bound three times in `src/dashboard.html`, so every chart threw
+`TypeError` on hover, and because the poll loop's bare `catch` treats a throw
+as connection loss, a healthy proxy rendered a red "Disconnected" badge and
+froze most of the tab. A second, latent defect had `kpiCards` escaping a
+catalog value already escaped at load — invisible in English and in `en-XA`,
+and due to surface as `&#39;` on the first real translation.
+
+- `scripts/render_check.js` runs the page against captured API payloads and
+  fails on any uncaught page error. Committed **before** the fix and observed
+  failing at `src/dashboard.html:945`, per the write-the-check-first rule in
+  [AGENTS.md](../AGENTS.md).
+- This **reverses** the execution plan's decision to ship no browser harness.
+  That call traded the harness for a manual browser review; the review did not
+  happen, the PR merged with its acceptance criterion unmet, and the P0 landed
+  in the gap. The decision page records both sides.
+- Fixtures are captured with failures in them — 504s, disconnects, 429
+  cooldowns, worker exhaustion, `length` finishes. Every previous leak scan
+  measured a healthy proxy, which silently exempts the whole error taxonomy.
+- `scripts/mock_nim.py` honors `max_tokens` so the Truncated column is
+  reachable. `content_filter` is left uncovered rather than faked.
+- Lint: [architecture/dashboard.md](architecture/dashboard.md) described a
+  chart tooltip that never worked in this release. The code is now fixed to
+  match the page, so the description is accurate again rather than aspirational.
+
 ## [2026-07-29] decision — typed API responses and a generated openapi.json
 
 Part of the 0.6.6 rationalization. Replaced the ~20 hand-built
@@ -46,6 +75,42 @@ Recorded in [typed-responses-and-generated-openapi](decisions/typed-responses-an
   `git diff --exit-code -- openapi.json`. Because `info.version` tracks
   `CARGO_PKG_VERSION`, a release bump makes the spec stale — added to step 1
   of [Cutting a release](ops/release.md).
+
+## [2026-07-29] decision — pseudolocale, validator, and untagged-string lint
+
+Fifth change of the 0.6.6 rationalization. Recorded in
+[locale-guards](decisions/locale-guards.md).
+
+- Written test-first: the nine negative fixtures are a separate commit that
+  lands *before* the validator, so they describe what the checks must catch
+  rather than what an implementation happens to do.
+- The guards found three defects that had survived PR 3's adversarial review
+  and its own linter: the runtime-churn strings were never extracted (`Live`,
+  `Absolute`, `Disconnected`, `Validating…`, `Copied`, `Select & copy`, and the
+  wizard's `<title>`); `locale-v1 --all` paired the wizard's locale against the
+  dashboard's source catalog; and `setup.html` called `tRaw()` while defining
+  only `rawMsg()`.
+- Lint: that last one is worth remembering. `applyStatic` aborts on the first
+  throw, so a single undefined helper left the whole page in English rather
+  than one string — and neither `node --check` (syntax only) nor `cargo test`
+  (never parses the JS) can see it. A dedicated check now covers that class.
+
+## [2026-07-29] decision — Intl formatting keyed to the catalog locale
+
+Fourth change of the 0.6.6 rationalization. Recorded in
+[intl-formatting](decisions/intl-formatting.md).
+
+- Written test-first: `scripts/formatter_fixture.js` and 105 golden cases were
+  committed *before* any formatter was touched, so the migration's diff is the
+  review evidence rather than a claim. Inputs sit on every branch boundary.
+- The fixture immediately earned it — it surfaced two arithmetic bugs in the
+  hand-rolled `fmt` that had been shipping (`999999` → `1000.0K`, `1e12` →
+  `1000.0B`), and caught an inconsistency I introduced myself, where seconds
+  used a different unit style from milliseconds and minutes.
+- Lint: six `toFixed()` calls remain and all six are inside `style=`
+  attributes. Those must NOT be localized — `width:12,3%` is invalid CSS in a
+  comma-decimal locale and collapses the element. Display percentages and
+  layout percentages are now visibly different code paths.
 
 ## [2026-07-29] decision — message catalog and the escape-once contract
 

@@ -90,7 +90,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 /* ---------- cards & grids ---------- */
 section[hidden] { display: none; }
 .card { background: var(--card); border: 1px solid var(--card-border); border-radius: 16px; padding: 16px 20px; min-width: 0; }
-.card h2 { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; font-size: 14px; font-weight: 500; margin: 0 0 10px; color: var(--ink-1); }
+.card h2 { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 500; margin: 0 0 10px; color: var(--ink-1); }
 .card h2 .note { font: 400 11.5px var(--mono); color: var(--ink-3); font-weight: 400; }
 .card h2 .hr { margin-left: auto; font: 500 12px var(--mono); color: var(--green-lt); }
 .hic { width: 15px; height: 15px; flex: none; fill: none; stroke: var(--green); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
@@ -577,7 +577,7 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
 <div id="tooltip"></div>
 <div id="modal"><div class="box"><h3 style="margin:0 0 12px;font-size:15px;font-weight:600" data-i18n="dashboard.modal.secret.heading">One-time secret</h3><div id="modal-body"></div></div></div>
 
-<script type="application/json" id="i18n-catalog">{"locale":"en-US","state":"Source","messages":{"dashboard.nav.tab.overview":{"en":"Overview","hash":"d4b1ea57"},"dashboard.nav.tab.models":{"en":"Models","desc":"Navigation tab. Plural noun: the per-LLM-model section.","hash":"d17d2d78"},"dashboard.nav.tab.clients":{"en":"Clients","hash":"65a72565"},"dashboard.nav.tab.reliability":{"en":"Reliability","hash":"71d0acd4"},"dashboard.nav.tab.capacity":{"en":"Capacity","hash":"ae65d096"},"dashboard.nav.tab.settings":{"en":"Settings","hash":"74a883a0"},"dashboard.nav.live.tooltip":{"en":"Click to freeze/resume the selected time range","hash":"c08680d1"},"dashboard.nav.live.connecting":{"en":"connecting","hash":"3d6df245"},"dashboard.topbar.range.default":{"en":"Default · 30d","desc":"Toggle button. 'Default' is an adjective qualifying the preset time range; 30d is its length.","hash":"4c1bd988"},"dashboard.topbar.range.p1h":{"en":"1h","desc":"Short duration abbreviation on a time-range pill.","hash":"89481628"},"dashboard.topbar.range.p6h":{"en":"6h","desc":"Short duration abbreviation on a time-range pill.","hash":"13eded38"},"dashboard.topbar.range.p24h":{"en":"24h","desc":"Short duration abbreviation on a time-range pill.","hash":"0b509e6d"},"dashboard.topbar.range.p7d":{"en":"7d","desc":"Short duration abbreviation on a time-range pill.","hash":"a7c74264"},"dashboard.topbar.range.p30d":{"en":"30d","desc":"Short duration abbreviation on a time-range pill.","hash":"e3ba17e3"},"dashboard.topbar.range.all_time":{"en":"All time","hash":"9755c8d7"},"dashboard.topbar.range.custom":{"en":"Custom","desc":"Toggle button. Opens the from/to picker. Adjective used as a label.","hash":"494ca78f"},"dashboard.topbar.custom.to":{"en":"to","desc":"Separator between the from and to datetime inputs. Preposition, not a verb.","hash":"663ea1bf"},"dashboard.topbar.custom.apply":{"en":"Apply","desc":"Button, imperative verb. Applies the entered range.","hash":"31e392d1"},"dashboard.overview.traffic.heading":{"en":"Traffic","hash":"4876efb7"},"dashboard.overview.capacity_reliability.heading":{"en":"Capacity & reliability","hash":"fa267d5d"},"dashboard.overview.performance.heading":{"en":"Performance","hash":"442aded8"},"dashboard.overview.top_models.heading":{"en":"Top models","hash":"79489561"},"dashboard.overview.top_clients.heading":{"en":"Top clients","hash":"9008a2bd"},"dashboard.models.tokens_per_min.heading":{"en":"Completion tokens per minute","hash":"0b7c1721"},"dashboard.models.finish.heading":{"en":"How responses end","hash":"9aef0990"},"dashboard.models.reasoning.heading":{"en":"Reasoning vs output","hash":"b78166d2"},"dashboard.models.toolcalls.heading":{"en":"Tool-call volume","hash":"452e4258"},"dashboard.models.scorecard.heading":{"en":"Model scorecard","hash":"13fb2211"},"dashboard.models.head_to_head.heading":{"en":"Head to head","hash":"bff461ca"},"dashboard.models.leading.subhead":{"en":"Leading models","hash":"4fc18b3a"},"dashboard.models.per_model.heading":{"en":"Per model","hash":"139a5981"},"dashboard.overview.performance.note":{"en":"median & p95 across the time range","hash":"3f0caaba"},"dashboard.common.note.tokens_out":{"en":"tokens out","hash":"6cfcdef3"},"dashboard.models.tokens_per_min.note":{"en":"by model","hash":"7f1be7e6"},"dashboard.models.toolcalls.note":{"en":"tool calls emitted · by model","hash":"01e3b873"},"dashboard.models.scorecard.note":{"en":"top models head to head · best in each column highlighted","hash":"91939a12"},"dashboard.models.head_to_head.note":{"en":"generation speed","hash":"f8b44b7c"},"dashboard.models.ttft.heading":{"en":"Time to first token","hash":"0cec400f"},"dashboard.models.genspeed.heading":{"en":"Generation speed","hash":"f48a69f4"},"dashboard.models.itl.heading":{"en":"Inter-token latency","hash":"28905439"},"dashboard.models.upstream.heading":{"en":"Upstream latency","hash":"4d1a7ea7"},"dashboard.clients.toolint.heading":{"en":"Tool intensity","hash":"728b0c45"},"dashboard.clients.toolint.note":{"en":"avg tools / request","hash":"d8668050"},"dashboard.clients.depth.heading":{"en":"Conversation depth","hash":"786c066b"},"dashboard.clients.depth.note":{"en":"avg messages / request","hash":"3c610ce6"},"dashboard.clients.sampling.heading":{"en":"Sampling fingerprint","hash":"97f6f2cb"},"dashboard.clients.sampling.note":{"en":"avg temperature","desc":"The model sampling parameter, not a physical temperature.","hash":"6b417a81"},"dashboard.clients.streammix.heading":{"en":"Streaming share","hash":"5c1a4d52"},"dashboard.clients.streammix.note":{"en":"% streamed","hash":"0c0b2363"},"dashboard.clients.maxtok.heading":{"en":"Requested output cap","hash":"c03bef01"},"dashboard.clients.maxtok.note":{"en":"avg max_tokens / request","desc":"max_tokens is an API parameter name and must survive verbatim.","hash":"e188f939"},"dashboard.common.per_client.heading":{"en":"Per client","hash":"391351c8"},"dashboard.common.sort_hint":{"en":"click a column to sort","hash":"3334d184"},"dashboard.reliability.reqrate.heading":{"en":"Requests per minute","hash":"aa6d477f"},"dashboard.reliability.outrate.heading":{"en":"Outcomes per minute","hash":"a7fbda2f"},"dashboard.reliability.load.heading":{"en":"In flight & queued","hash":"3a303b5c"},"dashboard.reliability.queuewait.heading":{"en":"Queue wait","hash":"d55e1fe8"},"dashboard.reliability.heatmap.heading":{"en":"Activity by hour","hash":"e9ba315b"},"dashboard.reliability.nonsuccess.heading":{"en":"Non-success outcomes","hash":"c2b41afd"},"dashboard.reliability.security.heading":{"en":"Reliability & security","hash":"def25f10"},"dashboard.reliability.reqtypes.heading":{"en":"Request types","hash":"d91b8539"},"dashboard.capacity.ratelimit.heading":{"en":"Rate-limit hits per minute","hash":"602570e6"},"dashboard.reliability.outstack.heading":{"en":"Requests by outcome","hash":"132be6cc"},"dashboard.reliability.outstack.note":{"en":"stacked · per minute","hash":"bd2367b1"},"dashboard.reliability.pressure.heading":{"en":"Model pressure","hash":"87550ec5"},"dashboard.reliability.pressure.note":{"en":"governor engaged — worker exhaustions & per-model caps","hash":"3c187458"},"dashboard.capacity.keyutil.heading":{"en":"Key utilization","hash":"c7487387"},"dashboard.common.tag.now":{"en":"Now","desc":"Badge on a card heading: this figure is the live instant, not an aggregate over the selected time range. Adverb of time.","hash":"fe18013d"},"dashboard.capacity.perkey.heading":{"en":"Per key","hash":"95898667"},"dashboard.modal.secret.heading":{"en":"One-time secret","hash":"04a195c4"},"dashboard.common.col.requests":{"en":"Requests","desc":"Table column header. Count of requests in the selected time range.","hash":"ada27592"},"dashboard.common.col.tokens_out":{"en":"Tokens out","desc":"Completion tokens generated.","hash":"da9a58f8"},"dashboard.common.col.tokens_in":{"en":"Tokens in","desc":"Prompt tokens.","hash":"0aae0f75"},"dashboard.common.col.model":{"en":"Model","desc":"Table column header. The model identifier for the row.","hash":"5e2c614c"},"dashboard.common.col.client":{"en":"Client","desc":"Table column header. The calling agent or tool, not an end user.","hash":"0c77fe09"},"dashboard.common.col.key":{"en":"Key","desc":"Table column header. An upstream NIM API key. Not a keyboard key or a map key.","hash":"99a52df3"},"dashboard.common.col.share":{"en":"Share","desc":"Table column header. This row's percentage of the total. Noun, never the verb.","hash":"29887a5f"},"dashboard.common.col.count":{"en":"Count","desc":"Table column header. Number of requests with this outcome.","hash":"37bac495"},"dashboard.common.col.reason":{"en":"Reason","desc":"Table column header. Why a request did not return 200.","hash":"f81ab834"},"dashboard.common.col.streaming":{"en":"Streaming","desc":"Share of this client's requests that used streaming responses.","hash":"a951c594"},"dashboard.models.col.truncated":{"en":"Truncated","hash":"d9d9fcf3"},"dashboard.models.col.reasoning":{"en":"Reasoning","hash":"d8211e24"},"dashboard.models.col.errors":{"en":"Errors","hash":"cb702378"},"dashboard.models.col.avg_response":{"en":"Avg response","hash":"0449c134"},"dashboard.models.col.avg_ttft":{"en":"Avg TTFT","desc":"Column header. 'TTFT' is an abbreviation and must survive verbatim.","hash":"1a2a2e30"},"dashboard.models.col.avg_tps":{"en":"Avg tok/s","desc":"Column header. 'tok/s' is a unit and must survive verbatim.","hash":"cb513f6e"},"dashboard.reliability.col.queue_wait":{"en":"Queue wait","hash":"d55e1fe8"},"dashboard.reliability.col.first_token":{"en":"First token","desc":"Latency segment: time to the first token. Do not expand to the TTFT acronym.","hash":"2b2cc212"},"dashboard.reliability.col.generation":{"en":"Generation","desc":"Latency segment: token generation after the first token.","hash":"40536dd8"},"dashboard.capacity.col.current_rate":{"en":"Current rate","desc":"Column header. The key's instantaneous rate against its configured limit.","hash":"0e80e3ff"},"dashboard.capacity.col.429s":{"en":"429s","desc":"Column header. '429' is an HTTP status and must survive verbatim.","hash":"e3aeda21"},"dashboard.common.status.upstream_error_cooldowns":{"en":"Upstream error cooldowns","hash":"082e7f63"},"dashboard.common.row.active_now":{"en":"Active now","desc":"Requests in flight at this instant, not a windowed aggregate.","hash":"441658c6"},"dashboard.common.row.queued":{"en":"Queued","hash":"661ff40a"},"dashboard.common.row.rate_limit_cooldowns":{"en":"Rate-limit cooldowns","hash":"5f009330"},"dashboard.common.row.dropped":{"en":"Dropped","desc":"Requests shed under overload.","hash":"739f68fe"},"dashboard.common.row.unauthorized":{"en":"Unauthorized","hash":"d089c8a9"},"dashboard.common.row.failed_logins":{"en":"Failed logins","hash":"c4b167af"},"dashboard.reliability.row.dropped_503":{"en":"Dropped (overload 503)","desc":"'503' is an HTTP status and must survive verbatim.","hash":"dc219614"},"dashboard.common.status.unauthorized_401":{"en":"Unauthorized (401)","desc":"'401' must survive verbatim.","hash":"e31a10f2"},"dashboard.reliability.row.buffered":{"en":"Buffered","desc":"Opposite of streaming: the whole response returned at once.","hash":"8e89b290"},"dashboard.common.row.streaming":{"en":"Streaming","hash":"a951c594"},"dashboard.reliability.row.requests_with_tools":{"en":"Requests with tools","hash":"904e6992"},"dashboard.reliability.row.json_mode":{"en":"JSON mode","desc":"'JSON' must survive verbatim; only 'mode' translates.","hash":"36636e63"},"dashboard.reliability.row.tool_choice":{"en":"Tool choice","desc":"The API parameter rendered as a label.","hash":"d3a2c6a3"},"dashboard.common.status.rate_limited_429":{"en":"Rate limited (429)","desc":"'429' must survive verbatim.","hash":"2d8d2785"},"dashboard.capacity.row.session_affinity":{"en":"Session affinity","hash":"0596f708"},"dashboard.capacity.row.slots_in_use":{"en":"Slots in use","hash":"c6d01760"},"dashboard.clients.tile.clients":{"en":"Clients","hash":"65a72565"},"dashboard.clients.tile.streaming_share":{"en":"Streaming share","hash":"5c1a4d52"},"dashboard.clients.tile.avg_tools":{"en":"Avg tools / request","hash":"6dca1f1e"},"dashboard.clients.tile.avg_messages":{"en":"Avg messages / request","hash":"a983f199"},"dashboard.clients.tile.requests_using_tools":{"en":"Requests using tools","hash":"59ea0958"},"dashboard.common.empty.no_traffic":{"en":"No traffic yet","hash":"aaef1f94"},"dashboard.common.empty.no_data_in_range":{"en":"No data in selected time range","hash":"458e9291"},"dashboard.common.empty.no_data_yet":{"en":"No data yet","hash":"e2e18a76"},"dashboard.common.empty.no_completed_requests":{"en":"No completed requests yet","hash":"597d8faa"},"dashboard.common.empty.no_keys_configured":{"en":"No keys configured","hash":"8db382fc"},"dashboard.reliability.empty.no_errors":{"en":"No errors in this time range","hash":"fbbc2eb1"},"dashboard.models.empty.no_reasoning":{"en":"No reasoning tokens","hash":"f1faf3fa"},"dashboard.capacity.empty.no_capacity_data":{"en":"No capacity data for this time range","hash":"30f6f8f5"},"dashboard.common.kpi.success_rate":{"en":"Success rate","desc":"KPI label. Share of requests that returned 200.","hash":"49da60f8"},"dashboard.models.kpi.completion_tokens":{"en":"Completion tokens","hash":"f5ad1c5b"},"dashboard.models.kpi.prompt_tokens":{"en":"Prompt tokens","hash":"b8fbf83c"},"dashboard.models.kpi.avg_speed":{"en":"Avg speed","hash":"607e4c5f"},"dashboard.reliability.latency.title":{"en":"Latency breakdown","hash":"66da8fe2"},"dashboard.reliability.latency.note":{"en":"avg end-to-end","hash":"50b47513"},"dashboard.capacity.hero.saturation":{"en":"Saturation","hash":"993f024b"},"dashboard.capacity.history.title":{"en":"Capacity history","hash":"0e9d9c58"},"dashboard.capacity.hero.throttling":{"en":"Throttling","hash":"06222d69"},"dashboard.common.kpi.delta_tooltip":{"en":"second half of this time range vs the first","hash":"77d91f0f"},"dashboard.models.finish.completed":{"en":"Completed","desc":"Finish reason. The response ended normally.","hash":"22a970d2"},"dashboard.models.finish.tool_call":{"en":"Tool call","hash":"17011048"},"dashboard.models.finish.filtered":{"en":"Filtered","desc":"Finish reason. Stopped by the upstream content filter.","hash":"0ba993b3"},"dashboard.models.finish.other":{"en":"Other","desc":"Finish reason matched by no known value.","hash":"f97e9da0"},"dashboard.reliability.hero.availability":{"en":"Availability","hash":"12f67f85"}}}</script>
+<script type="application/json" id="i18n-catalog">{"locale":"en-US","state":"Source","messages":{"dashboard.nav.tab.overview":{"en":"Overview","hash":"d4b1ea57"},"dashboard.nav.tab.models":{"en":"Models","desc":"Navigation tab. Plural noun: the per-LLM-model section.","hash":"d17d2d78"},"dashboard.nav.tab.clients":{"en":"Clients","hash":"65a72565"},"dashboard.nav.tab.reliability":{"en":"Reliability","hash":"71d0acd4"},"dashboard.nav.tab.capacity":{"en":"Capacity","hash":"ae65d096"},"dashboard.nav.tab.settings":{"en":"Settings","hash":"74a883a0"},"dashboard.nav.live.tooltip":{"en":"Click to freeze/resume the selected time range","hash":"c08680d1"},"dashboard.nav.live.connecting":{"en":"connecting","hash":"3d6df245"},"dashboard.topbar.range.default":{"en":"Default · 30d","desc":"Toggle button. 'Default' is an adjective qualifying the preset time range; 30d is its length.","hash":"4c1bd988"},"dashboard.topbar.range.p1h":{"en":"1h","desc":"Short duration abbreviation on a time-range pill.","hash":"89481628"},"dashboard.topbar.range.p6h":{"en":"6h","desc":"Short duration abbreviation on a time-range pill.","hash":"13eded38"},"dashboard.topbar.range.p24h":{"en":"24h","desc":"Short duration abbreviation on a time-range pill.","hash":"0b509e6d"},"dashboard.topbar.range.p7d":{"en":"7d","desc":"Short duration abbreviation on a time-range pill.","hash":"a7c74264"},"dashboard.topbar.range.p30d":{"en":"30d","desc":"Short duration abbreviation on a time-range pill.","hash":"e3ba17e3"},"dashboard.topbar.range.all_time":{"en":"All time","hash":"9755c8d7"},"dashboard.topbar.range.custom":{"en":"Custom","desc":"Toggle button. Opens the from/to picker. Adjective used as a label.","hash":"494ca78f"},"dashboard.topbar.custom.to":{"en":"to","desc":"Separator between the from and to datetime inputs. Preposition, not a verb.","hash":"663ea1bf"},"dashboard.topbar.custom.apply":{"en":"Apply","desc":"Button, imperative verb. Applies the entered range.","hash":"31e392d1"},"dashboard.overview.traffic.heading":{"en":"Traffic","hash":"4876efb7"},"dashboard.overview.capacity_reliability.heading":{"en":"Capacity & reliability","hash":"fa267d5d"},"dashboard.overview.performance.heading":{"en":"Performance","hash":"442aded8"},"dashboard.overview.top_models.heading":{"en":"Top models","hash":"79489561"},"dashboard.overview.top_clients.heading":{"en":"Top clients","hash":"9008a2bd"},"dashboard.models.tokens_per_min.heading":{"en":"Completion tokens per minute","hash":"0b7c1721"},"dashboard.models.finish.heading":{"en":"How responses end","hash":"9aef0990"},"dashboard.models.reasoning.heading":{"en":"Reasoning vs output","hash":"b78166d2"},"dashboard.models.toolcalls.heading":{"en":"Tool-call volume","hash":"452e4258"},"dashboard.models.scorecard.heading":{"en":"Model scorecard","hash":"13fb2211"},"dashboard.models.head_to_head.heading":{"en":"Head to head","hash":"bff461ca"},"dashboard.models.leading.subhead":{"en":"Leading models","hash":"4fc18b3a"},"dashboard.models.per_model.heading":{"en":"Per model","hash":"139a5981"},"dashboard.overview.performance.note":{"en":"median & p95 across the time range","hash":"3f0caaba"},"dashboard.common.note.tokens_out":{"en":"tokens out","hash":"6cfcdef3"},"dashboard.models.tokens_per_min.note":{"en":"by model","hash":"7f1be7e6"},"dashboard.models.toolcalls.note":{"en":"tool calls emitted · by model","hash":"01e3b873"},"dashboard.models.scorecard.note":{"en":"top models head to head · best in each column highlighted","hash":"91939a12"},"dashboard.models.head_to_head.note":{"en":"generation speed","hash":"f8b44b7c"},"dashboard.models.ttft.heading":{"en":"Time to first token","hash":"0cec400f"},"dashboard.models.genspeed.heading":{"en":"Generation speed","hash":"f48a69f4"},"dashboard.models.itl.heading":{"en":"Inter-token latency","hash":"28905439"},"dashboard.models.upstream.heading":{"en":"Upstream latency","hash":"4d1a7ea7"},"dashboard.clients.toolint.heading":{"en":"Tool intensity","hash":"728b0c45"},"dashboard.clients.toolint.note":{"en":"avg tools / request","hash":"d8668050"},"dashboard.clients.depth.heading":{"en":"Conversation depth","hash":"786c066b"},"dashboard.clients.depth.note":{"en":"avg messages / request","hash":"3c610ce6"},"dashboard.clients.sampling.heading":{"en":"Sampling fingerprint","hash":"97f6f2cb"},"dashboard.clients.sampling.note":{"en":"avg temperature","desc":"The model sampling parameter, not a physical temperature.","hash":"6b417a81"},"dashboard.clients.streammix.heading":{"en":"Streaming share","hash":"5c1a4d52"},"dashboard.clients.streammix.note":{"en":"% streamed","hash":"0c0b2363"},"dashboard.clients.maxtok.heading":{"en":"Requested output cap","hash":"c03bef01"},"dashboard.clients.maxtok.note":{"en":"avg max_tokens / request","desc":"max_tokens is an API parameter name and must survive verbatim.","hash":"e188f939"},"dashboard.common.per_client.heading":{"en":"Per client","hash":"391351c8"},"dashboard.common.sort_hint":{"en":"click a column to sort","hash":"3334d184"},"dashboard.reliability.reqrate.heading":{"en":"Requests per minute","hash":"aa6d477f"},"dashboard.reliability.outrate.heading":{"en":"Outcomes per minute","hash":"a7fbda2f"},"dashboard.reliability.load.heading":{"en":"In flight & queued","hash":"3a303b5c"},"dashboard.reliability.queuewait.heading":{"en":"Queue wait","hash":"d55e1fe8"},"dashboard.reliability.heatmap.heading":{"en":"Activity by hour","hash":"e9ba315b"},"dashboard.reliability.nonsuccess.heading":{"en":"Non-success outcomes","hash":"c2b41afd"},"dashboard.reliability.security.heading":{"en":"Reliability & security","hash":"def25f10"},"dashboard.reliability.reqtypes.heading":{"en":"Request types","hash":"d91b8539"},"dashboard.capacity.ratelimit.heading":{"en":"Rate-limit hits per minute","hash":"602570e6"},"dashboard.reliability.outstack.heading":{"en":"Requests by outcome","hash":"132be6cc"},"dashboard.reliability.outstack.note":{"en":"stacked · per minute","hash":"bd2367b1"},"dashboard.reliability.pressure.heading":{"en":"Model pressure","hash":"87550ec5"},"dashboard.reliability.pressure.note":{"en":"governor engaged — worker exhaustions & per-model caps","hash":"3c187458"},"dashboard.capacity.keyutil.heading":{"en":"Key utilization","hash":"c7487387"},"dashboard.common.tag.now":{"en":"Now","desc":"Badge on a card heading: this figure is the live instant, not an aggregate over the selected time range. Adverb of time.","hash":"fe18013d"},"dashboard.capacity.perkey.heading":{"en":"Per key","hash":"95898667"},"dashboard.modal.secret.heading":{"en":"One-time secret","hash":"04a195c4"},"dashboard.common.col.requests":{"en":"Requests","desc":"Table column header. Count of requests in the selected time range.","hash":"ada27592"},"dashboard.common.col.tokens_out":{"en":"Tokens out","desc":"Completion tokens generated.","hash":"da9a58f8"},"dashboard.common.col.tokens_in":{"en":"Tokens in","desc":"Prompt tokens.","hash":"0aae0f75"},"dashboard.common.col.model":{"en":"Model","desc":"Table column header. The model identifier for the row.","hash":"5e2c614c"},"dashboard.common.col.client":{"en":"Client","desc":"Table column header. The calling agent or tool, not an end user.","hash":"0c77fe09"},"dashboard.common.col.key":{"en":"Key","desc":"Table column header. An upstream NIM API key. Not a keyboard key or a map key.","hash":"99a52df3"},"dashboard.common.col.share":{"en":"Share","desc":"Table column header. This row's percentage of the total. Noun, never the verb.","hash":"29887a5f"},"dashboard.common.col.count":{"en":"Count","desc":"Table column header. Number of requests with this outcome.","hash":"37bac495"},"dashboard.common.col.reason":{"en":"Reason","desc":"Table column header. Why a request did not return 200.","hash":"f81ab834"},"dashboard.common.col.streaming":{"en":"Streaming","desc":"Share of this client's requests that used streaming responses.","hash":"a951c594"},"dashboard.models.col.truncated":{"en":"Truncated","hash":"d9d9fcf3"},"dashboard.models.col.reasoning":{"en":"Reasoning","hash":"d8211e24"},"dashboard.models.col.errors":{"en":"Errors","hash":"cb702378"},"dashboard.models.col.avg_response":{"en":"Avg response","hash":"0449c134"},"dashboard.models.col.avg_ttft":{"en":"Avg TTFT","desc":"Column header. 'TTFT' is an abbreviation and must survive verbatim.","hash":"1a2a2e30"},"dashboard.models.col.avg_tps":{"en":"Avg tok/s","desc":"Column header. 'tok/s' is a unit and must survive verbatim.","hash":"cb513f6e"},"dashboard.reliability.col.queue_wait":{"en":"Queue wait","hash":"d55e1fe8"},"dashboard.reliability.col.first_token":{"en":"First token","desc":"Latency segment: time to the first token. Do not expand to the TTFT acronym.","hash":"2b2cc212"},"dashboard.reliability.col.generation":{"en":"Generation","desc":"Latency segment: token generation after the first token.","hash":"40536dd8"},"dashboard.capacity.col.current_rate":{"en":"Current rate","desc":"Column header. The key's instantaneous rate against its configured limit.","hash":"0e80e3ff"},"dashboard.capacity.col.429s":{"en":"429s","desc":"Column header. '429' is an HTTP status and must survive verbatim.","hash":"e3aeda21"},"dashboard.common.status.upstream_error_cooldowns":{"en":"Upstream error cooldowns","hash":"082e7f63"},"dashboard.common.row.active_now":{"en":"Active now","desc":"Requests in flight at this instant, not a windowed aggregate.","hash":"441658c6"},"dashboard.common.row.queued":{"en":"Queued","hash":"661ff40a"},"dashboard.common.row.rate_limit_cooldowns":{"en":"Rate-limit cooldowns","hash":"5f009330"},"dashboard.common.row.dropped":{"en":"Dropped","desc":"Requests shed under overload.","hash":"739f68fe"},"dashboard.common.row.unauthorized":{"en":"Unauthorized","hash":"d089c8a9"},"dashboard.common.row.failed_logins":{"en":"Failed logins","hash":"c4b167af"},"dashboard.reliability.row.dropped_503":{"en":"Dropped (overload 503)","desc":"'503' is an HTTP status and must survive verbatim.","hash":"dc219614"},"dashboard.common.status.unauthorized_401":{"en":"Unauthorized (401)","desc":"'401' must survive verbatim.","hash":"e31a10f2"},"dashboard.reliability.row.buffered":{"en":"Buffered","desc":"Opposite of streaming: the whole response returned at once.","hash":"8e89b290"},"dashboard.common.row.streaming":{"en":"Streaming","hash":"a951c594"},"dashboard.reliability.row.requests_with_tools":{"en":"Requests with tools","hash":"904e6992"},"dashboard.reliability.row.json_mode":{"en":"JSON mode","desc":"'JSON' must survive verbatim; only 'mode' translates.","hash":"36636e63"},"dashboard.reliability.row.tool_choice":{"en":"Tool choice","desc":"The API parameter rendered as a label.","hash":"d3a2c6a3"},"dashboard.common.status.rate_limited_429":{"en":"Rate limited (429)","desc":"'429' must survive verbatim.","hash":"2d8d2785"},"dashboard.capacity.row.session_affinity":{"en":"Session affinity","hash":"0596f708"},"dashboard.capacity.row.slots_in_use":{"en":"Slots in use","hash":"c6d01760"},"dashboard.clients.tile.clients":{"en":"Clients","hash":"65a72565"},"dashboard.clients.tile.streaming_share":{"en":"Streaming share","hash":"5c1a4d52"},"dashboard.clients.tile.avg_tools":{"en":"Avg tools / request","hash":"6dca1f1e"},"dashboard.clients.tile.avg_messages":{"en":"Avg messages / request","hash":"a983f199"},"dashboard.clients.tile.requests_using_tools":{"en":"Requests using tools","hash":"59ea0958"},"dashboard.common.empty.no_traffic":{"en":"No traffic yet","hash":"aaef1f94"},"dashboard.common.empty.no_data_in_range":{"en":"No data in selected time range","hash":"458e9291"},"dashboard.common.empty.no_data_yet":{"en":"No data yet","hash":"e2e18a76"},"dashboard.common.empty.no_completed_requests":{"en":"No completed requests yet","hash":"597d8faa"},"dashboard.common.empty.no_keys_configured":{"en":"No keys configured","hash":"8db382fc"},"dashboard.reliability.empty.no_errors":{"en":"No errors in this time range","hash":"fbbc2eb1"},"dashboard.models.empty.no_reasoning":{"en":"No reasoning tokens","hash":"f1faf3fa"},"dashboard.capacity.empty.no_capacity_data":{"en":"No capacity data for this time range","hash":"30f6f8f5"},"dashboard.common.kpi.success_rate":{"en":"Success rate","desc":"KPI label. Share of requests that returned 200.","hash":"49da60f8"},"dashboard.models.kpi.completion_tokens":{"en":"Completion tokens","hash":"f5ad1c5b"},"dashboard.models.kpi.prompt_tokens":{"en":"Prompt tokens","hash":"b8fbf83c"},"dashboard.models.kpi.avg_speed":{"en":"Avg speed","hash":"607e4c5f"},"dashboard.reliability.latency.title":{"en":"Latency breakdown","hash":"66da8fe2"},"dashboard.reliability.latency.note":{"en":"avg end-to-end","hash":"50b47513"},"dashboard.capacity.hero.saturation":{"en":"Saturation","hash":"993f024b"},"dashboard.capacity.history.title":{"en":"Capacity history","hash":"0e9d9c58"},"dashboard.capacity.hero.throttling":{"en":"Throttling","hash":"06222d69"},"dashboard.common.kpi.delta_tooltip":{"en":"second half of this time range vs the first","hash":"77d91f0f"},"dashboard.models.finish.completed":{"en":"Completed","desc":"Finish reason. The response ended normally.","hash":"22a970d2"},"dashboard.models.finish.tool_call":{"en":"Tool call","hash":"17011048"},"dashboard.models.finish.filtered":{"en":"Filtered","desc":"Finish reason. Stopped by the upstream content filter.","hash":"0ba993b3"},"dashboard.models.finish.other":{"en":"Other","desc":"Finish reason matched by no known value.","hash":"f97e9da0"},"dashboard.reliability.hero.availability":{"en":"Availability","hash":"12f67f85"},"dashboard.nav.live.disconnected":{"en":"Disconnected","desc":"Live-tail control: the browser lost contact with the proxy.","hash":"04dfac36"},"dashboard.nav.live.following":{"en":"Live","desc":"Live-tail control: the range follows the present.","hash":"b64ac05f"},"dashboard.nav.live.frozen":{"en":"Absolute","desc":"Live-tail control: the range is pinned to fixed bounds.","hash":"f288738f"}}}</script>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
@@ -644,18 +644,84 @@ function applyStatic(root) {
 const RAMP = ['#141A0E','#233312','#33501A','#4E7A0F','#76B900','#A7D65A'];
 const MED = '#A7D65A', P95 = '#6F7767';   // quantile pair: filled median, muted p95
 
-/* ---------- formatting ---------- */
-const fmt = n => !isFinite(n) ? '–'
-  : Math.abs(n) >= 1e9 ? (n/1e9).toFixed(1)+'B'
-  : Math.abs(n) >= 1e6 ? (n/1e6).toFixed(1)+'M'
-  : Math.abs(n) >= 1e4 ? (n/1e3).toFixed(1)+'K'
-  : Math.abs(n) >= 100 ? Math.round(n).toLocaleString()
-  : Math.abs(n) >= 10 ? n.toFixed(1).replace(/\.0$/,'')
-  : n.toFixed(2).replace(/\.?0+$/, '');
-const secs = s => !isFinite(s) ? '–' : s < 1 ? Math.round(s*1000)+' ms' : s < 90 ? s.toFixed(1)+' s' : Math.round(s/60)+' min';
+/* ---------- formatting ----------
+   Numbers, durations and dates follow the CATALOG's locale, not the browser's.
+   A dashboard rendered in German should not group thousands the American way
+   because the operator's OS happens to be en-US. Formatters are constructed
+   once — Intl constructors are expensive and these run inside render loops.
+
+   Thresholds are deliberately unchanged from the hand-rolled versions. Intl's
+   own compact notation would kick in at 1,000 ("1K"); this dashboard shows
+   exact counts up to 10,000 because request counts in the hundreds are
+   meaningful and "1.2K" is not. */
+/* A malformed tag (e.g. the POSIX spelling "en_US") makes every Intl
+   constructor below throw at module scope, which would leave the page dead
+   rather than mis-formatted. Fall back loudly instead. */
+const LOCALE = (() => {
+  const tag = I18N.locale || 'en-US';
+  try { new Intl.NumberFormat(tag); return tag; }
+  catch { console.error('invalid catalog locale', tag, '- falling back to en-US'); return 'en-US'; }
+})();
+const NF = (opts) => new Intl.NumberFormat(LOCALE, opts);
+const NUM_COMPACT = NF({ notation: 'compact', maximumFractionDigits: 1 });
+const NUM_GROUPED = NF({ maximumFractionDigits: 0 });
+const NUM_1DP = NF({ maximumFractionDigits: 1 });
+const NUM_2DP = NF({ maximumFractionDigits: 2 });
+const DUR_MS = NF({ style: 'unit', unit: 'millisecond', unitDisplay: 'short', maximumFractionDigits: 0 });
+const DUR_S = NF({ style: 'unit', unit: 'second', unitDisplay: 'short', minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const DUR_MIN = NF({ style: 'unit', unit: 'minute', unitDisplay: 'short', maximumFractionDigits: 0 });
+const AGO_D = NF({ style: 'unit', unit: 'day', unitDisplay: 'narrow', maximumFractionDigits: 0 });
+const AGO_H = NF({ style: 'unit', unit: 'hour', unitDisplay: 'narrow', maximumFractionDigits: 0 });
+const AGO_M = NF({ style: 'unit', unit: 'minute', unitDisplay: 'narrow', maximumFractionDigits: 0 });
+const AGO_S = NF({ style: 'unit', unit: 'second', unitDisplay: 'narrow', maximumFractionDigits: 0 });
+const DTF = (opts) => new Intl.DateTimeFormat(LOCALE, opts);
+const DAY_SHORT = DTF({ month: 'short', day: 'numeric' });
+const TIME_HM = DTF({ hour: '2-digit', minute: '2-digit' });
+/* Explicit components rather than dateStyle:'short', which abbreviates the
+   year to two digits — ambiguous on a dashboard that retains 30+ days. */
+const STAMP = DTF({ year: 'numeric', month: 'numeric', day: 'numeric',
+  hour: 'numeric', minute: '2-digit', second: '2-digit' });
+const SCOPE_TIME = DTF({ month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+/* Percentages shown to the operator. NOT for CSS: `style="width:12.3%"` must
+   stay locale-independent, because a comma-decimal locale would emit
+   `width:12,3%`, which is invalid CSS and silently collapses the element.
+   Every toFixed() that remains is either inside a style= attribute or SVG
+   path/geometry — both machine formats, never read by a human. */
+const PCT_0 = NF({ style: 'percent', maximumFractionDigits: 0 });
+const PCT_1 = NF({ style: 'percent', maximumFractionDigits: 1 });
+const PCT_2 = NF({ style: 'percent', maximumFractionDigits: 2 });
+const PCT_3 = NF({ style: 'percent', maximumFractionDigits: 3 });
+/* Trend chips carry an explicit sign; Intl places it per locale. */
+const PCT_SIGNED_0 = NF({ style: 'percent', maximumFractionDigits: 0, signDisplay: 'exceptZero' });
+const PCT_SIGNED_1 = NF({ style: 'percent', maximumFractionDigits: 1, signDisplay: 'exceptZero' });
+/* ratio in 0..1 */
+const pctOf = (r, digits) => (digits >= 3 ? PCT_3 : digits === 2 ? PCT_2 : digits === 1 ? PCT_1 : PCT_0).format(r);
+const NO_VALUE = '–';
+/* Chart X-axis label. Shared by both chart builders so there is exactly one
+   threshold to get wrong, and so the fixture can pin the real one. */
+const axisLabel = (ms, spanMs) => (spanMs > 36e5 * 26 ? DAY_SHORT : TIME_HM).format(ms);
+/* Intl.DateTimeFormat throws RangeError on a non-finite time, where
+   toLocaleString() used to return "Invalid Date". A throw here escapes the
+   template it sits in and blanks a whole panel, so degrade to a placeholder. */
+const at = (fmtr, ms) => (Number.isFinite(ms) ? fmtr.format(ms) : NO_VALUE);
+
+const fmt = n => !isFinite(n) ? NO_VALUE
+  : Math.abs(n) >= 1e4 ? NUM_COMPACT.format(n)
+  : Math.abs(n) >= 100 ? NUM_GROUPED.format(n)
+  : Math.abs(n) >= 10 ? NUM_1DP.format(n)
+  : NUM_2DP.format(n);
+const secs = s => !isFinite(s) ? NO_VALUE
+  : s < 1 ? DUR_MS.format(Math.round(s * 1000))
+  : s < 90 ? DUR_S.format(s)
+  : DUR_MIN.format(Math.round(s / 60));
+/* Compound elapsed time ("2d 3h"). Intl has no compound-duration formatter, so
+   each component is formatted separately in narrow unit style, which is what
+   produced the hand-written d/h/m/s suffixes in the first place. */
 const ago = s => { s = Math.max(0, Math.round(s));
   const d = Math.floor(s/86400), h = Math.floor(s%86400/3600), m = Math.floor(s%3600/60);
-  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : m ? `${m}m` : `${s}s`; };
+  return d ? `${AGO_D.format(d)} ${AGO_H.format(h)}`
+    : h ? `${AGO_H.format(h)} ${AGO_M.format(m)}`
+    : m ? AGO_M.format(m) : AGO_S.format(s); };
 
 /* ---------- typed dashboard rows ---------- */
 const rowKey = r => r.metric + '\0' +
@@ -853,9 +919,7 @@ function lineChart(el, series, unitFmt, opts = {}) {
     if (i > 0) g += `<text x="${W-3}" y="${y-4}" text-anchor="end">${unitFmt(v)}</text>`;
   }
   const span = t1 - t0;
-  const tlab = ms => span > 36e5 * 26
-    ? new Date(ms).toLocaleDateString([], {month:'short', day:'numeric'})
-    : new Date(ms).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  const tlab = ms => axisLabel(ms, span);
   g += `<text x="0" y="${H-4}" fill="${css('--ink-4')}">${tlab(t0)}</text><text x="${W}" y="${H-4}" text-anchor="end" fill="${css('--ink-4')}">${tlab(t1)}</text>`;
   for (const s of live) {
     const d = s.pts.map((p,i) => `${i?'L':'M'}${X(p.t).toFixed(1)},${Y(p.v).toFixed(1)}`).join('');
@@ -870,15 +934,15 @@ function lineChart(el, series, unitFmt, opts = {}) {
   const hoverg = svg.querySelector('#hoverg'), xh = svg.querySelector('#xh');
   const hover = (clientX, clientY) => {
     const r = svg.getBoundingClientRect();
-    const at = t0 + (clientX - r.left) / Math.max(1, r.width) * (t1 - t0);
+    const tAt = t0 + (clientX - r.left) / Math.max(1, r.width) * (t1 - t0);
     // snap to the nearest sample of the densest series
     const ref = live.reduce((a, s) => s.pts.length > a.pts.length ? s : a);
     let best = ref.pts[0];
-    for (const p of ref.pts) if (Math.abs(p.t - at) < Math.abs(best.t - at)) best = p;
+    for (const p of ref.pts) if (Math.abs(p.t - tAt) < Math.abs(best.t - tAt)) best = p;
     const mx = X(best.t);
     xh.setAttribute('x1', mx); xh.setAttribute('x2', mx);
     let dots = '';
-    let html = `<div class="t">${new Date(best.t).toLocaleString()}</div>`;
+    let html = `<div class="t">${at(STAMP, best.t)}</div>`;
     for (const s of live) {
       let p = s.pts[0];
       for (const q of s.pts) if (Math.abs(q.t - best.t) < Math.abs(p.t - best.t)) p = q;
@@ -910,8 +974,8 @@ function stackChart(el, series, unitFmt, opts = {}) {
   // wrong timestamps, so it is dropped rather than drawn wrong.
   bands = bands.filter(s => s.pts.length === n);
   const ts = (bands[0] || { pts: [] }).pts.map(p => p.t);
-  const at = (s, i) => Math.max(0, s.pts[i] ? s.pts[i].v : 0);
-  const totals = ts.map((_, i) => bands.reduce((a, s) => a + at(s, i), 0));
+  const bandAt = (s, i) => Math.max(0, s.pts[i] ? s.pts[i].v : 0);
+  const totals = ts.map((_, i) => bands.reduce((a, s) => a + bandAt(s, i), 0));
   if (ts.length < 2 || !totals.some(v => v > 0)) { el.innerHTML = `<div class="empty">${t('dashboard.common.empty.no_data_in_range')}</div>`; return; }
   const W = el.clientWidth || 500, PT = 16, PB = 16;
   const t0 = ts[0], t1 = ts[ts.length-1];
@@ -929,14 +993,12 @@ function stackChart(el, series, unitFmt, opts = {}) {
     if (i > 0) g += `<text x="${W-3}" y="${y-4}" text-anchor="end">${unitFmt(v)}</text>`;
   }
   const span = t1 - t0;
-  const tlab = ms => span > 36e5 * 26
-    ? new Date(ms).toLocaleDateString([], {month:'short', day:'numeric'})
-    : new Date(ms).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  const tlab = ms => axisLabel(ms, span);
   g += `<text x="0" y="${H-4}" fill="${css('--ink-4')}">${tlab(t0)}</text><text x="${W}" y="${H-4}" text-anchor="end" fill="${css('--ink-4')}">${tlab(t1)}</text>`;
   // Cumulative bands drawn top→bottom: each fills to the baseline, painting
   // over the shorter (lower) bands, so band k occupies [cum(k-1), cum(k)].
   const run = ts.map(() => 0), cum = [];
-  for (const s of bands) { for (let i = 0; i < ts.length; i++) run[i] += at(s, i); cum.push(run.slice()); }
+  for (const s of bands) { for (let i = 0; i < ts.length; i++) run[i] += bandAt(s, i); cum.push(run.slice()); }
   for (let k = bands.length - 1; k >= 0; k--) {
     const d = cum[k].map((v, i) => `${i?'L':'M'}${X(ts[i]).toFixed(1)},${Y(v).toFixed(1)}`).join('');
     g += `<path d="${d}L${X(t1).toFixed(1)},${H-PB}L${X(t0).toFixed(1)},${H-PB}Z" fill="${bands[k].color}" fill-opacity="0.82"/>`;
@@ -948,17 +1010,17 @@ function stackChart(el, series, unitFmt, opts = {}) {
   const hoverg = svg.querySelector('#hoverg'), xh = svg.querySelector('#xh');
   const hover = (clientX, clientY) => {
     const r = svg.getBoundingClientRect();
-    const at = t0 + (clientX - r.left) / Math.max(1, r.width) * (t1 - t0);
+    const tAt = t0 + (clientX - r.left) / Math.max(1, r.width) * (t1 - t0);
     let bi = 0;
-    for (let i = 0; i < ts.length; i++) if (Math.abs(ts[i] - at) < Math.abs(ts[bi] - at)) bi = i;
+    for (let i = 0; i < ts.length; i++) if (Math.abs(ts[i] - tAt) < Math.abs(ts[bi] - tAt)) bi = i;
     const mx = X(ts[bi]);
     xh.setAttribute('x1', mx); xh.setAttribute('x2', mx);
     let dots = '';
     for (let k = bands.length - 1; k >= 0; k--)
       dots += `<circle cx="${mx}" cy="${Y(cum[k][bi])}" r="3" fill="${bands[k].color}" stroke="${css('--bg')}" stroke-width="1.5"/>`;
-    let html = `<div class="t">${new Date(ts[bi]).toLocaleString()}</div>`;
+    let html = `<div class="t">${at(STAMP, ts[bi])}</div>`;
     for (const s of bands)
-      html += `<div class="row"><span><i class="sw" style="background:${s.color}"></i>${esc(s.name)}</span><b>${unitFmt(at(s, bi))}</b></div>`;
+      html += `<div class="row"><span><i class="sw" style="background:${s.color}"></i>${esc(s.name)}</span><b>${unitFmt(bandAt(s, bi))}</b></div>`;
     html += `<div class="row" style="border-top:1px solid var(--hairline);margin-top:3px;padding-top:4px"><span>total</span><b>${unitFmt(totals[bi])}</b></div>`;
     hoverg.innerHTML = xh.outerHTML + dots;
     hoverg.setAttribute('visibility', 'visible');
@@ -1082,13 +1144,13 @@ function deltaChip(pts, downIsGood) {
   const d = (b - a) / a * 100;
   if (!isFinite(d) || Math.abs(d) < 0.05) return '';
   const good = downIsGood ? d <= 0 : d >= 0;
-  return `<span class="chip ${good ? 'good' : 'bad'}" title="${t('dashboard.common.kpi.delta_tooltip')}">${d >= 0 ? '+' : ''}${Math.abs(d) >= 10 ? d.toFixed(0) : d.toFixed(1)}%</span>`;
+  return `<span class="chip ${good ? 'good' : 'bad'}" title="${t('dashboard.common.kpi.delta_tooltip')}">${(Math.abs(d) >= 10 ? PCT_SIGNED_0 : PCT_SIGNED_1).format(d / 100)}</span>`;
 }
 /* k: {icon, label, value, sub, delta?, pts?} */
 function kpiCards(el, defs, hero) {
   el.innerHTML = defs.map(k =>
     `<div class="kpi${hero ? ' hero' : ''}">` +
-    `<div class="kpihead"><span class="kpilabel"><svg viewBox="0 0 16 16">${ICONS[k.icon] || ''}</svg>${esc(k.label)}</span>${k.delta || ''}</div>` +
+    `<div class="kpihead"><span class="kpilabel"><svg viewBox="0 0 16 16">${ICONS[k.icon] || ''}</svg>${k.label}</span>${k.delta || ''}</div>` +
     `<div class="kpival">${k.value}</div>` +
     `<div class="kpisub">${k.sub || ''}</div>` +
     sparkSvg(k.pts, hero) + `</div>`).join('');
@@ -1241,7 +1303,7 @@ function render() {
   const ttftMS = wgroups('nimproxy_ttft_seconds_sum', 'model'), ttftMC = wgroups('nimproxy_ttft_seconds_count', 'model');
   const tpsMS = wgroups('nimproxy_tokens_per_second_sum', 'model'), tpsMC = wgroups('nimproxy_tokens_per_second_count', 'model');
   const errRate = m => { const e = errByModel.get(m) || 0, all = e + (okByModel.get(m) || 0); return all ? e / all * 100 : NaN; };
-  const errPct = m => { const v = errRate(m); return isFinite(v) ? `${v.toFixed(v ? 1 : 0)}%` : '–'; };
+  const errPct = m => { const v = errRate(m); return isFinite(v) ? pctOf(v / 100, v ? 1 : 0) : NO_VALUE; };
   // Quality maps shared by the model table, finish-reason panel, and scorecard.
   const tpotMS = wgroups('nimproxy_tpot_seconds_sum', 'model'), tpotMC = wgroups('nimproxy_tpot_seconds_count', 'model');
   const finTotal = wgroups('nimproxy_finish_reason_total', 'model');
@@ -1250,7 +1312,7 @@ function render() {
   const tpotAvg = m => tpotMC.get(m) ? tpotMS.get(m) / tpotMC.get(m) : NaN;
   const truncPct = m => finTotal.get(m) ? (finLen.get(m) || 0) / finTotal.get(m) * 100 : NaN;
   const reasonPct = m => ctok.get(m) ? (reasoningByModel.get(m) || 0) / ctok.get(m) * 100 : NaN;
-  const pct = v => isFinite(v) ? v.toFixed(v && v < 10 ? 1 : 0) + '%' : '–';
+  const pct = v => isFinite(v) ? pctOf(v / 100, v && v < 10 ? 1 : 0) : NO_VALUE;
 
   /* ----- shared proxy / capacity aggregates ----- */
   const reqPts = rateSeries(s => sum(s.rows, 'nimproxy_requests_total'));
@@ -1331,7 +1393,7 @@ function renderOverview(c) {
   kpiCards($('o-kpis'), [
     { icon: 'pulse', label: t('dashboard.common.col.requests'), value: fmt(wreq), sub: windowLabel, delta: deltaChip(reqPts), pts: reqPts },
     { icon: 'stack', label: t('dashboard.common.col.tokens_out'), value: fmt(allC), sub: `${fmt(allP)} in`, delta: deltaChip(ctokPts), pts: ctokPts },
-    { icon: 'check', label: t('dashboard.common.kpi.success_rate'), value: wreq ? (okRatio * 100).toFixed(2).replace(/\.?0+$/, '') + '%' : '–',
+    { icon: 'check', label: t('dashboard.common.kpi.success_rate'), value: wreq ? pctOf(okRatio, 2) : NO_VALUE,
       sub: `${fmt(wok)} of ${fmt(wreq)}`, delta: deltaChip(okPts), pts: okPts },
   ], true);
 
@@ -1339,11 +1401,11 @@ function renderOverview(c) {
   lineChart($('o-traffic'), [{ name: 'req/min', color: MED, pts: reqPts, area: true }], fmt, { height: 220 });
 
   $('o-rings').innerHTML = '<div class="ringwrap" id="o-ring-cap"></div><div class="ringwrap" id="o-ring-ok"></div>';
-  ringGauge($('o-ring-cap'), capRatio, Math.round(capRatio * 100) + '%', capColor,
+  ringGauge($('o-ring-cap'), capRatio, pctOf(capRatio, 0), capColor,
     'Capacity used', `${fmt(rpmNow)} / ${fmt(capacity)} rpm · ${cfg.lanes} key${cfg.lanes === 1 ? '' : 's'}`);
   const errShare = wreq ? (wreq - wok) / wreq * 100 : 0;
-  ringGauge($('o-ring-ok'), okRatio, wreq ? Math.round(okRatio * 100) + '%' : '–', okColor,
-    'Success rate', `errors ${errShare.toFixed(errShare && errShare < 10 ? 1 : 0)}% · ${fmt(cooldown429)} cooldowns`);
+  ringGauge($('o-ring-ok'), okRatio, wreq ? pctOf(okRatio, 0) : NO_VALUE, okColor,
+    'Success rate', `errors ${pctOf(errShare / 100, errShare && errShare < 10 ? 1 : 0)} · ${fmt(cooldown429)} cooldowns`);
   $('o-health').innerHTML =
     metricRow(t('dashboard.common.row.active_now'), fmt(sum(rows, 'nimproxy_active_requests'))) +
     metricRow(t('dashboard.common.row.queued'), fmt(sum(rows, 'nimproxy_queue_depth'))) +
@@ -1539,13 +1601,13 @@ function renderClients(c) {
   const tile = (label, v, unit) => `<div class="tile"><div class="tlabel">${label}</div><div class="tval">${v}${unit ? `<span class="unit">${unit}</span>` : ''}</div></div>`;
   $('h-kpis').innerHTML =
     tile(t('dashboard.clients.tile.clients'), clients.length) +
-    tile(t('dashboard.clients.tile.streaming_share'), totGen ? Math.round(totStreamT / totGen * 100) + '%' : '–') +
+    tile(t('dashboard.clients.tile.streaming_share'), totGen ? pctOf(totStreamT / totGen, 0) : NO_VALUE) +
     tile(t('dashboard.clients.tile.avg_tools'), oToolsN ? fmt(oTools / oToolsN) : '–') +
     tile(t('dashboard.clients.tile.avg_messages'), oMsgsN ? fmt(oMsgs / oMsgsN) : '–') +
-    tile(t('dashboard.clients.tile.requests_using_tools'), totGen ? Math.round(totToolReq / totGen * 100) + '%' : '–');
+    tile(t('dashboard.clients.tile.requests_using_tools'), totGen ? pctOf(totToolReq / totGen, 0) : NO_VALUE);
   barList($('h-toolint'), clients.map(cl => ({ name: cl, v: toolsAvg(cl), color: clientColor(cl) })), fmt);
   barList($('h-depth'), clients.map(cl => ({ name: cl, v: msgsAvg(cl), color: clientColor(cl) })), fmt);
-  barList($('h-temp'), clients.map(cl => ({ name: cl, v: tempAvg(cl), color: clientColor(cl) })), v => v.toFixed(2));
+  barList($('h-temp'), clients.map(cl => ({ name: cl, v: tempAvg(cl), color: clientColor(cl) })), v => NUM_2DP.format(v));
   barList($('h-streammix'), clients.map(cl => ({ name: cl, v: streamPct(cl), color: clientColor(cl) })), v => Math.round(v) + '%', 100);
   /* requested output budget — avg of the max_tokens the client asked for.
      Hidden until at least one client sent a cap. */
@@ -1583,7 +1645,7 @@ function renderReliability(c) {
   const slo = (nowData?.slo_target_percent ?? 99.9) / 100;
   const availability = eligible ? success / eligible : NaN;
   const availTxt = isFinite(availability)
-    ? (availability * 100).toFixed(availability < 0.9995 ? 2 : 3).replace(/\.?0+$/, '') + '%'
+    ? pctOf(availability, availability < 0.9995 ? 2 : 3)
     : '–';
   const met = isFinite(availability) && availability >= slo;
   const budget = !isFinite(availability) ? 0
@@ -1639,7 +1701,7 @@ function renderReliability(c) {
       <div><div class="tlabel">Queued</div><div style="font-size:26px;font-weight:600;color:var(--amber)">${fmt(que)}</div></div>
     </div>
     <div class="segbar" style="height:8px;border-radius:99px;margin:12px 0">${act + que ? `<div style="width:${(act / (act + que) * 100)}%;background:var(--green)"></div><div style="width:${(que / (act + que) * 100)}%;background:var(--amber)"></div>` : '<div style="width:100%;background:var(--track)"></div>'}</div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--hairline)"><span class="tlabel">Error rate</span><span style="font:600 15px var(--mono);color:${errN ? 'var(--red)' : 'var(--ink-3)'}">${wreq ? (errN / wreq * 100).toFixed(1) + '%' : '–'}</span></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--hairline)"><span class="tlabel">Error rate</span><span style="font:600 15px var(--mono);color:${errN ? 'var(--red)' : 'var(--ink-3)'}">${wreq ? pctOf(errN / wreq, 1) : NO_VALUE}</span></div>
     <div class="segbar" style="height:6px;border-radius:99px;margin-top:8px;gap:1px">${taxCounts.length ? taxCounts.map(x => `<div style="width:${(x.n / taxTot * 100).toFixed(1)}%;background:${x.color}" title="${esc(x.label)}: ${fmt(x.n)}"></div>`).join('') : '<div style="width:100%;background:var(--track)"></div>'}</div>`;
 
   lineChart($('chart-reqrate'), [{ name: 'requests/min', color: MED, pts: reqPts, area: true }], fmt, { height: 150 });
@@ -1721,7 +1783,7 @@ function renderReliability(c) {
     [{ label: t('dashboard.common.col.reason'), align: 'l', str: true }, { label: t('dashboard.common.col.count') }, { label: t('dashboard.common.col.share') }],
     bad.map(([s, n]) => ({
       vals: [reason(s), n, n / totReq * 100],
-      cells: [esc(reason(s)), fmt(n), (n / totReq * 100).toFixed(1) + '%'],
+      cells: [esc(reason(s)), fmt(n), pctOf(n / totReq, 1)],
     })), { defaultIdx: 1, maxH: 240, empty: t('dashboard.reliability.empty.no_errors') });
 
   $('table-reliability').innerHTML =
@@ -1797,7 +1859,7 @@ function renderCapacity(c) {
         <span style="font-size:34px;font-weight:600;letter-spacing:-1px;color:${shortRpm > 0 ? 'var(--amber)' : 'var(--ink-1)'}">${fmt(shortRpm)}</span>
         <span style="font:400 12px var(--mono);color:var(--ink-3)">Peak shortfall · rpm</span></div>
       <div style="font:400 11.5px var(--mono);color:var(--ink-25);margin-top:6px">
-        avg ${isFinite(averageUtil) ? Math.round(averageUtil * 100) + '%' : '–'} · peak ${Math.round(peak.rpm / peak.capacity * 100)}%
+        avg ${isFinite(averageUtil) ? pctOf(averageUtil, 0) : NO_VALUE} · peak ${pctOf(peak.rpm / peak.capacity, 0)}
         of capacity at the time${unknownCapacity ? ` · ${unknownCapacity} interval${unknownCapacity === 1 ? '' : 's'} with no capacity data` : ''}
       </div>`;
   }
@@ -1846,7 +1908,7 @@ function renderCapacity(c) {
   ], lanes.map(l => ({
     vals: [l.name, l.cur, l.cur / totalLane * 100, l.currentRpm, l.b429, l.bOther],
     cells: [`<i class="sw" style="background:${laneColor(l.i)}"></i>${esc(l.name)}`,
-      fmt(l.cur), (l.cur / totalLane * 100).toFixed(0) + '%', `${fmt(l.currentRpm)} / ${laneRpm(l.i)}`,
+      fmt(l.cur), pctOf(l.cur / totalLane, 0), `${fmt(l.currentRpm)} / ${laneRpm(l.i)}`,
       `<span class="${l.b429 ? 'warnc' : 'dim'}">${fmt(l.b429)}</span>`,
       `<span class="${l.bOther ? 'critc' : 'dim'}">${fmt(l.bOther)}</span>`],
   })), { defaultIdx: 1, maxH: 360, minW: 560, empty: t('dashboard.common.empty.no_keys_configured') });
@@ -2059,8 +2121,8 @@ function renderServer() {
   const ovr = Object.entries(sv.governor.overrides || {});
   const retainedFrom = sv.history.available_from == null
     ? 'No data yet'
-    : new Date(+sv.history.available_from * 1000).toLocaleString();
-  const historyBytes = new Intl.NumberFormat().format(+sv.history.file_bytes || 0);
+    : at(STAMP, +sv.history.available_from * 1000);
+  const historyBytes = NUM_GROUPED.format(+sv.history.file_bytes || 0);
   $('setbody').innerHTML = `
     <div class="card mb">
       <h2>API access mode
@@ -2353,10 +2415,8 @@ function presetLabel() {
   return ({ '3600': '1h', '21600': '6h', '86400': '24h', '604800': '7d', '2592000': '30d' })[mode.preset] || '';
 }
 
-const scopeDate = seconds => new Date(seconds * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
-const scopeTime = seconds => new Date(seconds * 1000).toLocaleString([], {
-  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-});
+const scopeDate = seconds => at(DAY_SHORT, seconds * 1000);
+const scopeTime = seconds => at(SCOPE_TIME, seconds * 1000);
 
 function updateScope() {
   if (!rangeData) return;
@@ -2379,12 +2439,12 @@ function updateScope() {
 function syncFollowControl(offline = false) {
   if (offline) {
     $('live').className = 'live down';
-    $('liveText').textContent = 'Disconnected';
+    $('liveText').textContent = tRaw('dashboard.nav.live.disconnected');
     return;
   }
   const following = mode.kind === 'following' && !mode.paused;
   $('live').className = following ? 'live' : 'live idle';
-  $('liveText').textContent = following ? 'Live' : 'Absolute';
+  $('liveText').textContent = following ? tRaw('dashboard.nav.live.following') : tRaw('dashboard.nav.live.frozen');
 }
 
 function rebuildSamples() {

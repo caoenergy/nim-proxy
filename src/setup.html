@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NIM Proxy — First-time setup</title>
+<title data-i18n-text="setup.document.title">NIM Proxy — First-time setup</title>
 <style>
 :root { color-scheme: dark; --bg:#0a0e0a; --card:#111611; --line:#1f2a1f; --text:#e6ede6;
   --dim:#8fa08f; --green:#76b900; --green-dim:#4c7a00; --err:#ff6b6b; --ok:#76b900; }
@@ -117,7 +117,7 @@ details input { margin-top:8px; }
   </section>
 </form>
 
-<script type="application/json" id="i18n-catalog">{"locale":"en-US","state":"Source","messages":{"setup.header.title":{"en":"— First-time setup","desc":"Follows the untranslated NIM PROXY wordmark.","hash":"f1de6d69"},"setup.header.subtitle":{"en":"Claim this proxy: create the superuser account and add at least one NIM API key.","hash":"4d5df656"},"setup.stepper.step1":{"en":"Create account","hash":"798ca2ce"},"setup.stepper.step2":{"en":"Add NIM keys","hash":"5c728e31"},"setup.stepper.step3":{"en":"Review & finish","hash":"d037a7cf"},"setup.step1.username":{"en":"Username","hash":"e3b89e9d"},"setup.step1.password":{"en":"Password (10+ characters)","hash":"79c07c0e"},"setup.step1.confirm":{"en":"Confirm password","hash":"5ac265f3"},"setup.step1.username.placeholder":{"en":"e.g. admin","desc":"Input placeholder. 'e.g.' needs the locale's own abbreviation; 'admin' is a suggested value.","hash":"d415d634"},"setup.wizard.continue":{"en":"Continue","hash":"31fbef16"},"setup.step1.hint":{"en":"This account is the superuser — it can never be deleted, and it anchors the key pool.","hash":"ffe50a22"},"setup.step2.addkey":{"en":"Validate & add","hash":"15414785"},"setup.step2.advanced":{"en":"Advanced — upstream base URL","hash":"8dd07757"},"setup.wizard.back":{"en":"Back","hash":"76900f1b"},"setup.step2.hint":{"en":"Keys join the shared pool as yours. Each key's requests-per-minute defaults to NIM's 40.","hash":"bba8a612"},"setup.step3.mintkey":{"en":"Create my first client API key ({key}) so clients can call {endpoint} right away","desc":"Checkbox label. {key} and {endpoint} are <code>-wrapped literals: npk_… and /v1. Neither is translated.","hash":"fc7a5e75"},"setup.step3.mintwarn":{"en":"Without a client key, the proxy still requires an API key but rejects {b}every{/b} /v1 request until you mint one in Settings → Access & keys. Skip this only if you plan to switch the API mode to open (unauthenticated /v1).","desc":"{b}...{/b} is bold emphasis. Translators may move the tags to whichever word carries the emphasis.","hash":"2635d060"},"setup.step3.finish":{"en":"Create & open dashboard","hash":"c91cfd01"},"setup.step4.intro":{"en":"Setup complete. Point your client at the proxy — the API key below is shown {b}only this once{/b} (only its digest is stored).","hash":"3a9f6c0b"},"setup.step4.baseurl":{"en":"Client base URL","hash":"32444228"},"setup.step4.apikey":{"en":"Client API key","hash":"f3a91248"},"setup.step4.copy":{"en":"Copy","desc":"Button, imperative verb. Copies the adjacent value to the clipboard.","hash":"e21f935f"},"setup.step4.opendash":{"en":"Open dashboard","desc":"Button, imperative verb phrase. 'Open' is the verb, not the API-mode adjective.","hash":"803f2313"}}}</script>
+<script type="application/json" id="i18n-catalog">{"locale":"en-US","state":"Source","messages":{"setup.header.title":{"en":"— First-time setup","desc":"Follows the untranslated NIM PROXY wordmark.","hash":"f1de6d69"},"setup.header.subtitle":{"en":"Claim this proxy: create the superuser account and add at least one NIM API key.","hash":"4d5df656"},"setup.stepper.step1":{"en":"Create account","hash":"798ca2ce"},"setup.stepper.step2":{"en":"Add NIM keys","hash":"5c728e31"},"setup.stepper.step3":{"en":"Review & finish","hash":"d037a7cf"},"setup.step1.username":{"en":"Username","hash":"e3b89e9d"},"setup.step1.password":{"en":"Password (10+ characters)","hash":"79c07c0e"},"setup.step1.confirm":{"en":"Confirm password","hash":"5ac265f3"},"setup.step1.username.placeholder":{"en":"e.g. admin","desc":"Input placeholder. 'e.g.' needs the locale's own abbreviation; 'admin' is a suggested value.","hash":"d415d634"},"setup.wizard.continue":{"en":"Continue","hash":"31fbef16"},"setup.step1.hint":{"en":"This account is the superuser — it can never be deleted, and it anchors the key pool.","hash":"ffe50a22"},"setup.step2.addkey":{"en":"Validate & add","hash":"15414785"},"setup.step2.advanced":{"en":"Advanced — upstream base URL","hash":"8dd07757"},"setup.wizard.back":{"en":"Back","hash":"76900f1b"},"setup.step2.hint":{"en":"Keys join the shared pool as yours. Each key's requests-per-minute defaults to NIM's 40.","hash":"bba8a612"},"setup.step3.mintkey":{"en":"Create my first client API key ({key}) so clients can call {endpoint} right away","desc":"Checkbox label. {key} and {endpoint} are <code>-wrapped literals: npk_… and /v1. Neither is translated.","hash":"fc7a5e75"},"setup.step3.mintwarn":{"en":"Without a client key, the proxy still requires an API key but rejects {b}every{/b} /v1 request until you mint one in Settings → Access & keys. Skip this only if you plan to switch the API mode to open (unauthenticated /v1).","desc":"{b}...{/b} is bold emphasis. Translators may move the tags to whichever word carries the emphasis.","hash":"2635d060"},"setup.step3.finish":{"en":"Create & open dashboard","hash":"c91cfd01"},"setup.step4.intro":{"en":"Setup complete. Point your client at the proxy — the API key below is shown {b}only this once{/b} (only its digest is stored).","hash":"3a9f6c0b"},"setup.step4.baseurl":{"en":"Client base URL","hash":"32444228"},"setup.step4.apikey":{"en":"Client API key","hash":"f3a91248"},"setup.step4.copy":{"en":"Copy","desc":"Button, imperative verb. Copies the adjacent value to the clipboard.","hash":"e21f935f"},"setup.step4.opendash":{"en":"Open dashboard","desc":"Button, imperative verb phrase. 'Open' is the verb, not the API-mode adjective.","hash":"803f2313"},"setup.step2.validating":{"en":"Validating…","desc":"Button label while a key is probed upstream.","hash":"cd51f8c8"},"setup.step4.copied":{"en":"Copied","desc":"Button label after a successful clipboard copy. Past tense.","hash":"8d525e5f"},"setup.step4.select_copy":{"en":"Select & copy","desc":"Button label when the clipboard API is unavailable and the user must copy manually.","hash":"09201dce"},"setup.document.title":{"en":"NIM Proxy — First-time setup","desc":"Browser tab title. 'NIM Proxy' is the product name and stays.","hash":"a59b017c"}}}</script>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -131,6 +131,9 @@ const esc = (s) => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;","
    catalog, so a translator can move emphasis without being able to inject. */
 const MSG = JSON.parse($("i18n-catalog").textContent).messages;
 const rawMsg = (id) => (MSG[id] === undefined ? id : MSG[id].en);
+/* Same name as the dashboard's, so the two pages read alike and the
+   untagged-string linter recognises call sites on both. */
+const tRaw = rawMsg;
 const t = (id) => esc(rawMsg(id));
 const INLINE = { "{b}": "<b>", "{/b}": "</b>",
                  "{key}": "<code>npk_\u2026</code>", "{endpoint}": "<code>/v1</code>" };
@@ -142,6 +145,12 @@ function tHtml(id) {
 function applyStatic(root) {
   root.querySelectorAll("[data-i18n]").forEach(el => { el.innerHTML = t(el.dataset.i18n); });
   root.querySelectorAll("[data-i18n-html]").forEach(el => { el.innerHTML = tHtml(el.dataset.i18nHtml); });
+  // Own first text node — used for <title>, whose content is plain text.
+  root.querySelectorAll("[data-i18n-text]").forEach(el => {
+    for (const n of el.childNodes) {
+      if (n.nodeType === 3 && n.textContent.trim()) { n.textContent = tRaw(el.dataset.i18nText); break; }
+    }
+  });
   root.querySelectorAll("[data-i18n-attr]").forEach(el => {
     el.dataset.i18nAttr.split(",").forEach(pair => {
       const i = pair.indexOf(":");
@@ -182,7 +191,7 @@ $("addkey").onclick = async () => {
   if (!key) return err("Paste a NIM API key first.");
   if (keys.some(k => k.key === key)) return err("That key is already added.");
   err("");
-  $("addkey").disabled = true; $("addkey").textContent = "Validating…";
+  $("addkey").disabled = true; $("addkey").textContent = tRaw("setup.step2.validating");
   try {
     const body = { key };
     const base = $("baseurl").value.trim();
@@ -193,7 +202,7 @@ $("addkey").onclick = async () => {
     if (v.ok) { keys.push({ key, rpm, models: v.models }); $("newkey").value = ""; renderKeys(); }
     else err("Key validation failed: " + (v.error || r.status));
   } catch (e) { err("Validation request failed: " + e); }
-  $("addkey").disabled = false; $("addkey").textContent = "Validate & add";
+  $("addkey").disabled = false; $("addkey").textContent = tRaw("setup.step2.addkey");
 };
 
 function apiAccessLine() {
@@ -228,9 +237,9 @@ document.querySelectorAll("[data-copy]").forEach(b => {
   b.onclick = async () => {
     // Never claim "Copied" when the write failed (no clipboard API on a
     // plain-http remote) — this is a once-only secret.
-    try { await navigator.clipboard.writeText($(b.dataset.copy).textContent); b.textContent = "Copied"; }
-    catch { b.textContent = "Select & copy"; }
-    setTimeout(() => { b.textContent = "Copy"; }, 1500);
+    try { await navigator.clipboard.writeText($(b.dataset.copy).textContent); b.textContent = tRaw("setup.step4.copied"); }
+    catch { b.textContent = tRaw("setup.step4.select_copy"); }
+    setTimeout(() => { b.textContent = tRaw("setup.step4.copy"); }, 1500);
   };
 });
 $("opendash").onclick = () => { window.location = "/"; };

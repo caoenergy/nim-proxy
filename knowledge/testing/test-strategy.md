@@ -104,7 +104,18 @@ evolved working corpus in `fuzz/corpus/` is gitignored. Run one locally:
 cargo +nightly fuzz run sse_scan -- -max_total_time=60
 ```
 
-Dashboard changes get one more check: real-browser screenshots (headless
-Chromium) under live traffic (the UI is dark-only since the operator-console
-redesign), inspected by eye — as superuser/admin/user, confirming each role
-sees the right Settings sections.
+Dashboard changes get two more checks.
+
+**Automated — `node scripts/render_check.js`.** Renders the page against the
+captured payloads in `tests/fixtures/api/`, walks all five tabs, hovers every
+chart with real pointer input, and fails on any uncaught page error.
+`--escape-probe` additionally fails on a render helper escaping a catalog value
+that was already escaped at load. This is the only gate that proves the page
+*runs*: `cargo test` asserts on served HTML text and `node --check` proves only
+that it parses. See [render-gate](../decisions/render-gate.md).
+
+**Human — screenshots, still.** Real-browser screenshots under live traffic
+(the UI is dark-only since the operator-console redesign), inspected by eye —
+as superuser/admin/user, confirming each role sees the right Settings sections.
+Clipping is a layout property and no script judges it; the `.bval` wrap on the
+Models tab at 900px was found by eye and clips in English already.
