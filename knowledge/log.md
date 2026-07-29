@@ -6,6 +6,32 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-29] ingest — standard vocabulary across the interface
+
+Second change of the 0.6.6 rationalization. Applied the agreed standard
+ops-dashboard vocabulary to `src/dashboard.html` and `src/setup.html`:
+`Harness` → `Client`, dashboard `window` → `time range`, `lane` → `key`,
+`Conversation stickiness` → `Session affinity`, `Model-pressure governor` →
+`Model limits`, `Where time goes` → `Latency breakdown`, `Rate-limit
+pressure` → `Throttling`, `Keyed` → `API key required`, and the composite
+`Shed · 401 · failed logins` row split into three.
+
+Display strings only. Every identifier held: DOM ids, CSS classes, `data-*`
+attributes, metric names, and the `sortTable` state keys — where `harness`
+and `clients` both exist, so renaming that argument would have silently made
+the two tables share sort state.
+
+- Lint: the interface now says **key** while the Prometheus exposition still
+  says `lane` (`nimproxy_lane_requests_total`, and the `lane` label on
+  `nimproxy_lane_cooldown_total`). That divergence is deliberate — renaming a
+  second series would be another breaking change, and 0.6.6 already carries
+  one. `README.md`'s architecture section still says "lane" for the same
+  reason: it describes the code, which has not been renamed.
+- `knowledge/architecture/dashboard.md`, `ops/configure-env.md`, and the
+  README dashboard-tour section were updated to name the new labels; the
+  `agent harness` prose describing what OpenCode/Codex *are* was deliberately
+  left alone.
+
 ## [2026-07-29] decision — lane cooldown naming, savings metric removed
 
 First change of the 0.6.6 presentation-layer rationalization.

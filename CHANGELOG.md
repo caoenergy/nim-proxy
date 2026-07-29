@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Dashboard and setup-wizard labels now use standard ops-dashboard vocabulary
+  throughout. `Harness`/`Harnesses` become **Client**/**Clients**; the
+  dashboard's `window` becomes **time range** (the rate-limit rolling window
+  keeps "window"); `lane` becomes **key** in the interface, since a lane is one
+  NIM credential and Settings already said "keys". `Conversation stickiness` →
+  **Session affinity**, `Model-pressure governor` → **Model limits**,
+  `Where time goes` → **Latency breakdown**, `Rate-limit pressure` →
+  **Throttling**, `Historical provisioning` → **Capacity history**, `Keyed` →
+  **API key required**. The composite `Shed · 401 · failed logins` row splits
+  into **Dropped**, **Unauthorized**, and **Failed logins**.
+
+  Display text only — no metric, route, CSS class, `data-*` attribute, or DOM
+  id changed. Metric labels keep `lane` (`nimproxy_lane_requests_total`), so
+  the interface says "key" while the exposition still says "lane"; renaming
+  the series would be a second breaking change and was not taken.
+
 - **Breaking:** the lane state entered after an upstream 429/5xx is now called
   **cooldown** rather than "bench", and the Prometheus series
   `nimproxy_lane_benched_total` is renamed to `nimproxy_lane_cooldown_total`.

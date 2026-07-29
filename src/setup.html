@@ -99,8 +99,8 @@ details input { margin-top:8px; }
   <section id="step3" hidden>
     <div class="review" id="review"></div>
     <label class="opt"><input type="checkbox" id="mintkey" checked>
-      <span>Create my first client API key (<code>npk_…</code>) so harnesses can call <code>/v1</code> right away</span></label>
-    <p class="warn" id="mintwarn" hidden>Without a client key, the proxy stays in keyed mode but
+      <span>Create my first client API key (<code>npk_…</code>) so clients can call <code>/v1</code> right away</span></label>
+    <p class="warn" id="mintwarn" hidden>Without a client key, the proxy still requires an API key but
       rejects <b>every</b> /v1 request until you mint one in Settings → Access &amp; keys.
       Skip this only if you plan to switch the API mode to open (unauthenticated /v1).</p>
     <div class="row">
@@ -110,7 +110,7 @@ details input { margin-top:8px; }
   </section>
 
   <section id="step4" hidden>
-    <p class="sub">Setup complete. Point your harness at the proxy — the API key below is shown
+    <p class="sub">Setup complete. Point your client at the proxy — the API key below is shown
       <b>only this once</b> (only its digest is stored).</p>
     <label>Client base URL</label>
     <div class="copyrow"><code id="cbase"></code><button type="button" class="ghost" data-copy="cbase">Copy</button></div>
@@ -173,8 +173,8 @@ $("addkey").onclick = async () => {
 
 function apiAccessLine() {
   return $("mintkey").checked
-    ? 'keyed · first client key "default"'
-    : "keyed — no client key yet (/v1 rejects everything)";
+    ? 'API key required · first client key "default"'
+    : "API key required — no client key yet (/v1 rejects everything)";
 }
 $("to3").onclick = () => {
   const base = $("baseurl").value.trim();

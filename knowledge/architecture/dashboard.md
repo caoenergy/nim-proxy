@@ -18,7 +18,7 @@ custom date-range picker, and five persona-aligned tabs, each ordered
 
 - **Overview** (landing, balanced) — KPI cards + threshold ring gauges,
   request and token sparklines, a health strip, a p50/p95 performance
-  band, top models & harnesses.
+  band, top models & clients.
 - **Models** (benchmarker) — KPI cards, tokens/min-by-model chart, a
   TTFT/tok-s/TPOT/upstream quantile quad, a "how responses end" breakdown,
   reasoning-vs-output share, a head-to-head scorecard with best-in-column
@@ -34,8 +34,8 @@ custom date-range picker, and five persona-aligned tabs, each ordered
   breakdown, a reliability & security panel, a request-types panel, per-client
   table.
 - **Capacity** (capacity planner, was **Keys**) — a hero row (saturation,
-  provisioning, rate-limit pressure), lane utilization meters, 429s/min by
-  lane, per-lane table.
+  capacity history, throttling), key utilization meters, 429s/min by key,
+  per-key table.
 
 The tabs are **identical for every role** — all authenticated users see the
 same observability, the deliberate shared-pool-among-friends model. v0.6.0 adds
@@ -48,11 +48,11 @@ see [client-auth](client-auth.md) and
 `inflight vs limit` rows) that appears only once the
 [governor](governor.md) has engaged.
 
-Every analytical tab shares one selected history window. **Default · Nd**
+Every analytical tab shares one selected time range. **Default · Nd**
 (30d by default) follows now using the configured default, relative presets
-follow now over their duration, and **All retained** follows the server's
+follow now over their duration, and **All time** follows the server's
 current retained boundary. Custom ranges are fixed. Clicking the sidebar
-follow control freezes the currently rendered window; clicking again resumes
+follow control freezes the currently rendered range; clicking again resumes
 its preset. Settings hides the range controller because it is
 configuration-driven rather than an analytical view.
 
@@ -97,9 +97,9 @@ size to a real `clientWidth` when their tab is switched to):
 
 Colors follow the entity, not the chart: models take their publisher's brand
 color from the `PUBLISHERS` map (extended with StepFun and a Moonshot teal);
-known harnesses (`claude-code`, `aider`, `opencode`, `cline`, `continue`,
+known clients (`claude-code`, `aider`, `opencode`, `cline`, `continue`,
 `cursor`, `roo-code`, `zed`, `codex`, `n8n`) take a fixed client-color map;
-anything else — and lane colors, which use six fixed slot colors — falls
+anything else — and key colors, which use six fixed slot colors — falls
 back to a stable hash-to-hue (`hueFor`). The old first-six-slots categorical
 allocator (`modelSlots`/`slotFor`) is gone; there's no "ran out of colors"
 case left to handle.
@@ -157,10 +157,10 @@ recomputed.
 **Notable derivations, worth recording so they aren't rediscovered:**
 
 - **Delta chips** (the `+8.2%`-style pill on every KPI card) compare the
-  second half of the visible window's average against the first half — an
+  second half of the visible range's average against the first half — an
   honest trend computable from the selected sample buffer, with no extra
   history fetch. Hidden below 4 samples.
-- **"Where time goes"** (Reliability hero) splits average end-to-end time
+- **"Latency breakdown"** (Reliability hero) splits average end-to-end time
   into queue wait, first token, and generation, where **generation = avg
   `upstream_seconds` − avg `nimproxy_ttft_seconds`** — verified against
   `proxy.rs`: `upstream_seconds` spans send→stream-end, `ttft` spans
@@ -170,10 +170,10 @@ recomputed.
   `dashboard.slo_target_percent` from the current server config (99.9% by
   default). HTTP 4xx and disconnect outcomes stay visible in outcome/error
   views but do not consume the service-availability error budget. Capacity
-  history uses the contemporaneous value stored with each v2 sample; legacy
-  intervals explicitly show capacity unavailable. Active load, lane count,
-  current RPM, and utilization are labeled **Now**; selected-window lane
-  request and cooldown counts remain historical.
+  history uses the capacity-at-the-time value stored with each v2 sample;
+  intervals without it explicitly show no capacity data. Active load, key
+  count, current RPM, and utilization are labeled **Now**; selected-range
+  key request and cooldown counts remain historical.
 
 Following history survives refresh and process restart because it is rebuilt
 from the server index; only the adjacent-poll rate shown in **Now** widgets

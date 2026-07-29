@@ -1657,7 +1657,7 @@ async fn dashboard_pause_traffic_is_derived_from_rendered_samples() {
 }
 
 #[tokio::test]
-async fn dashboard_historical_provisioning_has_no_guessed_lane_size() {
+async fn dashboard_capacity_history_has_no_guessed_key_size() {
     let mock = start_mock().await;
     let proxy = start_proxy(&mock.url, &[]).await;
     let cookie = login(&proxy).await;
@@ -1671,9 +1671,9 @@ async fn dashboard_historical_provisioning_has_no_guessed_lane_size() {
         .text()
         .await
         .unwrap();
-    assert!(html.contains("rpm short at peak"));
-    assert!(html.contains("vs contemporaneous capacity"));
-    assert!(html.contains("legacy interval"));
+    assert!(html.contains("Peak shortfall"));
+    assert!(html.contains("of capacity at the time"));
+    assert!(html.contains("with no capacity data"));
     assert!(!html.contains("const moreKeys"));
     assert!(!html.contains("MORE KEY"));
 }
