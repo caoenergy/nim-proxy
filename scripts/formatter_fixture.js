@@ -34,22 +34,34 @@ function grab(re, what) {
   return m[0];
 }
 
+// The section header may be a one-liner or a multi-line comment; take
+// everything up to the next section banner either way.
 const block = grab(
-  /\/\* -+ formatting -+ \*\/[\s\S]*?(?=\n\/\* -+)/,
+  /\/\* -+ formatting -+[\s\S]*?(?=\n\/\* -+ [a-z])/,
   "the formatting block"
 );
 const scopeDate = grab(/const scopeDate = [^\n]*\n/, "scopeDate");
-const scopeTime = grab(/const scopeTime = seconds =>[\s\S]*?\}\);\n/, "scopeTime");
+const scopeTime = grab(/const scopeTime = [^\n]*\n/, "scopeTime");
+// Mirrors the two chart axis-label call sites and the hover timestamp, which
+// are inline in the chart builders rather than named functions.
 const axis = `
-const axisLabel = (t, spanSecs) => spanSecs > 86400 * 2
-  ? new Date(t).toLocaleDateString([], {month:'short', day:'numeric'})
-  : new Date(t).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-const stamp = t => new Date(t).toLocaleString();
+const axisLabel = (ms, spanSecs) => spanSecs > 86400 * 2 ? DAY_SHORT.format(ms) : TIME_HM.format(ms);
+const stamp = ms => STAMP.format(ms);
 `;
+
+// The formatters now read their locale from the shipped catalog, so take it
+// from the same place the page does rather than assuming en-US.
+const catalog = JSON.parse(
+  grab(
+    /(?<=<script type="application\/json" id="i18n-catalog">)[\s\S]*?(?=<\/script>)/,
+    "the inline catalog"
+  )
+);
+const preamble = `const I18N = ${JSON.stringify({ locale: catalog.locale })};`;
 
 const F = {};
 new Function(
-  `${block}\n${scopeDate}\n${scopeTime}\n${axis}\n` +
+  `${preamble}\n${block}\n${scopeDate}\n${scopeTime}\n${axis}\n` +
     `Object.assign(this, { fmt, secs, ago, scopeDate, scopeTime, axisLabel, stamp });`
 ).call(F);
 

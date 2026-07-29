@@ -15,31 +15,31 @@ fmt	100	100
 fmt	999	999
 fmt	1000	1,000
 fmt	9999	9,999
-fmt	10000	10.0K
+fmt	10000	10K
 fmt	12345	12.3K
-fmt	999999	1000.0K
-fmt	1000000	1.0M
+fmt	999999	1M
+fmt	1000000	1M
 fmt	1234567	1.2M
-fmt	1000000000	1.0B
+fmt	1000000000	1B
 fmt	1234567890	1.2B
 fmt	-1	-1
 fmt	-1234	-1,234
-fmt	-1000000	-1.0M
-fmt	1000000000000	1000.0B
+fmt	-1000000	-1M
+fmt	1000000000000	1T
 secs	NaN	–
 secs	0	0 ms
 secs	0.0004	0 ms
 secs	0.001	1 ms
 secs	0.5	500 ms
 secs	0.999	999 ms
-secs	1	1.0 s
-secs	1.04	1.0 s
-secs	59.9	59.9 s
-secs	89.9	89.9 s
+secs	1	1.0 sec
+secs	1.04	1.0 sec
+secs	59.9	59.9 sec
+secs	89.9	89.9 sec
 secs	90	2 min
 secs	3599	60 min
 secs	3600	60 min
-secs	86399	1440 min
+secs	86399	1,440 min
 ago	0	0s
 ago	1	1s
 ago	59	59s
