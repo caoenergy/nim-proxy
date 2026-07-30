@@ -21,7 +21,7 @@ REQUIRED = {
     "contract:invariants": (
         "## Invariants",
         "Fail closed",
-        "Escape once",
+        "Context owns the sink",
         "Zero upstream rate violations",
         "The wire format does not move",
         "Data is never localized",
@@ -82,7 +82,10 @@ CASES = {
     ),
     "missing-start": ("contract:start", "AGENTS.md", "## Start here", "## Begin"),
     "missing-invariant": (
-        "contract:invariants", "AGENTS.md", "Escape once", "Escape differently"
+        "contract:invariants",
+        "AGENTS.md",
+        "Context owns the sink",
+        "Escape differently",
     ),
     "missing-memory": (
         "contract:memory",

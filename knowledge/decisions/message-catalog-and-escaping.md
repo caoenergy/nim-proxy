@@ -1,161 +1,146 @@
 ---
 type: Decision
-title: Embed the message catalog and escape it once, at load
-description: Extraction routes every user-visible string through t(). Catalog values are plain text escaped once on load, because four render helpers interpolate their arguments into innerHTML without escaping.
+title: Route catalog ids and inert descriptors to context-owning sinks
+description: Page code passes catalog ids to DOM sinks and branded inert descriptors to fixed-markup HTML builders; raw lookup is confined to canonical sink bodies.
 tags: [i18n, dashboard, security, xss]
-timestamp: 2026-07-29T00:00:00Z
+timestamp: 2026-07-30T00:00:00Z
 ---
 
-# Embed the message catalog and escape it once, at load
+# Route catalog ids and inert descriptors to context-owning sinks
 
 ## Context
 
-Localizing the dashboard means every user-visible string has to come from a
-catalog rather than a literal. `src/dashboard.html` is one embedded file with
-no build step ([dashboard](../architecture/dashboard.md)), so the catalog has
-to ship inline and the runtime has to be a few lines, not a framework.
+The first catalog runtime escaped every message at lookup and exposed a second
+plain lookup for `textContent` and `setAttribute`. Callers had to remember which
+representation a helper accepted. One extra escape rendered entities; one
+missing escape parsed markup. Structured setup copy also made HTML strings from
+catalog placeholders.
 
-The hard part is not the lookup. It is that the dashboard builds HTML by string
-concatenation into `innerHTML` — 45 sites — and the escaping posture recorded in
-[input-sanitizing-and-xss](input-sanitizing-and-xss.md) assumes every *dynamic*
-value passes through `esc()`. Catalog values are a new class of dynamic value,
-and an inventory of the render path found four helpers that interpolate their
-arguments with no escaping at all:
+An attempted replacement made `message()` public throughout page code and
+tried to infer the eventual owner of every returned string. Independent review
+repeatedly found fail-open shapes: string literals that spoofed helper names,
+ASI-separated calls that inherited an earlier owner, blanket approval inside
+named functions, fake canonical attribute writes, and script/style/SVG aliases.
+Adding more partial JavaScript parsing failed the Ponytail ladder.
 
-| Helper | Argument |
-|---|---|
-| `metricRow` | label |
-| `perfBlock` | label |
-| `tile` | label |
-| `prow` | label |
-
-`kpiCards` escapes `k.label` but not `k.value` or `k.sub`, and the delta-chip
-`title=` attribute is interpolated raw. All six are safe *today* only because
-every argument is a hardcoded literal. The moment they read from a catalog,
-they are injection sinks — and a catalog is exactly the kind of file that later
-gets machine-generated, contributed, or edited by someone who is not reading
-this page.
-
-Separately, `chipHtml` built an `onerror="…"` attribute containing a JavaScript
-statement containing single-quoted JS string literals — three nested contexts,
-no escaping. It was safe only because `initialsOf()` strips its input to
-`[A-Za-z0-9 ]`, a helper written to build monograms, not to sanitize. One
-catalog candidate (`'unknown'`, the fallback publisher name) reached it.
-
-## Options
-
-1. **Escape at every call site.** Wrap each `t()` result in `esc()`. Correct if
-   done everywhere, and silently wrong the first time someone forgets. Six
-   sinks today, more as the file grows.
-2. **Fix the four helpers to escape their arguments.** Better, but it changes
-   the contract of helpers that also receive already-escaped HTML fragments
-   from other call sites, so it would double-escape those.
-3. **Convert `innerHTML` to `textContent`.** Explicitly out of scope — that is a
-   rewrite of the render path, not an extraction.
-4. **Escape once, at load.** The catalog stores plain text; the runtime escapes
-   every value as it is parsed. `t()` is then safe to interpolate anywhere a
-   literal was safe, which is the whole file.
+The owner approved a one-way replacement while the application is pre-1.0.
+Runtime, both pages, validators, browser probes, guide invariant, and this
+decision move atomically.
 
 ## Choice
 
-**Option 4.** Catalog values are plain text. `t(id, params)` returns an escaped
-string; `tRaw(id)` returns the plain one for `setAttribute` and `textContent`,
-neither of which parses entities. Placeholder values are escaped as they are
-substituted — substitution happens *after* the message is escaped, so an
-unescaped param would land raw in exactly the sinks this decision exists to
-protect.
+Page code does not exchange ambiguous “catalog strings.” It uses two explicit
+value flows:
 
-The corollary is that **helpers must not escape their label argument**.
-`sortTable` did, which double-encoded every catalog-supplied column header —
-invisible in en-US, where no header contains `&` or `'`, and wrong the first
-time a locale or a copy edit introduces one. Worse, one id fed both an escaping
-sink (`sortTable`) and a non-escaping one (`metricRow`), so a single message had
-two escaping regimes. `sortTable` no longer escapes; column labels come from a
-literal or the catalog, never from request data.
+1. DOM text, text-bearing attributes, and structured setup copy receive a
+   catalog id plus parameters. Their canonical helper performs the lookup and
+   immediately writes through its native DOM primitive.
+2. Fixed-markup dashboard builders receive a frozen, Symbol-branded descriptor
+   from `catalogMessage(id, params)`. Its `Symbol.toPrimitive` throws on normal
+   coercion, so a URL, style, or native attribute cannot silently stringify it.
+   `escapeHtml()` is the sole named descriptor resolver and resolves and
+   escapes in one operation.
 
-And `chipHtml`'s `onerror=` is gone before any extraction: a delegated
-capture-phase `error` listener reads the fallback from `data-*` attributes.
-The file now has no JavaScript-context interpolation at all.
+`message(id, params)` still returns plain Unicode internally, but raw calls are
+confined to the exact canonical sink bodies. There is no escaped/plain
+compatibility lookup and no general plain catalog value in page code.
 
-That alone did not make the rule "catalog values reach element content and
-quoted attributes only" *enforced* — `applyStatic` called `setAttribute` with
-whatever attribute name the markup supplied, so a markup edit could still route
-a catalog value into `onclick=` or `style=`, and the CSP permits inline
-handlers. It is enforced now: the runtime accepts only `title`, `placeholder`,
-`aria-label`, and `alt`, and `check_i18n.py` rejects any other target.
+```js
+function setMessageText(node, id, params = {}) {
+  assertMessageTextTarget(node);
+  node.textContent = message(id, params);
+}
 
-**On both pages** — which is worth spelling out, because this paragraph was
-written when it was true of only one. `dashboard.html` had the `I18N_ATTRS`
-guard; `setup.html` did not, and shipped that way while this page and a comment
-in `check_i18n.py` both asserted the runtime enforced it. An adversarial review
-found it by reading the two runtimes side by side rather than trusting either
-description. Demonstrated before fixing: with
-`data-i18n-attr="onclick:setup.step4.copy"` injected into the wizard's markup,
-the unguarded page rendered `onclick="Copy"` on the element and the guarded page
-left the attribute unset.
+function setMessageAttr(node, attr, id, params = {}) {
+  if (!I18N_TEXT_ATTRS.has(attr))
+    throw new Error(`forbidden catalog attribute: ${attr}`);
+  node.setAttribute(attr, message(id, params));
+}
 
-The lesson is not about this attribute. A knowledge page that says "enforced"
-describes intent until someone runs the two implementations against the same
-hostile input — so when a page claims a runtime invariant, it should say which
-runtimes were checked.
+const CATALOG_MESSAGE = Symbol("catalog-message");
+const catalogMessage = (id, params = {}) =>
+  Object.freeze({
+    type: CATALOG_MESSAGE,
+    id,
+    params: Object.freeze({ ...params }),
+    [Symbol.toPrimitive]() {
+      throw new TypeError("catalog descriptor requires escapeHtml");
+    },
+  });
+```
 
-Three tagging mechanisms, chosen so markup structure never changes:
+`I18N_TEXT_ATTRS` is exactly `title`, `placeholder`, `aria-label`, and `alt`.
+Text helpers validate the effective target before lookup, including a text
+node's parent and active ancestors, and reject script, style, and SVG contexts.
+Structured helpers also reject those node types, including descendants, in
+every replacement/emphasis node before they resolve catalog text.
 
-- `data-i18n` — replaces an element's content
-- `data-i18n-attr="attr:id"` — sets an attribute
-- `data-i18n-text` — replaces an element's *own first text node*, for headings
-  that mix an icon, a text node, and a `.note` span. Assigning to a text node
-  cannot introduce markup, so this path needs no escaping at all.
+Structured messages never contain translator-authored HTML. Setup creates fixed
+`<code>` or `<b>` nodes and splices them between catalog-owned text nodes with
+`replaceChildren`. A replacement node is cloned for every placeholder
+occurrence. The locale validator requires the source marker sequence, so a
+locale may move emphasis but cannot drop, duplicate, or reorder its markers.
 
-Inline emphasis inside a message (`{b}…{/b}`) and fixed literals (`{key}`,
-`{endpoint}`) are placeholders expanded from a table in code, never markup
-stored in a catalog value.
+## Sink inventory
+
+| Sink class | Accepted value | Owning primitive |
+|---|---|---|
+| Ordinary element or mixed text-node content | Catalog id + plain parameters | `setMessageText` → `textContent` |
+| `title`, `placeholder`, `aria-label`, `alt` | Catalog id + plain parameters; `aria-label` is allowed on an ordinary SVG element | `setMessageAttr` → `setAttribute` |
+| Structured setup copy | Catalog id + caller-created fixed nodes | text nodes + `replaceChildren` |
+| Fixed chart/table/card/list HTML | Branded catalog descriptor or plain machine data | `escapeHtml` → `innerHTML` |
+| SVG geometry or raw SVG markup | Fixed markup, numeric geometry, fixed colors, and machine-formatted axis values | fixed builder or SVG DOM; catalog ids/descriptors forbidden except an allowlisted accessibility-text attribute after creation |
+| URL-bearing values | Fixed URLs or validated machine/config data | catalog ids and descriptors forbidden |
+| Style-bearing values | Fixed CSS tokens or bounded numeric layout values | catalog ids and descriptors forbidden |
+| Event handlers | Repository functions | catalog ids and descriptors forbidden |
+| Script, stylesheet text, raw SVG, native attribute bypass | Repository source or approved machine data | catalog ids and descriptors forbidden |
+
+The inline `application/json` block is a transport container, not executable
+script. Validators reject raw and entity-encoded markup before a catalog ships.
+Task 5 may replace that transport without changing these value classes.
+
+## Enforcement
+
+- `locale_v1.py --selftest` distinguishes raw markup, entity-encoded markup,
+  and invalid inline marker structure.
+- `check_i18n.py --selftest` covers both allowed flows and hostile URL, style,
+  event, script, CSS, SVG, native-attribute, raw-HTML, alias, string-spoof, and
+  ASI mutations. It also sends descriptors directly to text, URL, style,
+  native-attribute, and raw-SVG sinks while retaining the explicit
+  `setMessageAttr(svg, "aria-label", id)` accessibility path.
+- The resolver is a lexical `const`, not a `window` property. The normal source
+  pass first blanks its declaration and the exact canonical raw-lookup bodies.
+  Any remaining bare `message` identifier—including alias, `call`, or `bind`
+  use—is `sink-context`. This intentionally bounded convention replaces owner
+  inference.
+- `render_check.js --escape-probe` mutates every value with hostile literal
+  entity and markup text. It verifies descriptor inertness and HTML
+  resolution, the four-attribute allowlist, literal text/attribute bytes,
+  stable refusal of forbidden attributes and script/style/SVG text targets,
+  repeated structured placeholders, and both pages' rendered DOM.
+
+The source lint is a regression guard for the repository's direct conventions,
+not a security verifier for an author deliberately obfuscating JavaScript with
+computed properties, `Object.assign`, or native-method `.call`. Trusted source
+can always route the plain string returned by `escapeHtml()` somewhere else.
+Review remains responsible for such deliberate code. Runtime boundaries still
+remove the accidental capability: the raw resolver is not global, descriptors
+throw on coercion, and structured helpers validate both destinations and
+replacement nodes.
+
+See the [render gate](render-gate.md) and
+[test strategy](../testing/test-strategy.md).
 
 ## Consequences
 
-- English rendering is unchanged. `scripts/check_i18n.py` is the proof: every
-  tagged element still holds exactly the text its id claims, no id is missing
-  or orphaned, no hash is stale. Verified non-vacuous against three broken
-  inputs.
-- **`cargo test` cannot validate any of this.** The e2e suite asserts on served
-  HTML text, so it passes on JavaScript that does not parse — and it did. An
-  extraction pass wrote `${…}` into single-quoted strings and only
-  `node --check` caught it. Treat the Rust suite as necessary, never sufficient,
-  for changes to the embedded pages.
-- A headless-Chromium render that mutates three catalog values and confirms the
-  DOM follows is the end-to-end check. It is the only way to prove the runtime
-  actually ran, since an unmutated en-US catalog renders identically whether
-  substitution happened or not.
-- Eight bindings named `t` shadowed the new global — two cursor timestamps,
-  four callback parameters, an error-rate denominator inside `renderModels`
-  (which is dense with `t()` calls), and one in the custom-range handler. All
-  renamed. None broke at the time, but each was a silent failure waiting for
-  the next `t()` call added in that scope. Renaming one of them *did* break
-  `applyRange` mid-edit — the old name was still referenced two lines down, so
-  `isFinite(t)` tested the function and the Apply button stopped working. It
-  was caught by re-reading, not by any test.
-- Ordering matters: `applyStatic` must run **before** the tab-restore loop.
-  Running it after meant deep-linking to `#models` displayed the Models section
-  under a topbar reading "Overview", because the loop sets `#pagetitle` and the
-  catalog pass then overwrote it. `cargo test` and `check_i18n.py` both passed
-  on that; only a headless render at `#models` showed it.
-- **Which helper escapes is not uniform, and the call site has to know.** The
-  Context inventory above is no longer current: `kpiCards` stopped escaping
-  `k.label` in `77421e2`, so it now matches `metricRow`/`perfBlock`/`tile`/
-  `prow`/`stat` and takes `t()`. The *opposite* contract holds for `ringGauge`
-  (escapes `label` in both the `aria-label` and `.rlabel`), `legend` and both
-  charts' hover tooltips (escape `s.name`), `barList`/`leaderList` (escape
-  `name`/`label`, and must keep escaping — those carry model ids), and any site
-  that wraps the value in `esc()` itself: the reliability error segbar's
-  `title=` and the non-success outcomes table. All of those take `tRaw()`, as
-  do `textContent` and `setAttribute`. Reading the sink is the only way to
-  choose, and `--escape-probe` is the only check that tells a wrong choice
-  apart from a right one — it fails on entity text in the DOM.
-- Message ids are always spelled out at the call site, never built by
-  concatenation. `tRaw('dashboard.nav.tab.' + tab)` is invisible to a static
-  linter, which is the one thing that stops English creeping back. The status
-  taxonomy is the case that most invites the shortcut: `REASONS` is keyed by
-  HTTP status, so `t('dashboard.common.status.' + s)` would work and would be
-  unlintable. Every entry is written out instead.
-- The settings surface (~79 strings) is deliberately not extracted; it lands in
-  0.6.7.
+- Callers cannot accidentally choose an escaped versus plain catalog variant.
+- Native DOM helpers own ordinary text and attributes.
+- HTML builders receive a distinguishable value class and resolve it only at
+  their escaping boundary.
+- Catalog text cannot become URL, style, event, script, CSS, raw-SVG, or
+  arbitrary native-attribute input.
+- Machine data remains unlocalized. When fixed HTML displays model ids, client
+  names, publisher names, metric values, API errors, endpoints, or credentials,
+  `escapeHtml()` escapes that plain data without treating it as a descriptor.
+- Adding another raw resolver reference or a helper that accepts an ambiguous
+  string violates this decision.

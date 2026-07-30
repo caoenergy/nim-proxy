@@ -6,6 +6,32 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-30] decision — plain catalogs with context-owned DOM sinks
+
+Replaced the escaped/plain catalog duality atomically across the guide,
+decision, dashboard and setup runtimes, validators, hostile browser probes,
+sink inventory, and testing runbook. Recorded in
+[message-catalog-and-escaping](decisions/message-catalog-and-escaping.md).
+
+- Page code passes ids to native text/attribute/structured sinks. Fixed-markup
+  dashboard builders carry frozen branded descriptors that reveal catalog text
+  only when the HTML sink resolves and escapes them.
+- Setup emphasis and key/endpoint literals use caller-created fixed DOM nodes;
+  repeated value placeholders clone the fixed node and inline marker structure
+  must match the source. Remaining fixed-markup builders resolve and escape
+  catalog descriptors, and escape plain machine values, at interpolation.
+- The negative fixtures name raw and entity-encoded catalog markup, forbidden
+  URL/style/event/script/CSS/SVG contexts, direct/concatenated/multiline/
+  adjacent raw HTML sinks, direct attribute bypasses, structured-message HTML,
+  descriptor misuse, and compatibility helpers separately and require exact
+  sink check ids. The normal source gate blanks the lexical resolver declaration
+  and exact canonical raw-lookup bodies, then rejects every remaining bare
+  resolver identifier, avoiding partial JavaScript owner inference.
+- Both populated-page browser probes inject literal entity and markup-shaped
+  text into every message, then require literal DOM output, a non-global
+  resolver, descriptor coercion refusal, and stable forbidden attribute and
+  script/style/SVG destination/replacement/parented-text errors.
+
 ## [2026-07-30] ingest — map and enforce every HTTP trust boundary
 
 Added the [HTTP trust-boundary map](architecture/http-trust-boundary-map.md)

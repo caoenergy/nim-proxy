@@ -190,9 +190,17 @@ logo with brand-colored monogram fallback, ranked by completion tokens.
 
 ## Security invariant
 
-Every dynamic string that reaches `innerHTML` — model/client names, tooltip
-and legend labels, table cells — passes through the `esc()` HTML-escaper.
-The typed history adapter preserves that rule for labels received from both
-dashboard endpoints, and scope/status text uses `textContent`. No range,
-current, Settings, hover, or sort path introduces an unescaped sink. See
-[input-sanitizing-and-xss](../decisions/input-sanitizing-and-xss.md).
+Ordinary catalog writes pass ids to the canonical `textContent` helper;
+`title`, `placeholder`, `aria-label`, and `alt` pass ids to the allowlisted
+attribute helper. Setup emphasis and literals use fixed DOM nodes. Dashboard
+HTML builders carry frozen catalog descriptors and resolve and escape them only
+through `escapeHtml()` at interpolation. Raw lookup is confined to those
+canonical sink bodies. SVG geometry is fixed or machine-generated; catalog
+descriptors do not enter SVG.
+
+Model/client names, tooltip and legend data, table cells, and other API data
+remain plain machine data and follow the same sink-specific escaping rule; they
+are never localized. Catalog ids and descriptors never enter URL, style,
+event, executable script, CSS, or raw-SVG contexts. See
+[message-catalog-and-escaping](../decisions/message-catalog-and-escaping.md)
+and [input-sanitizing-and-xss](../decisions/input-sanitizing-and-xss.md).

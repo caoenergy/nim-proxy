@@ -25,11 +25,11 @@ Break any of these and the change is wrong regardless of whether it works:
    refuses to boot. This durable-store startup rule applies to the config/auth
    store; history recovery follows its own
    [documented format policy](knowledge/architecture/metrics-history.md).
-2. **Escape once.** The current
-   [escape-at-load decision](knowledge/decisions/message-catalog-and-escaping.md)
-   remains binding: catalog values are escaped at load, and no render helper
-   escapes its label argument again. Only the separately approved atomic
-   replacement may supersede it.
+2. **Context owns the sink.** Page code passes catalog ids to DOM text,
+   allowlisted text-attribute, and structured-node helpers. Fixed-markup HTML
+   receives inert catalog descriptors and resolves and escapes them at its one
+   HTML boundary. Raw lookup is confined to canonical sink bodies. Catalog
+   text never enters URL, style, event, script, CSS, or raw-SVG contexts.
 3. **Zero upstream rate violations.** Not "few". The proxy exists to never
    exceed the per-key limit.
 4. **The wire format does not move.** Protected machine contracts include API
