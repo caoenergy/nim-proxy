@@ -917,6 +917,8 @@ before marking it complete.
 - Modify: `knowledge/testing/test-strategy.md`
 - Modify: `knowledge/log.md`
 - Modify: `docs/plans/v0.6.6-presentation-layer-rationalization.md`
+- Modify: this implementation plan (Task 4 proof/status and task-branch
+  expectation)
 - Test: `scripts/check_agent_guide.py`
 
 **Interfaces:**
@@ -925,7 +927,7 @@ before marking it complete.
 - Produces: one CI step that runs the same self-test and normal validation;
   accurate testing memory; a closed, evidence-backed pre-step.
 
-- [ ] **Step 1: Add the CI gate**
+- [x] **Step 1: Add the CI gate**
 
 After checkout in the `check` job, add:
 
@@ -950,7 +952,7 @@ Replace the existing inline **Embedded page JS syntax** extraction block with:
 
 CI and the proof router now call the same committed syntax check.
 
-- [ ] **Step 2: Reconcile testing memory and chronology**
+- [x] **Step 2: Reconcile testing memory and chronology**
 
 Update `knowledge/testing/test-strategy.md` to state that PR CI calls both
 agent-guide modes. Append:
@@ -961,7 +963,7 @@ agent-guide modes. Append:
 
 to `knowledge/log.md`, naming the two commands and what they reject.
 
-- [ ] **Step 3: Run final local verification**
+- [x] **Step 3: Run final local verification**
 
 Run fresh:
 
@@ -980,7 +982,7 @@ pre-step section of
 `docs/plans/v0.6.6-presentation-layer-rationalization.md`, then change its
 status from implementation pending to complete.
 
-- [ ] **Step 4: Independent workflow and completion review**
+- [x] **Step 4: Independent workflow and completion review**
 
 Give the reviewer the complete `b025602..HEAD`
 documentation/check/workflow diff, the approved design, and the recorded
@@ -993,7 +995,7 @@ commands. Require it to verify:
 - the plan is marked complete only after fresh proof;
 - no unrelated file changed.
 
-- [ ] **Step 5: Commit the CI gate and closure**
+- [x] **Step 5: Commit the CI gate and closure**
 
 ```sh
 git add .github/workflows/ci.yml knowledge/testing/test-strategy.md \
@@ -1001,7 +1003,7 @@ git add .github/workflows/ci.yml knowledge/testing/test-strategy.md \
 git commit -m "ci: enforce the agent guide contract"
 ```
 
-- [ ] **Step 6: Verify the committed state**
+- [x] **Step 6: Verify the committed state**
 
 Run:
 
@@ -1018,8 +1020,40 @@ cargo fmt --check
 Expected:
 
 - the commit check reports no whitespace errors;
-- the working tree is clean and remains on `release/v0.6.6`;
+- the working tree is clean on the isolated task branch based on
+  `release/v0.6.6`;
 - both validator modes and formatting exit 0.
 
 Do not push. Report the commit ids, exact verification output, any skipped
 external CI check, and the next approved v0.6.6 work item.
+
+**Proof record (2026-07-30):**
+
+- Steps 1–2: CI calls `scripts/check_agent_guide.py` in self-test and normal
+  modes immediately after checkout. Its embedded-page syntax step now calls
+  the committed `render_check.js` self-test and syntax-only modes; the workflow
+  adds no Action, permission, dependency, or network operation.
+- Step 3: `python3 scripts/check_agent_guide.py --selftest`, `python3
+  scripts/check_agent_guide.py`, `python3 -m py_compile
+  scripts/check_agent_guide.py`, `node scripts/render_check.js
+  --syntax-selftest`, `node scripts/render_check.js --syntax-only`, and `git
+  diff --check` each exited 0. Their complete output and the formatter
+  environment exception are recorded in the v0.6.6 pre-step above.
+- Formatter environment exception: host Cargo 1.93.1 lacked `cargo fmt`,
+  `rustup`, and `rustfmt`; no host tooling changed. A login-shell disposable
+  container attempt exited 127 (`sh: 1: rustup: not found`). The corrected
+  read-only container command `docker run --rm -v "$PWD:/work:ro" -w /work
+  rust:1.93 sh -c 'rustup component add rustfmt && cargo fmt --check'` exited
+  0 after the repository selected stable 1.97.1 and installed Rustfmt.
+- Step 4: independent review of the prospective `b025602..HEAD` plus
+  uncommitted Task 4 diff returned APPROVE with 0 Critical, 0 Important, and 0
+  Minor findings. It independently re-ran the non-formatter commands and
+  `git diff --check`, confirmed the read-only formatter substitute, and found
+  only the approved workflow, testing-memory, chronology, proof/status, and
+  task-branch-expectation scope.
+- Steps 5–6: commit `79bffea ci: enforce the agent guide contract` passed
+  `git show --check --stat --oneline HEAD` with no whitespace errors. `git
+  status --short --branch` printed only `## work/v0.6.6-okf-agent-guide`.
+  Both agent-guide and embedded-page syntax modes exited 0 with the same green
+  output recorded above; the read-only disposable formatter command again
+  exited 0 after stable 1.97.1 installed Rustfmt.

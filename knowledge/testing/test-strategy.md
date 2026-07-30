@@ -58,6 +58,11 @@ locale, or layout is covered. A relevant missing reusable proof is a work
 item. A scratch reproduction may demonstrate a problem but does not become the
 regression gate.
 
+PR CI runs both agent-guide modes: `python3 scripts/check_agent_guide.py
+--selftest` proves each contract check can reject its fixture, and `python3
+scripts/check_agent_guide.py` rejects a missing stable contract or unresolved
+repository-local guide link.
+
 ## 1. Unit — `cargo test` (in `src/`)
 
 Pool semantics (window spread, least-loaded, sticky/spill flags, penalize,

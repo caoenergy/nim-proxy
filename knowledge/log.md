@@ -952,3 +952,10 @@ Notable facts captured at ingest time:
   before smoothing to a trailing-60s average → noted in [dashboard](architecture/dashboard.md).
 - The `/v1/models` schema research killed the idea of API-sourced model
   descriptions; cards enrich from the id namespace instead.
+
+## [2026-07-30] lint — enforce the agent-guide memory contract in CI
+
+PR CI now runs `python3 scripts/check_agent_guide.py --selftest`, which rejects
+a validator that fails to observe each named contract check, and `python3
+scripts/check_agent_guide.py`, which rejects missing stable guide contracts or
+unresolved repository-local guide links.
