@@ -152,7 +152,17 @@ const catalogReady = (async () => {
   if (!presentationStylesheetReady()) return;
   const bootstrap = await responseJson('/api/locale-bootstrap');
   if (!validBootstrap(bootstrap)) throw new Error('invalid locale bootstrap');
-  const locale = bootstrap.server_default;
+  const config = await responseJson('/api/config');
+  if (!config
+      || !Object.prototype.hasOwnProperty.call(config, 'locale')
+      || (config.locale !== null && typeof config.locale !== 'string'))
+    throw new Error('invalid locale preference');
+  const locale = [
+    config.locale,
+    bootstrap.server_default,
+    'en-US',
+  ].find(candidate => bootstrap.installed_locales.includes(candidate));
+  if (!locale) throw new Error('no installed startup locale');
   const catalog = await responseJson(
     `/assets/operator/locales/${encodeURIComponent(locale)}.json`,
   );

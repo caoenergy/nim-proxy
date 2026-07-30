@@ -33,6 +33,7 @@ pub const API_SETTINGS_HISTORY: &str = "/settings/history";
 pub const API_SETTINGS_GOVERNOR: &str = "/settings/governor";
 pub const API_SETTINGS_USERS: &str = "/settings/users";
 pub const API_SETTINGS_ACCOUNT: &str = "/settings/account";
+pub const API_SETTINGS_LOCALE: &str = "/settings/locale";
 pub const API_SETTINGS_VALIDATE_KEY: &str = "/settings/validate-key";
 
 pub const HEALTH: &str = "/health";
@@ -274,6 +275,14 @@ const ROUTES: &[RouteContract] = &[
         probe_path: "/api/settings/account",
     },
     RouteContract {
+        access: Access::OperatorAdmin,
+        method: "POST",
+        openapi: true,
+        path: "/api/settings/locale",
+        phase: Phase::PostSetup,
+        probe_path: "/api/settings/locale",
+    },
+    RouteContract {
         access: Access::Public,
         method: "GET",
         openapi: false,
@@ -357,7 +366,7 @@ mod tests {
         API_SETTINGS_GOVERNOR,
         API_SETTINGS_USERS,
         API_SETTINGS_ACCOUNT,
-        "/settings/locale",
+        API_SETTINGS_LOCALE,
         API_SETTINGS_VALIDATE_KEY,
     ];
 

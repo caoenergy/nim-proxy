@@ -6,6 +6,37 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-30] research finding — duplicate-safe account JSON boundary
+
+The mixed password-or-locale account endpoint cannot deserialize through
+`serde_json::Value`: JSON object construction collapses duplicate known keys
+before either typed branch sees them. One typed serde map visitor now rejects
+duplicate `current_password`, `new_password`, `action`, and `locale` fields as
+`422 invalid_json` without a durable write. The locale action remains an exact
+closed object, wrong actions retain `400 invalid_action`, and legacy password
+bodies continue to ignore unknown extension fields. The generated operation
+documents both session outcomes and all runtime error branches. See the
+[typed-response decision](decisions/typed-responses-and-generated-openapi.md),
+[HTTP trust-boundary map](architecture/http-trust-boundary-map.md), and
+[test strategy](testing/test-strategy.md).
+
+## [2026-07-30] component — dormant locale preference contracts
+
+Config schema v1 now defaults and persists a validated `default_locale` and
+stores an optional per-user override. One locale-v1 canonicalizer distinguishes
+invalid tags from valid but uninstalled tags; production still installs only
+`en-US`. Every authenticated role may set or clear only its own override,
+while admin and superuser may change the server default through a separate
+atomic settings route. Operator startup resolves public bootstrap →
+authenticated config → user override/server default/`en-US` → one gated
+catalog before reveal, without browser-language inference. The route inventory
+is now 34 contracts and generated OpenAPI is 16 operations. See the
+[config-store decision](decisions/ui-managed-config-store.md),
+[locale guards](decisions/locale-guards.md), [auth component](architecture/client-auth.md),
+[presentation component](architecture/presentation-layer.md), [HTTP trust
+boundaries](architecture/http-trust-boundary-map.md), and [test
+strategy](testing/test-strategy.md).
+
 ## [2026-07-30] component — canonical English and gated catalog startup
 
 The presentation layer now parses one rich `en-US` source and deterministically

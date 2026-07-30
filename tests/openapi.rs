@@ -283,8 +283,46 @@ fn locale_server_default_openapi_is_typed() {
 fn locale_account_openapi_preserves_password_and_adds_preference_actions() {
     let spec: serde_json::Value =
         serde_json::from_str(&nim_proxy::openapi_json()).expect("the spec is JSON");
-    let request = &spec["paths"]["/api/settings/account"]["post"]["requestBody"]["content"]
-        ["application/json"]["schema"];
+    let operation = &spec["paths"]["/api/settings/account"]["post"];
+    let summary = operation["summary"].as_str().unwrap_or_default();
+    assert!(
+        summary.contains("password") && summary.contains("locale preference"),
+        "locale-openapi: account summary must describe both actions: {summary:?}"
+    );
+    let ok_description = operation["responses"]["200"]["description"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        ok_description.contains("fresh session cookie")
+            && ok_description.contains("locale preference")
+            && ok_description.contains("without changing the session"),
+        "locale-openapi: 200 must distinguish password and locale success: {ok_description:?}"
+    );
+    let bad_request_description = operation["responses"]["400"]["description"]
+        .as_str()
+        .unwrap_or_default();
+    for code in [
+        "weak_password",
+        "invalid_action",
+        "invalid_locale",
+        "locale_not_installed",
+        "invalid_config",
+    ] {
+        assert!(
+            bad_request_description.contains(code),
+            "locale-openapi: 400 description must name {code}: {bad_request_description:?}"
+        );
+    }
+    assert_eq!(
+        operation["responses"]["422"]["description"],
+        "Invalid JSON request body"
+    );
+    assert_eq!(
+        operation["responses"]["422"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ApiError"
+    );
+
+    let request = &operation["requestBody"]["content"]["application/json"]["schema"];
     let variants = schema_variants(&spec, request);
 
     let password = variants.iter().copied().find(|schema| {
@@ -302,9 +340,10 @@ fn locale_account_openapi_preserves_password_and_adds_preference_actions() {
             && schema["properties"]["action"]["enum"] == serde_json::json!(["locale"])
             && nullable_string(&schema["properties"]["locale"])
     });
-    assert!(
-        locale.is_some(),
-        "locale-openapi: account must type the locale set/clear action"
+    let locale = locale.expect("locale-openapi: account must type the locale set/clear action");
+    assert_eq!(
+        locale["additionalProperties"], false,
+        "locale-openapi: locale action is an exact closed object"
     );
 }
 

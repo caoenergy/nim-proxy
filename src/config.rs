@@ -27,6 +27,8 @@ pub const FILE: &str = "config.json";
 pub struct StoredConfig {
     #[serde(default = "default_version")]
     pub version: u32,
+    #[serde(default = "default_locale")]
+    pub default_locale: String,
     #[serde(default)]
     pub upstream: Upstream,
     #[serde(default)]
@@ -193,6 +195,8 @@ pub struct User {
     /// `pbkdf2-sha256$<iters>$<salt>$<hash>` (see `auth::hash_password`).
     pub password_hash: String,
     pub role: Role,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, ToSchema)]
@@ -213,6 +217,9 @@ impl Role {
 
 fn default_version() -> u32 {
     1
+}
+fn default_locale() -> String {
+    crate::presentation::DEFAULT_LOCALE.to_owned()
 }
 fn default_true() -> bool {
     true
@@ -258,6 +265,10 @@ impl StoredConfig {
 
     pub fn user(&self, username: &str) -> Option<&User> {
         self.users.iter().find(|u| u.username == username)
+    }
+
+    pub fn user_mut(&mut self, username: &str) -> Option<&mut User> {
+        self.users.iter_mut().find(|u| u.username == username)
     }
 
     /// Every stored key as a pool lane spec. Disabled keys ride along as
@@ -409,6 +420,7 @@ pub fn validate(sc: &StoredConfig) -> Result<(), String> {
     if sc.version != 1 {
         return Err(format!("version must be 1, got {}", sc.version));
     }
+    validate_stored_locale("default_locale", &sc.default_locale)?;
     let l = &sc.limits;
     if l.heartbeat_secs == 0 {
         return Err("heartbeat_secs must be >= 1".into());
@@ -449,6 +461,9 @@ pub fn validate(sc: &StoredConfig) -> Result<(), String> {
         }
         if u.password_hash.is_empty() {
             return Err(format!("user {:?} has an empty password hash", u.username));
+        }
+        if let Some(locale) = &u.locale {
+            validate_stored_locale(&format!("user {:?} locale", u.username), locale)?;
         }
     }
     if sc
@@ -532,6 +547,19 @@ pub fn validate(sc: &StoredConfig) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_stored_locale(label: &str, locale: &str) -> Result<(), String> {
+    match crate::presentation::canonical_locale(locale) {
+        Ok(canonical) if canonical != locale => Err(format!(
+            "{label} must use canonical locale spelling {canonical}"
+        )),
+        Ok(canonical) if !crate::presentation::INSTALLED_LOCALES.contains(&canonical.as_str()) => {
+            Err(format!("{label} locale {canonical} is not installed"))
+        }
+        Ok(_) => Ok(()),
+        Err(_) => Err(format!("{label} is not a valid locale")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -563,6 +591,7 @@ mod tests {
                 username: "root".into(),
                 password_hash: "pbkdf2-sha256$1000$aa$bb".into(),
                 role: Role::Superuser,
+                locale: None,
             }],
             upstream: Upstream {
                 base_url: default_base_url(),
@@ -871,6 +900,52 @@ mod tests {
                 fs::read(store_path(&dir.0)).unwrap(),
                 before,
                 "locale-store:non-mutation: {label} load changed durable bytes"
+            );
+        }
+    }
+
+    #[test]
+    fn locale_store_refuses_invalid_noncanonical_and_uninstalled_values_without_mutation() {
+        for (scope, class, locale) in [
+            ("default", "invalid", "en_US"),
+            ("default", "noncanonical", "EN-us"),
+            ("default", "uninstalled", "fr-FR"),
+            ("user", "invalid", "en_US"),
+            ("user", "noncanonical", "EN-us"),
+            ("user", "uninstalled", "fr-FR"),
+        ] {
+            let dir = TestDir::new();
+            let mut value = serde_json::to_value(claimed()).unwrap();
+            match scope {
+                "default" => {
+                    value
+                        .as_object_mut()
+                        .unwrap()
+                        .insert("default_locale".into(), serde_json::json!(locale));
+                }
+                "user" => {
+                    value["users"][0]
+                        .as_object_mut()
+                        .unwrap()
+                        .insert("locale".into(), serde_json::json!(locale));
+                }
+                _ => unreachable!(),
+            }
+            fs::write(
+                store_path(&dir.0),
+                serde_json::to_vec_pretty(&value).unwrap(),
+            )
+            .unwrap();
+            let before = fs::read(store_path(&dir.0)).unwrap();
+
+            assert!(
+                load(&dir.0).is_err(),
+                "locale-store:fail-closed:{scope}:{class}: {locale} loaded"
+            );
+            assert_eq!(
+                fs::read(store_path(&dir.0)).unwrap(),
+                before,
+                "locale-store:non-mutation:{scope}:{class}: load changed durable bytes"
             );
         }
     }

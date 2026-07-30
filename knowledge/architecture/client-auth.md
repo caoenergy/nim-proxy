@@ -89,13 +89,25 @@ client keys, own NIM keys). Dashboards are identical for all roles; only
 Settings differs, and `GET /api/config` is filtered **server-side** per role
 (hidden sections absent from the payload, not CSS-hidden — the response type
 makes `server`/`users` `Option`s that are simply not built for a `user`).
-`openapi.json` records which routes need a session: 12 protected `/api/*`
+The response always includes the current user's `locale: string|null`;
+admin views additionally include `server.default_locale`. Every role may set
+or clear only its own locale through `/api/settings/account`; admin and
+superuser may set the server default through `/api/settings/locale`.
+Authorization owns the server-setting request before locale syntax or
+installed-registry validation.
+
+`openapi.json` records which routes need a session: 13 protected `/api/*`
 operations inherit the document-level requirement (session cookie **or**
 header credentials), while public `GET /api/locale-bootstrap` and the two
 `/setup` operations carry explicit empty `security` lists. The operator locale
 catalog is not an OpenAPI operation; it sits behind the post-setup session gate,
 which runs before locale lookup. The public setup/login catalog is always
 available and contains only `setup.*`, `login.*`, and `common.app_name`.
+Operator startup requests public bootstrap, then authenticated `/api/config`,
+then exactly one installed operator catalog using current-user override →
+persisted server default → `en-US`. It performs no browser-language or request
+header inference. Public setup/login continue to use the persisted server
+default.
 Partial lockout:
 any admin resets any password. Total lockout: the documented
 [volume edit](../ops/configure-env.md).

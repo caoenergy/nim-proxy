@@ -22,16 +22,18 @@
 //! See `knowledge/decisions/typed-responses-and-generated-openapi.md`.
 
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{FromRequest, FromRequestParts, Request};
-use axum::http::{request::Parts, StatusCode};
+use axum::extract::{FromRequest, FromRequestParts, Request, State};
+use axum::http::{header, request::Parts, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use std::sync::Arc;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi, ToSchema};
 
-use crate::config::{DashboardCfg, GovernorCfg, Limits, Mode, Role};
+use crate::config::{DashboardCfg, GovernorCfg, Limits, Mode, Role, StoredConfig};
 use crate::history::{HistoryDiagnostics, MetricValue, RollupPoint, Tail};
+use crate::AppState;
 
 // ---------------------------------------------------------------------------
 // Shared envelopes
@@ -171,12 +173,56 @@ impl OkResponse {
     }
 }
 
-/// The installed presentation locales and the server-wide default used before
-/// per-user locale preferences are introduced.
-#[derive(Serialize, ToSchema)]
-pub struct LocaleBootstrap {
-    pub installed_locales: Vec<String>,
-    pub server_default: String,
+mod locale_bootstrap {
+    use super::*;
+
+    /// Public startup data: the installed presentation locales and the
+    /// persisted server default.
+    #[derive(Serialize, ToSchema)]
+    pub(crate) struct LocaleBootstrap {
+        installed_locales: Vec<String>,
+        server_default: String,
+    }
+
+    impl LocaleBootstrap {
+        pub(super) fn from_config(stored: &StoredConfig, installed: &[&str]) -> Self {
+            Self {
+                installed_locales: installed
+                    .iter()
+                    .map(|locale| (*locale).to_owned())
+                    .collect(),
+                server_default: stored.default_locale.clone(),
+            }
+        }
+    }
+}
+
+pub(crate) use locale_bootstrap::LocaleBootstrap;
+
+#[utoipa::path(
+    get,
+    path = "/api/locale-bootstrap",
+    operation_id = "api_locale_bootstrap",
+    tag = "localization",
+    security(),
+    responses(
+        (status = 200, description = "Installed locales and the server default", body = LocaleBootstrap),
+    ),
+)]
+pub(crate) async fn locale_bootstrap(
+    State(state): State<Arc<AppState>>,
+) -> (
+    [(header::HeaderName, &'static str); 1],
+    axum::Json<LocaleBootstrap>,
+) {
+    let stored = state.store.lock().unwrap();
+    (
+        [(header::CACHE_CONTROL, "no-store")],
+        axum::Json(LocaleBootstrap::from_config(
+            &stored,
+            &crate::presentation::INSTALLED_LOCALES,
+        )),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -189,6 +235,8 @@ pub struct LocaleBootstrap {
 #[derive(Serialize, ToSchema)]
 pub struct ConfigResponse {
     pub client_keys: Vec<ClientKeyRow>,
+    #[schema(required = true)]
+    pub locale: Option<String>,
     pub mode: Mode,
     pub nim_keys: Vec<NimKeyRow>,
     pub pool: PoolSummary,
@@ -243,6 +291,7 @@ pub struct PoolSummary {
 pub struct ServerSettings {
     pub base_url: String,
     pub dashboard: DashboardCfg,
+    pub default_locale: String,
     pub governor: GovernorCfg,
     pub history: HistorySettings,
     pub limits: Limits,
@@ -449,7 +498,7 @@ impl Modify for SecurityAddon {
     paths(
         crate::api_dashboard,
         crate::api_dashboard_now,
-        crate::api_locale_bootstrap,
+        crate::api::locale_bootstrap,
         crate::settings::api_config,
         crate::settings::nim_keys,
         crate::settings::clients,
@@ -459,6 +508,7 @@ impl Modify for SecurityAddon {
         crate::settings::governor_cfg,
         crate::settings::users,
         crate::settings::account,
+        crate::settings::locale,
         crate::settings::validate_key,
         crate::settings::setup_submit,
         crate::settings::setup_validate_key,
@@ -565,10 +615,7 @@ mod tests {
         sorted("OkResponse", &OkResponse::new());
         sorted(
             "LocaleBootstrap",
-            &LocaleBootstrap {
-                installed_locales: vec!["en-US".into()],
-                server_default: "en-US".into(),
-            },
+            &LocaleBootstrap::from_config(&crate::config::StoredConfig::default(), &["en-US"]),
         );
         sorted(
             "ClientsResponse",
@@ -652,6 +699,7 @@ mod tests {
         let server = ServerSettings {
             base_url: "https://example.invalid".into(),
             dashboard: DashboardCfg::default(),
+            default_locale: "en-US".into(),
             governor: GovernorCfg::default(),
             history: HistorySettings {
                 available_from: None,
@@ -669,6 +717,7 @@ mod tests {
             "ConfigResponse",
             &ConfigResponse {
                 client_keys: Vec::new(),
+                locale: None,
                 mode: Mode::Keyed,
                 nim_keys: Vec::new(),
                 pool: PoolSummary {
@@ -760,6 +809,7 @@ mod tests {
     fn optional_sections_are_omitted_not_nulled() {
         let user_view = ConfigResponse {
             client_keys: Vec::new(),
+            locale: None,
             mode: Mode::Open,
             nim_keys: Vec::new(),
             pool: PoolSummary {
@@ -773,7 +823,7 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_string(&user_view).unwrap(),
-            r#"{"client_keys":[],"mode":"open","nim_keys":[],"pool":{"capacity_rpm":40,"enabled":1},"role":"user","username":"alice"}"#
+            r#"{"client_keys":[],"locale":null,"mode":"open","nim_keys":[],"pool":{"capacity_rpm":40,"enabled":1},"role":"user","username":"alice"}"#
         );
         assert_eq!(
             serde_json::to_string(&ValidateKeyResponse::probed(Ok(3))).unwrap(),

@@ -3155,6 +3155,44 @@ async fn corrupt_or_future_store_refuses_to_start() {
     expect_refuses_to_start(future).await;
 }
 
+#[tokio::test]
+async fn invalid_noncanonical_and_uninstalled_durable_locales_refuse_to_start() {
+    let mock = start_mock().await;
+    for (scope, class, locale) in [
+        ("default", "invalid", "en_US"),
+        ("default", "noncanonical", "EN-us"),
+        ("default", "uninstalled", "fr-FR"),
+        ("user", "invalid", "en_US"),
+        ("user", "noncanonical", "EN-us"),
+        ("user", "uninstalled", "fr-FR"),
+    ] {
+        let data_dir = scratch_data_dir();
+        let mut store = StoreOpts::default().json(&mock.url);
+        match scope {
+            "default" => {
+                store
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("default_locale".into(), serde_json::json!(locale));
+            }
+            "user" => {
+                store["users"][0]
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("locale".into(), serde_json::json!(locale));
+            }
+            _ => unreachable!(),
+        }
+        std::fs::write(
+            data_dir.join("config.json"),
+            serde_json::to_vec_pretty(&store).unwrap(),
+        )
+        .unwrap();
+        expect_refuses_to_start(data_dir).await;
+        eprintln!("locale-store:startup:{scope}:{class}: refused {locale}");
+    }
+}
+
 /// The wizard's single POST claims the proxy: creates the superuser, writes a
 /// 0600 store, mints a session, closes /setup (404), and opens /v1.
 #[tokio::test]
@@ -4372,6 +4410,37 @@ async fn locale_post(
     (status, content_type, bytes)
 }
 
+async fn locale_post_raw(
+    proxy: &support::Proxy,
+    cookie: Option<&str>,
+    path: &str,
+    content_type: Option<&str>,
+    body: &str,
+) -> (reqwest::StatusCode, Option<String>, Vec<u8>) {
+    let mut request = client().post(proxy.url(path)).body(body.to_owned());
+    if let Some(cookie) = cookie {
+        request = request.header("cookie", cookie);
+    }
+    if let Some(content_type) = content_type {
+        request = request.header(CONTENT_TYPE, content_type);
+    }
+    let response = request.send().await.unwrap();
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let bytes = response.bytes().await.unwrap().to_vec();
+    (status, content_type, bytes)
+}
+
+async fn locale_config_revision(proxy: &support::Proxy, cookie: &str) -> u64 {
+    dashboard_now(proxy, cookie).await["config_revision"]
+        .as_u64()
+        .expect("locale-preferences: numeric config revision")
+}
+
 fn locale_response_code(bytes: &[u8]) -> Option<String> {
     let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
     value["error"]["code"].as_str().map(str::to_owned)
@@ -4506,10 +4575,31 @@ async fn locale_preferences_are_fail_closed() {
     };
     let data_dir = scratch_data_dir();
     let mut store = opts.json(&mock.url);
+    // Complete v1 document immediately before locale fields were added. Keep
+    // every older additive default explicit so the first locale save can be
+    // compared as exactly one schema addition.
+    store.as_object_mut().unwrap().insert(
+        "dashboard".into(),
+        serde_json::json!({
+            "default_window_days": 30,
+            "slo_target_percent": 99.9,
+        }),
+    );
+    store.as_object_mut().unwrap().insert(
+        "governor".into(),
+        serde_json::json!({
+            "enabled": true,
+            "overrides": {},
+        }),
+    );
     store
         .as_object_mut()
         .unwrap()
-        .insert("default_locale".into(), serde_json::json!("en-US"));
+        .insert("history".into(), serde_json::json!({"days": 30}));
+    store["limits"]
+        .as_object_mut()
+        .unwrap()
+        .insert("models_ttl_secs".into(), serde_json::json!(600));
     std::fs::write(
         data_dir.join("config.json"),
         serde_json::to_vec_pretty(&store).unwrap(),
@@ -4628,6 +4718,67 @@ async fn locale_preferences_are_fail_closed() {
             failures.push(format!("{label}: rejected mutation changed config.json"));
         }
         rejection_byte_checks += 1;
+    }
+    for (
+        actor,
+        cookie,
+        expected_status,
+        expected_code,
+        expected_message,
+    ) in [
+        (
+            "anonymous",
+            None,
+            reqwest::StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "authentication required (session cookie, or Authorization: Bearer <username>:<password>)",
+        ),
+        (
+            "ordinary-user",
+            Some(user.as_str()),
+            reqwest::StatusCode::FORBIDDEN,
+            "forbidden",
+            "server settings require an admin",
+        ),
+    ] {
+        for (shape, content_type, request_body) in [
+            ("malformed-json", Some("application/json"), "{"),
+            (
+                "wrong-media-type",
+                Some("text/plain"),
+                r#"{"locale":"en-US"}"#,
+            ),
+        ] {
+            let label = format!("{actor}-server-default-{shape}");
+            let before = locale_store_bytes(&proxy);
+            let (status, content_type, body) = locale_post_raw(
+                &proxy,
+                cookie,
+                "/api/settings/locale",
+                content_type,
+                request_body,
+            )
+            .await;
+            record_locale_response(
+                &mut failures,
+                &label,
+                status,
+                content_type.as_deref(),
+                &body,
+                expected_status,
+                Some(expected_code),
+            );
+            if locale_response_message(&body).as_deref() != Some(expected_message) {
+                failures.push(format!(
+                    "{label}: message {:?}, expected {expected_message:?}",
+                    locale_response_message(&body)
+                ));
+            }
+            if locale_store_bytes(&proxy) != before {
+                failures.push(format!("{label}: rejected body changed config.json"));
+            }
+            rejection_byte_checks += 1;
+        }
     }
     let before = locale_store_bytes(&proxy);
     let (status, content_type, body) = locale_post(
@@ -4766,11 +4917,21 @@ async fn locale_preferences_are_fail_closed() {
     rejection_byte_checks += 1;
 
     // Both existing admin roles may set the default. Mixed case is
-    // canonicalized before the durable write.
+    // canonicalized before the durable write. The fixture began as a
+    // pre-locale v1 document, so compare the complete store and prove that
+    // each role reaches commit even when the canonical value is idempotent.
+    let before_server_default = locale_store_bytes(&proxy);
+    let mut expected_server_default: serde_json::Value =
+        serde_json::from_slice(&before_server_default).unwrap();
+    expected_server_default
+        .as_object_mut()
+        .expect("locale-preferences: config object")
+        .insert("default_locale".into(), serde_json::json!("en-US"));
     for (label, cookie, locale) in [
         ("admin-server-default", admin.as_str(), "EN-us"),
         ("superuser-server-default", superuser.as_str(), "en-US"),
     ] {
+        let revision_before = locale_config_revision(&proxy, cookie).await;
         let (status, content_type, body) = locale_post(
             &proxy,
             Some(cookie),
@@ -4787,11 +4948,18 @@ async fn locale_preferences_are_fail_closed() {
             reqwest::StatusCode::OK,
             None,
         );
+        let revision_after = locale_config_revision(&proxy, cookie).await;
+        if revision_after <= revision_before {
+            failures.push(format!(
+                "{label}: config revision did not advance across commit: before={revision_before} after={revision_after}"
+            ));
+        }
         let stored: serde_json::Value =
             serde_json::from_slice(&locale_store_bytes(&proxy)).unwrap();
-        if stored["default_locale"] != "en-US" {
+        if stored != expected_server_default {
             failures.push(format!(
-                "{label}: canonical persisted default is not en-US: {stored}"
+                "{label}: complete store changed outside canonical default_locale; before={} after={stored} expected={expected_server_default}",
+                String::from_utf8_lossy(&before_server_default)
             ));
         }
     }
@@ -4889,15 +5057,112 @@ async fn locale_preferences_are_fail_closed() {
         }
     }
 
-    if rejection_byte_checks != 54 {
+    if rejection_byte_checks != 58 {
         failures.push(format!(
-            "locale-preferences: executed {rejection_byte_checks} rejection byte checks, expected 54"
+            "locale-preferences: executed {rejection_byte_checks} rejection byte checks, expected 58"
         ));
     }
     assert!(
         failures.is_empty(),
         "locale-preferences failures ({}) after {rejection_byte_checks} rejection byte checks:\n{}",
         failures.len(),
+        failures.join("\n")
+    );
+}
+
+#[tokio::test]
+async fn account_rejects_duplicate_known_fields_without_mutating_the_store() {
+    let mock = start_mock().await;
+    let cases = [
+        (
+            "duplicate-current-password",
+            r#"{"current_password":"wrong-password","current_password":"test-password-1","new_password":"replacement-password"}"#,
+        ),
+        (
+            "duplicate-new-password",
+            r#"{"current_password":"test-password-1","new_password":"replacement-password-a","new_password":"replacement-password-b"}"#,
+        ),
+        (
+            "duplicate-action",
+            r#"{"action":"unknown","action":"locale","locale":"en-US"}"#,
+        ),
+        (
+            "duplicate-locale",
+            r#"{"action":"locale","locale":null,"locale":"en-US"}"#,
+        ),
+    ];
+    let mut failures = Vec::new();
+
+    for (label, body) in cases {
+        let proxy = start_proxy(&mock.url, &[]).await;
+        let cookie = login(&proxy).await;
+        let before = locale_store_bytes(&proxy);
+        let (status, content_type, response) = locale_post_raw(
+            &proxy,
+            Some(&cookie),
+            "/api/settings/account",
+            Some("application/json"),
+            body,
+        )
+        .await;
+        record_locale_response(
+            &mut failures,
+            label,
+            status,
+            content_type.as_deref(),
+            &response,
+            reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+            Some("invalid_json"),
+        );
+        if locale_response_message(&response).as_deref() != Some("invalid JSON") {
+            failures.push(format!(
+                "{label}: message {:?}, expected \"invalid JSON\"",
+                locale_response_message(&response)
+            ));
+        }
+        if locale_store_bytes(&proxy) != before {
+            failures.push(format!("{label}: rejected request changed config.json"));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "account duplicate-field failures:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[tokio::test]
+async fn account_password_change_still_ignores_unknown_fields() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let cookie = login(&proxy).await;
+    let before: serde_json::Value = serde_json::from_slice(&locale_store_bytes(&proxy)).unwrap();
+    let (status, content_type, response) = locale_post_raw(
+        &proxy,
+        Some(&cookie),
+        "/api/settings/account",
+        Some("application/json"),
+        r#"{"current_password":"test-password-1","new_password":"replacement-password","legacy_extension":{"nested":true}}"#,
+    )
+    .await;
+    let mut failures = Vec::new();
+    record_locale_response(
+        &mut failures,
+        "password-unknown-field",
+        status,
+        content_type.as_deref(),
+        &response,
+        reqwest::StatusCode::OK,
+        None,
+    );
+    let after: serde_json::Value = serde_json::from_slice(&locale_store_bytes(&proxy)).unwrap();
+    if after["users"][0]["password_hash"] == before["users"][0]["password_hash"] {
+        failures.push("password-unknown-field: password hash did not change".into());
+    }
+    assert!(
+        failures.is_empty(),
+        "password unknown-field compatibility failures:\n{}",
         failures.join("\n")
     );
 }

@@ -70,6 +70,14 @@ Forward compatibility is a `version: u32` field (`1` today) plus
 `version` the build doesn't understand refuses to boot rather than silently
 dropping unknown keys.
 
+Locale preferences use that additive v1 policy. A current store without
+`default_locale` reads as `en-US`, and the next ordinary atomic save writes the
+field; each user may carry an optional canonical `locale`, omitted when the
+user follows the server default. Boot and every settings write validate both
+levels against the locale-v1 tag grammar and the compiled production registry.
+A corrupt, non-canonical, or syntactically valid but uninstalled durable locale
+therefore refuses boot instead of silently selecting another catalog.
+
 **Revisit triggers** (any one flips the answer to SQLite): per-user usage
 accounting or quotas (per-request writes), audit logging, hundreds of users,
 or a second concurrent writer.
@@ -83,6 +91,12 @@ keys, own NIM keys. Dashboards are identical for every role — only the
 Settings surface differs, and it is **filtered server-side** in
 `GET /api/config` (hidden sections are absent from the payload, not hidden by
 CSS), so DOM tampering reveals empty containers, not data.
+
+Every authenticated role may set or clear only its own display-locale
+preference through the account endpoint, without re-entering a password.
+Admin and superuser roles may also change the server default. Both mutations
+reuse the same candidate → validate → persist → publish transaction as every
+other setting; rejection changes no durable bytes.
 
 Each NIM key and each client key carries `owner: <username>`. Users see only
 their own key rows; admins see all rows (masked, owner-labeled) to manage the
