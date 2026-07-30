@@ -254,6 +254,33 @@ function syntaxOnly() {
 }
 
 if (args.includes('--syntax-only')) process.exit(syntaxOnly());
+
+function servedPageSelftest() {
+  const failures = [];
+  const runSource = String(main);
+  if (typeof probeCatalogHtml !== 'function') {
+    failures.push('catalog probe does not accept server-owned HTML');
+  } else if (/readFileSync\s*\(\s*PAGE\b/.test(String(probeCatalogHtml))) {
+    failures.push('catalog probe still reads a private page source');
+  }
+  if (!runSource.includes("'Fetch.getResponseBody'")) {
+    failures.push('probe does not read the real response body');
+  }
+  if (!runSource.includes('serverPageResponses.add')) {
+    failures.push('probe does not record server response provenance');
+  }
+  if (runSource.includes('probePageHtml()')) {
+    failures.push('test-only page assembly remains reachable');
+  }
+  if (failures.length) {
+    for (const failure of failures) console.error(`[served-page] ${failure}`);
+    return 1;
+  }
+  console.log('served-page selftest ok — probe derives from and tracks the real response');
+  return 0;
+}
+
+if (args.includes('--served-page-selftest')) process.exit(servedPageSelftest());
 // Which embedded page to drive. The dashboard renders from captured payloads;
 // the wizard has no payloads and is driven by filling and clicking instead.
 // Both were being proved by hand-built one-off harnesses, which is more work
