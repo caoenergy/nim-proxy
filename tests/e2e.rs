@@ -27,6 +27,21 @@ fn no_redirect_client() -> reqwest::Client {
         .unwrap()
 }
 
+async fn assert_exact_api_error(
+    response: reqwest::Response,
+    status: reqwest::StatusCode,
+    code: &str,
+    message: &str,
+) {
+    assert_eq!(response.status(), status);
+    assert_eq!(response.headers()["content-type"], "application/json");
+    assert_eq!(
+        response.bytes().await.unwrap().as_ref(),
+        format!(r#"{{"error":{{"code":"{code}","message":"{message}","type":"proxy_error"}}}}"#)
+            .as_bytes()
+    );
+}
+
 /// A keyed-`/v1` fixture: one client key (name, secret), otherwise defaults.
 fn keyed(name: &str, secret: &str) -> StoreOpts {
     StoreOpts {
@@ -1973,6 +1988,7 @@ async fn control_plane_rejections_are_typed() {
         },
     ];
 
+    let mut failures = Vec::new();
     for case in cases {
         let body = if case.oversized {
             "x".repeat(64 * 1024 * 1024 + 1)
@@ -1990,39 +2006,162 @@ async fn control_plane_rejections_are_typed() {
         }
 
         let response = request.send().await.unwrap();
-        assert_eq!(
-            response.status(),
-            case.status,
-            "{} {}",
-            case.method,
-            case.path
-        );
-        assert_eq!(
-            response.headers()["content-type"],
-            "application/json",
-            "{} {}",
-            case.method,
-            case.path
-        );
+        let mut errors = Vec::new();
+        if response.status() != case.status {
+            errors.push(format!("status {:?}", response.status()));
+        }
+        if response.headers()["content-type"] != "application/json" {
+            errors.push(format!(
+                "content-type {:?}",
+                response.headers()["content-type"]
+            ));
+        }
         let body = response.bytes().await.unwrap();
-        assert_eq!(
-            body.as_ref(),
-            format!(
-                r#"{{"error":{{"code":"{}","message":"{}","type":"proxy_error"}}}}"#,
-                case.code, case.message
+        let expected = format!(
+            r#"{{"error":{{"code":"{}","message":"{}","type":"proxy_error"}}}}"#,
+            case.code, case.message
+        );
+        if body.as_ref() != expected.as_bytes() {
+            errors.push(format!("body {:?}", String::from_utf8_lossy(&body)));
+        }
+        if std::fs::read(proxy.data_dir.join("config.json")).unwrap() != before {
+            errors.push("config.json changed".to_owned());
+        }
+        if !errors.is_empty() {
+            failures.push(format!(
+                "{} {}: {}",
+                case.method,
+                case.path,
+                errors.join(", ")
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "rejection failures:\n{}",
+        failures.join("\n")
+    );
+}
+
+/// An unknown `/api/*` path is still an operator-surface request: it must not
+/// disclose its typed fallback before the setup/session gate has run.
+#[tokio::test]
+async fn unknown_control_plane_paths_are_gated_before_fallback() {
+    let fresh = start_proxy_fresh().await;
+    let before_fresh = std::fs::read(fresh.data_dir.join("config.json")).ok();
+    assert_exact_api_error(
+        client()
+            .get(fresh.url("/api/not-a-route"))
+            .send()
+            .await
+            .unwrap(),
+        reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        "setup_required",
+        "first-time setup has not been completed; open the dashboard to create the superuser",
+    )
+    .await;
+    assert_eq!(
+        std::fs::read(fresh.data_dir.join("config.json")).ok(),
+        before_fresh
+    );
+
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let before = std::fs::read(proxy.data_dir.join("config.json")).unwrap();
+    assert_exact_api_error(
+        client()
+            .get(proxy.url("/api/not-a-route"))
+            .send()
+            .await
+            .unwrap(),
+        reqwest::StatusCode::UNAUTHORIZED,
+        "unauthorized",
+        "authentication required (session cookie, or Authorization: Bearer <username>:<password>)",
+    )
+    .await;
+    assert_eq!(
+        std::fs::read(proxy.data_dir.join("config.json")).unwrap(),
+        before
+    );
+
+    let cookie = login(&proxy).await;
+    assert_exact_api_error(
+        client()
+            .get(proxy.url("/api/not-a-route"))
+            .header("cookie", cookie)
+            .send()
+            .await
+            .unwrap(),
+        reqwest::StatusCode::NOT_FOUND,
+        "not_found",
+        "not found",
+    )
+    .await;
+    assert_eq!(
+        std::fs::read(proxy.data_dir.join("config.json")).unwrap(),
+        before
+    );
+}
+
+/// Once claimed, setup POSTs reject before they inspect headers or buffer a
+/// body, so the closed phase always has one stable conflict result.
+#[tokio::test]
+async fn closed_setup_posts_win_before_body_rejections() {
+    struct ClosedCase {
+        content_type: Option<&'static str>,
+        body: &'static str,
+        oversized: bool,
+    }
+
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let before = std::fs::read(proxy.data_dir.join("config.json")).unwrap();
+    let cases = [
+        ClosedCase {
+            content_type: Some("application/json"),
+            body: "{",
+            oversized: false,
+        },
+        ClosedCase {
+            content_type: None,
+            body: r#"{"key":"k"}"#,
+            oversized: false,
+        },
+        ClosedCase {
+            content_type: Some("text/plain"),
+            body: r#"{"key":"k"}"#,
+            oversized: false,
+        },
+        ClosedCase {
+            content_type: Some("application/json"),
+            body: "",
+            oversized: true,
+        },
+    ];
+
+    for path in ["/setup", "/setup/validate-key"] {
+        for case in &cases {
+            let body = if case.oversized {
+                "x".repeat(64 * 1024 * 1024 + 1)
+            } else {
+                case.body.to_owned()
+            };
+            let mut request = client().post(proxy.url(path)).body(body);
+            if let Some(content_type) = case.content_type {
+                request = request.header("content-type", content_type);
+            }
+            assert_exact_api_error(
+                request.send().await.unwrap(),
+                reqwest::StatusCode::CONFLICT,
+                "setup_complete",
+                "setup is already complete",
             )
-            .as_bytes(),
-            "{} {}",
-            case.method,
-            case.path
-        );
-        assert_eq!(
-            std::fs::read(proxy.data_dir.join("config.json")).unwrap(),
-            before,
-            "{} {} changed config.json",
-            case.method,
-            case.path
-        );
+            .await;
+            assert_eq!(
+                std::fs::read(proxy.data_dir.join("config.json")).unwrap(),
+                before
+            );
+        }
     }
 }
 
@@ -3330,13 +3469,25 @@ async fn setup_double_claim_is_rejected_with_409() {
         client().post(proxy.url("/setup")).json(&body).send(),
         client().post(proxy.url("/setup")).json(&body).send(),
     );
-    let mut statuses = [a.unwrap().status().as_u16(), b.unwrap().status().as_u16()];
-    statuses.sort_unstable();
-    assert_eq!(
-        statuses,
-        [200, 409],
-        "exactly one claim wins, the other 409s"
-    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    let (success, conflict) = if a.status() == reqwest::StatusCode::OK {
+        (a, b)
+    } else {
+        (b, a)
+    };
+    assert_eq!(success.status(), reqwest::StatusCode::OK);
+    assert_exact_api_error(
+        conflict,
+        reqwest::StatusCode::CONFLICT,
+        "setup_complete",
+        "setup is already complete",
+    )
+    .await;
+    let stored: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(proxy.data_dir.join("config.json")).unwrap())
+            .unwrap();
+    assert_eq!(stored["users"].as_array().unwrap().len(), 1);
+    assert_eq!(stored["users"][0]["username"], "admin");
 }
 
 /// A lockout-recovery store (users hand-emptied) keeps orphan-owned client
