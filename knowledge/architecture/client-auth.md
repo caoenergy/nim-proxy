@@ -96,5 +96,12 @@ credentials), and the two `/setup` operations carry an explicit empty
 any admin resets any password. Total lockout: the documented
 [volume edit](../ops/configure-env.md).
 
+The complete method/path inventory—including public routes, setup phases,
+role/ownership gates, request/success types, side effects, UI callers, and
+OpenAPI decisions—lives in the
+[HTTP trust-boundary map](http-trust-boundary-map.md). Superuser has zero
+exclusive routes; its distinction is the undeletable/undemotable invariant,
+not endpoint power beyond admin.
+
 TLS is not built in — terminate it at a reverse proxy / platform edge and set
 `TRUST_PROXY=true` so the session cookie is marked `Secure`.

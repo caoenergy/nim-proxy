@@ -6,6 +6,7 @@ mod governor;
 mod history;
 mod pool;
 mod proxy;
+mod routes;
 mod settings;
 
 pub use api::openapi_json;
@@ -537,18 +538,21 @@ pub async fn run() {
     // user:password header credentials for scrapers); pre-setup it routes
     // everything to the wizard.
     let control_plane = Router::new()
-        .route("/dashboard", get(api_dashboard))
-        .route("/dashboard/now", get(api_dashboard_now))
-        .route("/config", get(settings::api_config))
-        .route("/settings/nim-keys", post(settings::nim_keys))
-        .route("/settings/clients", post(settings::clients))
-        .route("/settings/upstream", post(settings::upstream))
-        .route("/settings/limits", post(settings::limits))
-        .route("/settings/history", post(settings::history))
-        .route("/settings/governor", post(settings::governor_cfg))
-        .route("/settings/users", post(settings::users))
-        .route("/settings/account", post(settings::account))
-        .route("/settings/validate-key", post(settings::validate_key))
+        .route(routes::API_DASHBOARD, get(api_dashboard))
+        .route(routes::API_DASHBOARD_NOW, get(api_dashboard_now))
+        .route(routes::API_CONFIG, get(settings::api_config))
+        .route(routes::API_SETTINGS_NIM_KEYS, post(settings::nim_keys))
+        .route(routes::API_SETTINGS_CLIENTS, post(settings::clients))
+        .route(routes::API_SETTINGS_UPSTREAM, post(settings::upstream))
+        .route(routes::API_SETTINGS_LIMITS, post(settings::limits))
+        .route(routes::API_SETTINGS_HISTORY, post(settings::history))
+        .route(routes::API_SETTINGS_GOVERNOR, post(settings::governor_cfg))
+        .route(routes::API_SETTINGS_USERS, post(settings::users))
+        .route(routes::API_SETTINGS_ACCOUNT, post(settings::account))
+        .route(
+            routes::API_SETTINGS_VALIDATE_KEY,
+            post(settings::validate_key),
+        )
         .fallback(api::api_not_found)
         .method_not_allowed_fallback(api::api_method_not_allowed)
         .layer(axum::middleware::from_fn_with_state(
@@ -557,28 +561,34 @@ pub async fn run() {
         ));
 
     let protected = Router::new()
-        .route("/", get(dash))
-        .route("/dash", get(dash))
-        .route("/metrics", get(metrics_text))
+        .route(routes::ROOT, get(dash))
+        .route(routes::DASH, get(dash))
+        .route(routes::METRICS, get(metrics_text))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_session,
         ))
-        .nest("/api", control_plane);
+        .nest(routes::API_PREFIX, control_plane);
 
     // Public surface: health probe, login flow, the first-run wizard (404
     // once setup completes), and the API (its own key gate + setup gate).
     let app = Router::new()
         .merge(protected)
-        .route("/health", get(|| async { "ok" }))
-        .route("/login", get(auth::login_page).post(auth::login_submit))
-        .route("/logout", post(auth::logout))
+        .route(routes::HEALTH, get(|| async { "ok" }))
         .route(
-            "/setup",
+            routes::LOGIN,
+            get(auth::login_page).post(auth::login_submit),
+        )
+        .route(routes::LOGOUT, post(auth::logout))
+        .route(
+            routes::SETUP,
             get(settings::setup_page).post(settings::setup_submit),
         )
-        .route("/setup/validate-key", post(settings::setup_validate_key))
-        .route("/v1/{*path}", any(proxy::handle))
+        .route(
+            routes::SETUP_VALIDATE_KEY,
+            post(settings::setup_validate_key),
+        )
+        .route(routes::V1_WILDCARD, any(proxy::handle))
         .layer(axum::middleware::from_fn(security_headers))
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
         .with_state(state);

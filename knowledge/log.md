@@ -6,6 +6,22 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-30] ingest — map and enforce every HTTP trust boundary
+
+Added the [HTTP trust-boundary map](architecture/http-trust-boundary-map.md)
+and compiled/real-request proofs for all 23 live method/path contracts. Fixed
+path constants now feed the existing router without changing its nesting or
+handler placement; test-only metadata describes phase/access/OpenAPI rather
+than becoming a second dispatch registry.
+
+The real-binary table covers before setup, anonymous configured, ordinary
+user, admin, and superuser states; request/success content types, stable
+boundary errors, exact coarse upstream-call deltas, session-cookie presence,
+and exact config bytes. Separate own/other rows protect NIM-key and client-key
+ownership. The map also records zero current asset routes, zero
+superuser-exclusive routes, and the deliberate exclusion of upstream-owned
+`/v1` schemas from OpenAPI.
+
 ## [2026-07-30] lint — bound raw setup-rejection proof and cover open extraction
 
 The raw `Expect: 100-continue` setup body-limit proof now caps its response

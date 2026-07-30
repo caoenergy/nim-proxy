@@ -27,6 +27,11 @@ that proof.
 - **Rust logic:** `cargo test` and `cargo clippy --all-targets -- -D warnings`.
 - **Handlers or wire types:** `UPDATE_OPENAPI=1 cargo test --test openapi`,
   then verify that `openapi.json` has only the deliberate diff.
+- **HTTP trust boundaries:** `cargo test routes::tests --lib` proves the
+  compiled inventory agrees with generated OpenAPI; `cargo test --test e2e
+  route_contract_ -- --nocapture` proves real phase/auth/role behavior,
+  request and success content types, side effects, ownership, and durable
+  bytes. Neither table is a router.
 - **Embedded pages:** `node scripts/render_check.js --syntax-selftest` proves
   the syntax gate can reject its fixtures. `node scripts/render_check.js
   --syntax-only` parses the real dashboard and setup scripts without launching
@@ -105,6 +110,16 @@ Two tests exist purely so the JSON contract cannot move by accident (see
   asserts the document is consumable — 14 operations, each tagged with a
   documented 200, `/api/*` inheriting the auth requirement and `/setup`
   explicitly waiving it.
+- `routes::tests::inventory_agrees_with_generated_openapi` owns the 23-row
+  compiled method/path inventory, including explicit OpenAPI omissions, the
+  `/v1/{*path}` template versus concrete probe, zero current asset routes, and
+  zero superuser-exclusive routes. `route_contract_behavior_matrix` sends the
+  five-state matrix through the real binary and asserts request/success
+  content types, stable boundary errors, side effects, and `config.json`
+  bytes. `route_contract_ownership_matrix` adds own/other NIM-key and
+  client-key mutations; `route_contract_client_auth_matrix` separately proves
+  keyed missing/wrong/valid bearer behavior and pre-setup closure. See the
+  [HTTP trust-boundary map](../architecture/http-trust-boundary-map.md).
 - `control_plane_rejections_are_typed` sends raw requests through the real
   binary for malformed JSON, JSON media-type failures, body-size rejection,
   invalid dashboard query, unknown/method-mismatched `/api/*`, and post-claim
