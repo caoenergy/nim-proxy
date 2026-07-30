@@ -919,11 +919,22 @@ async function handleCatalogResponseForStartupProbe({
     body = JSON.stringify(catalog);
   }
   if (pathname === catalogPath && startupProbe === 'locale-precedence') {
-    const catalog = JSON.parse(fs.readFileSync(
+    const authoringCatalog = JSON.parse(fs.readFileSync(
       path.join(ROOT, 'src', 'web', 'locales', 'en-US.json'),
       'utf8',
     ));
-    catalog.locale = startupState.expectedLocale;
+    const catalog = {
+      locale: startupState.expectedLocale,
+      messages: Object.fromEntries(
+        Object.entries(authoringCatalog.messages)
+          .map(([id, message]) => [id, message.en]),
+      ),
+    };
+    if (Object.keys(catalog).sort().join(',') !== 'locale,messages'
+        || Object.values(catalog.messages)
+          .some(message => typeof message !== 'string')) {
+      throw new Error('locale-precedence: synthetic response is not a valid wire catalog');
+    }
     startupState.readyText = precedenceCase === 'override'
       ? 'Override locale de-DE selected'
       : 'Server locale fr-FR selected';
@@ -1838,6 +1849,18 @@ async function main() {
         startupFailures.push(
           'catalog-before-reveal: catalog resolved but the page did not reach its ready state',
         );
+      }
+      if (startupProbe === 'locale-precedence') {
+        const renderedMarker = await evaluateRaw(
+          browser,
+          S,
+          'document.getElementById("pagetitle")?.textContent.trim() || null',
+        );
+        if (renderedMarker !== startupState.readyText) {
+          startupFailures.push(
+            `locale-precedence: ${precedenceCase} rendered marker ${JSON.stringify(renderedMarker)}, expected exactly ${JSON.stringify(startupState.readyText)}`,
+          );
+        }
       }
       const afterCatalog = appRequests.filter(row =>
         row.at >= startupState.catalogReleasedAt);

@@ -834,4 +834,14 @@ mod tests {
             r#"{"error":{"code":"invalid_json","message":"invalid JSON","type":"proxy_error"}}"#
         );
     }
+
+    #[test]
+    fn locale_bootstrap_uses_the_persisted_default_source() {
+        let bootstrap = LocaleBootstrap::from_sources(&["en-US", "fr-FR"], "fr-FR");
+        assert_eq!(
+            serde_json::to_string(&bootstrap).unwrap(),
+            r#"{"installed_locales":["en-US","fr-FR"],"server_default":"fr-FR"}"#,
+            "locale-bootstrap: the internal builder must select the persisted default, not the compiled default"
+        );
+    }
 }

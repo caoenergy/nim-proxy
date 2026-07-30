@@ -122,6 +122,8 @@ jobs:
           node scripts/render_check.js --page setup --startup-probe css-failure
           node scripts/render_check.js --page login --startup-probe css-failure
           node scripts/render_check.js --page dashboard --startup-probe app-script-failure
+          node scripts/render_check.js --page dashboard --startup-probe locale-precedence
+          node scripts/render_check.js --page dashboard --startup-probe locale-precedence --precedence-case default
           node scripts/render_check.js --cleanup-selftest
 
   coverage:
