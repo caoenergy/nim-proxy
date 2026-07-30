@@ -28,7 +28,8 @@ ASCII-sorted plain-string public and operator wire catalogs from it.
   registered inside the same post-setup session gate as `/` and `/dash`; that
   gate runs before locale lookup.
 - `GET /api/locale-bootstrap` is public and returns exactly the compiled
-  production registry (`en-US`). Public pages then fetch the public catalog
+  production registry (`en-US`) plus the validated persisted server default.
+  Public pages then fetch the public catalog
   projection—every `setup.*`, every `login.*`, and only
   `common.app_name`—while the operator page fetches the complete catalog.
   There is deliberately no icon route: the fixed local SVG is compiled into
@@ -62,9 +63,12 @@ repository-owned text and writes it with `textContent`. GET/POST statuses,
 redirects, and cookies remain owned by `auth.rs`.
 
 Every page begins hidden and renders only after bootstrap and catalog schema
-validation. Dashboard application assets and API polling start only after the
-operator catalog resolves. Once boot code is running, bootstrap, catalog, or
-application-asset failure reveals only
+validation. Operator startup resolves bootstrap → authenticated `/api/config`
+→ current-user override or server default or `en-US` → exactly one installed
+operator catalog. It does not inspect browser languages or request headers.
+Public setup/login remain on the server default. Dashboard application assets
+and API polling start only after the operator catalog resolves. Once boot code
+is running, bootstrap, config, catalog, or application-asset failure reveals only
 `NIM Proxy interface failed to load.`, logs no response body, and starts no
 later application request.
 
@@ -72,7 +76,7 @@ later application request.
 
 `presentation_assets_are_gated` sends real requests in pre-setup, anonymous
 configured, and authenticated states and pins status, content type, CSP,
-`no-store`, public-byte stability, and private-sentinel absence. The 33-row
+`no-store`, public-byte stability, and private-sentinel absence. The 34-row
 route inventory and real behavior matrix cover the nine asset routes.
 
 `render_check.js --assets-only` rejects external origins and inline

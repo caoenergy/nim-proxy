@@ -363,6 +363,30 @@ function servedPageSelftest() {
 
 if (args.includes('--served-page-selftest')) process.exit(servedPageSelftest());
 
+function operatorConfigStartupFailures({
+  isDashboard,
+  startupProbe,
+  requestTimeline,
+  catalogPath,
+}) {
+  const configIndexes = requestTimeline
+    .map((row, index) => row.path === '/api/config' ? index : -1)
+    .filter(index => index >= 0);
+  const configRequired = isDashboard
+    && !['bootstrap-failure', 'css-failure'].includes(startupProbe);
+  if (!configRequired) {
+    return configIndexes.length ? ['operator-config-forbidden'] : [];
+  }
+  if (configIndexes.length !== 1) return ['operator-config-count'];
+  const bootstrapIndex = requestTimeline.findIndex(row =>
+    row.path === '/api/locale-bootstrap');
+  const catalogIndex = requestTimeline.findIndex(row =>
+    row.path === catalogPath);
+  return bootstrapIndex < configIndexes[0] && configIndexes[0] < catalogIndex
+    ? []
+    : ['operator-config-order'];
+}
+
 function catalogStartupSelftest() {
   const failures = [];
   const runSource = String(main);
@@ -396,6 +420,60 @@ function catalogStartupSelftest() {
   ];
   for (const [name, observed] of required) {
     if (!observed) failures.push(`${name}: startup proof is missing`);
+  }
+  if (typeof operatorConfigStartupFailures !== 'function') {
+    failures.push('operator-config-order: executable startup-order proof is missing');
+  } else {
+    const configOrderCases = [
+      {
+        name: 'valid-delayed-catalog',
+        input: ['dashboard', 'delayed-catalog', ['bootstrap', 'config', 'catalog']],
+        expected: [],
+      },
+      {
+        name: 'duplicate-config',
+        input: ['dashboard', 'delayed-catalog', ['bootstrap', 'config', 'config', 'catalog']],
+        expected: ['operator-config-count'],
+      },
+      {
+        name: 'config-before-bootstrap',
+        input: ['dashboard', 'delayed-catalog', ['config', 'bootstrap', 'catalog']],
+        expected: ['operator-config-order'],
+      },
+      {
+        name: 'bootstrap-failure-config',
+        input: ['dashboard', 'bootstrap-failure', ['bootstrap', 'config']],
+        expected: ['operator-config-forbidden'],
+      },
+      {
+        name: 'css-failure-config',
+        input: ['dashboard', 'css-failure', ['config']],
+        expected: ['operator-config-forbidden'],
+      },
+      {
+        name: 'public-page-config',
+        input: ['login', 'delayed-catalog', ['bootstrap', 'config', 'catalog']],
+        expected: ['operator-config-forbidden'],
+      },
+    ];
+    for (const { name, input: [page, probe, order], expected } of configOrderCases) {
+      const paths = {
+        bootstrap: '/api/locale-bootstrap',
+        config: '/api/config',
+        catalog: '/assets/operator/locales/en-US.json',
+      };
+      const observed = operatorConfigStartupFailures({
+        isDashboard: page === 'dashboard',
+        startupProbe: probe,
+        requestTimeline: order.map((item, at) => ({ at, path: paths[item] })),
+        catalogPath: paths.catalog,
+      });
+      if (JSON.stringify(observed) !== JSON.stringify(expected)) {
+        failures.push(
+          `operator-config-order:${name}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(observed)}`,
+        );
+      }
+    }
   }
   if (typeof probeCatalogHtml === 'function') {
     failures.push('catalog-probe-response-stage: inline-HTML catalog mutator survives');
@@ -652,12 +730,17 @@ const startupProbe = (() => {
   const i = args.indexOf('--startup-probe');
   return i >= 0 ? args[i + 1] : null;
 })();
+const precedenceCase = (() => {
+  const i = args.indexOf('--precedence-case');
+  return i >= 0 ? args[i + 1] : 'override';
+})();
 const STARTUP_PROBES = new Set([
   'app-script-failure',
   'delayed-catalog',
   'bootstrap-failure',
   'catalog-failure',
   'css-failure',
+  'locale-precedence',
   'malformed-catalog',
 ]);
 if (startupProbe && !STARTUP_PROBES.has(startupProbe)) {
@@ -666,6 +749,14 @@ if (startupProbe && !STARTUP_PROBES.has(startupProbe)) {
 }
 if (startupProbe === 'app-script-failure' && !IS_DASHBOARD) {
   console.error('app-script-failure is a dashboard-only startup probe');
+  process.exit(2);
+}
+if (!['override', 'default'].includes(precedenceCase)) {
+  console.error(`unknown --precedence-case ${precedenceCase} (expected: override, default)`);
+  process.exit(2);
+}
+if (args.includes('--precedence-case') && startupProbe !== 'locale-precedence') {
+  console.error('--precedence-case requires --startup-probe locale-precedence');
   process.exit(2);
 }
 // Appended to every catalog value under --escape-probe. See the mutation below.
@@ -875,6 +966,15 @@ async function handleCatalogResponseForStartupProbe({
   let body = originalBody;
   let statusCode = params.responseStatusCode;
   if (pathname === '/api/locale-bootstrap'
+      && startupProbe === 'locale-precedence') {
+    startupState.bootstrapOriginal = JSON.parse(originalBody);
+    const bootstrap = JSON.parse(originalBody);
+    bootstrap.installed_locales = ['en-US', 'de-DE', 'fr-FR'];
+    bootstrap.server_default = 'fr-FR';
+    body = JSON.stringify(bootstrap);
+    startupState.bootstrapFromServer = true;
+  }
+  if (pathname === '/api/locale-bootstrap'
       && startupProbe === 'bootstrap-failure') {
     statusCode = 503;
     body = startupState.secret;
@@ -896,6 +996,31 @@ async function handleCatalogResponseForStartupProbe({
     catalog.messages[probeId] = startupState.readyText;
     body = JSON.stringify(catalog);
   }
+  if (pathname === catalogPath && startupProbe === 'locale-precedence') {
+    const authoringCatalog = JSON.parse(fs.readFileSync(
+      path.join(ROOT, 'src', 'web', 'locales', 'en-US.json'),
+      'utf8',
+    ));
+    const catalog = {
+      locale: startupState.expectedLocale,
+      messages: Object.fromEntries(
+        Object.entries(authoringCatalog.messages)
+          .map(([id, message]) => [id, message.en]),
+      ),
+    };
+    if (Object.keys(catalog).sort().join(',') !== 'locale,messages'
+        || Object.values(catalog.messages)
+          .some(message => typeof message !== 'string')) {
+      throw new Error('locale-precedence: synthetic response is not a valid wire catalog');
+    }
+    startupState.readyText = precedenceCase === 'override'
+      ? 'Override locale de-DE selected'
+      : 'Server locale fr-FR selected';
+    catalog.messages['dashboard.nav.tab.overview'] = startupState.readyText;
+    body = JSON.stringify(catalog);
+    statusCode = 200;
+    startupState.selectedCatalogPath = pathname;
+  }
   if (pathname === catalogPath && startupProbe === 'catalog-failure') {
     statusCode = 503;
     body = startupState.secret;
@@ -908,6 +1033,26 @@ async function handleCatalogResponseForStartupProbe({
   }
   if (pathname === catalogPath) startupState.catalogReleasedAt = Date.now();
   await fulfillPausedResponse(browser, sessionId, params, body, statusCode);
+}
+
+async function handleConfigResponseForLocalePrecedence({
+  browser,
+  sessionId,
+  params,
+  startupState,
+}) {
+  const originalBody = await responseBody(browser, sessionId, params.requestId);
+  startupState.configOriginal = JSON.parse(originalBody);
+  const config = JSON.parse(originalBody);
+  config.locale = precedenceCase === 'override' ? 'de-DE' : null;
+  startupState.configFromServer = true;
+  await fulfillPausedResponse(
+    browser,
+    sessionId,
+    params,
+    JSON.stringify(config),
+    params.responseStatusCode,
+  );
 }
 
 async function handleApplicationScriptResponseForStartupProbe({
@@ -928,19 +1073,24 @@ async function handleApplicationScriptResponseForStartupProbe({
 }
 
 function configuredStore() {
+  const rootUser = {
+    username: 'root',
+    password_hash: 'pbkdf2-sha256$1000$00000000000000000000000000000000$dd5fe0be04ca7f9e24642561a5d4635c52c40be82cbd7587b5eddc913ad3c7a7',
+    role: 'superuser',
+  };
+  if (!(startupProbe === 'locale-precedence' && precedenceCase === 'default')) {
+    rootUser.locale = 'en-US';
+  }
   return {
     version: 1,
+    default_locale: 'en-US',
     upstream: {
       base_url: 'http://127.0.0.1:9',
       nim_keys: [{ key: 'render-fixture-key', owner: 'root', enabled: true, rpm: 40 }],
     },
     client_auth: { mode: 'open', keys: [] },
     limits: { heartbeat_secs: 1 },
-    users: [{
-      username: 'root',
-      password_hash: 'pbkdf2-sha256$1000$00000000000000000000000000000000$dd5fe0be04ca7f9e24642561a5d4635c52c40be82cbd7587b5eddc913ad3c7a7',
-      role: 'superuser',
-    }],
+    users: [rootUser],
   };
 }
 
@@ -1307,17 +1457,26 @@ async function main() {
   const fetched = [];
   const requestTimeline = [];
   const startupState = {
+    bootstrapFromServer: false,
+    bootstrapOriginal: null,
     catalogHeldState: null,
     catalogReleasedAt: null,
+    configFromServer: false,
+    configOriginal: null,
+    expectedLocale: null,
     failureReleasedAt: null,
     pageSourceProblems: [],
     readyText: null,
+    selectedCatalogPath: null,
     secret: 'CATALOG_RESPONSE_BODY_MUST_NOT_BE_DISCLOSED',
     disclosureMarkers: new Set(),
   };
   startupState.disclosureMarkers.add(startupState.secret);
   const pagePath = IS_SETUP ? '/setup' : IS_LOGIN ? '/login' : '/';
-  const selectedLocale = localeArg || 'en-US';
+  const selectedLocale = startupProbe === 'locale-precedence'
+    ? precedenceCase === 'override' ? 'de-DE' : 'fr-FR'
+    : localeArg || 'en-US';
+  startupState.expectedLocale = selectedLocale;
   const catalogPath = IS_DASHBOARD
     ? `/assets/operator/locales/${selectedLocale}.json`
     : `/assets/public/locales/${selectedLocale}.json`;
@@ -1338,6 +1497,16 @@ async function main() {
       if (startupProbe === 'app-script-failure'
           && url.pathname === applicationScriptPath) {
         await handleApplicationScriptResponseForStartupProbe({
+          browser,
+          sessionId: S,
+          params,
+          startupState,
+        });
+        return;
+      }
+      if (startupProbe === 'locale-precedence'
+          && url.pathname === '/api/config') {
+        await handleConfigResponseForLocalePrecedence({
           browser,
           sessionId: S,
           params,
@@ -1409,7 +1578,8 @@ async function main() {
       return;
     }
     let body = null;
-    if (url.pathname === '/api/config') body = fixtures['config.json'];
+    if (url.pathname === '/api/config' && startupProbe !== 'locale-precedence')
+      body = fixtures['config.json'];
     else if (url.pathname === '/api/dashboard/now') body = fixtures['dashboard-now.json'];
     else if (url.pathname === '/api/dashboard') body = fixtures['dashboard.json'];
     else if (url.pathname === '/setup/validate-key' && request.method === 'POST')
@@ -1510,7 +1680,9 @@ async function main() {
     });
   }
   if (startupProbe || escapeProbe || localeArg) {
-    for (const responsePath of ['/api/locale-bootstrap', catalogPath]) {
+    const responsePaths = ['/api/locale-bootstrap', catalogPath];
+    if (startupProbe === 'locale-precedence') responsePaths.push('/api/config');
+    for (const responsePath of responsePaths) {
       if (!startupProbe && !localeArg
           && responsePath === '/api/locale-bootstrap') continue;
       fetchPatterns.push({
@@ -1570,6 +1742,23 @@ async function main() {
       row.path === '/api/locale-bootstrap');
     const catalogIndex = requestTimeline.findIndex(row =>
       row.path === catalogPath);
+    const configIndex = requestTimeline.findIndex(row =>
+      row.path === '/api/config');
+    const operatorConfigRequired = IS_DASHBOARD
+      && !['bootstrap-failure', 'css-failure'].includes(startupProbe);
+    for (const failure of operatorConfigStartupFailures({
+      isDashboard: IS_DASHBOARD,
+      startupProbe,
+      requestTimeline,
+      catalogPath,
+    })) {
+      const detail = {
+        'operator-config-forbidden': 'config read is forbidden for this startup path',
+        'operator-config-count': 'expected exactly one config read',
+        'operator-config-order': 'expected bootstrap < config < catalog',
+      }[failure];
+      startupFailures.push(`${failure}: ${detail}`);
+    }
     if (startupProbe === 'css-failure') {
       if (!requestTimeline.some(row => row.path === stylesheetPath)) {
         startupFailures.push('css-before-bootstrap: stylesheet failure was not forced');
@@ -1600,6 +1789,49 @@ async function main() {
         'bootstrap-before-catalog: catalog was not requested after bootstrap',
       );
     }
+    if (startupProbe === 'locale-precedence') {
+      const persistedOverride = precedenceCase === 'override' ? 'en-US' : null;
+      if (!startupState.bootstrapFromServer
+          || JSON.stringify(startupState.bootstrapOriginal)
+            !== JSON.stringify({
+              installed_locales: ['en-US'],
+              server_default: 'en-US',
+            })) {
+        startupFailures.push(
+          `locale-precedence: real bootstrap provenance was not the production en-US-only response: ${JSON.stringify(startupState.bootstrapOriginal)}`,
+        );
+      }
+      if (configIndex < 0) {
+        startupFailures.push(
+          'locale-precedence: authenticated /api/config was not requested',
+        );
+      } else if (!(bootstrapIndex < configIndex && configIndex < catalogIndex)) {
+        startupFailures.push(
+          `locale-precedence: expected bootstrap < config < catalog, got ${bootstrapIndex} < ${configIndex} < ${catalogIndex}`,
+        );
+      }
+      if (!startupState.configFromServer
+          || startupState.configOriginal?.locale !== persistedOverride) {
+        startupFailures.push(
+          `locale-precedence: real /api/config did not preserve the ${precedenceCase} persisted-source shape; expected locale=${JSON.stringify(persistedOverride)} got ${JSON.stringify(startupState.configOriginal?.locale)}`,
+        );
+      }
+      if (fetched.includes('/api/config')) {
+        startupFailures.push(
+          'locale-precedence: /api/config used a hand-authored fixture instead of the real server response',
+        );
+      }
+      const localeCatalogRequests = requestTimeline
+        .filter(row => row.path.startsWith('/assets/operator/locales/'))
+        .map(row => row.path);
+      if (localeCatalogRequests.length !== 1
+          || localeCatalogRequests[0] !== catalogPath
+          || startupState.selectedCatalogPath !== catalogPath) {
+        startupFailures.push(
+          `locale-precedence: ${precedenceCase} must select exactly ${catalogPath} at the catalog boundary, got requests=${JSON.stringify(localeCatalogRequests)} response=${JSON.stringify(startupState.selectedCatalogPath)}`,
+        );
+      }
+    }
     if (startupProbe === 'delayed-catalog') {
       if (!startupState.catalogHeldState?.hidden) {
         startupFailures.push(
@@ -1621,7 +1853,8 @@ async function main() {
       );
     }
     const beforeCatalog = appRequests.filter(row =>
-      !startupState.catalogReleasedAt || row.at < startupState.catalogReleasedAt);
+      !(operatorConfigRequired && row.path === '/api/config')
+      && (!startupState.catalogReleasedAt || row.at < startupState.catalogReleasedAt));
     if (beforeCatalog.length) {
       startupFailures.push(
         `catalog-before-api: ${beforeCatalog.map(row => row.path).join(', ')} requested before the catalog resolved`,
@@ -1629,7 +1862,7 @@ async function main() {
     }
 
     const hardHiddenExpected = startupProbe === 'css-failure';
-    const emergencyExpected = startupProbe !== 'delayed-catalog'
+    const emergencyExpected = !['delayed-catalog', 'locale-precedence'].includes(startupProbe)
       && !hardHiddenExpected;
     const deadline = Date.now() + 3000;
     let visible = null;
@@ -1709,6 +1942,18 @@ async function main() {
         startupFailures.push(
           'catalog-before-reveal: catalog resolved but the page did not reach its ready state',
         );
+      }
+      if (startupProbe === 'locale-precedence') {
+        const renderedMarker = await evaluateRaw(
+          browser,
+          S,
+          'document.getElementById("pagetitle")?.textContent.trim() || null',
+        );
+        if (renderedMarker !== startupState.readyText) {
+          startupFailures.push(
+            `locale-precedence: ${precedenceCase} rendered marker ${JSON.stringify(renderedMarker)}, expected exactly ${JSON.stringify(startupState.readyText)}`,
+          );
+        }
       }
       const afterCatalog = appRequests.filter(row =>
         row.at >= startupState.catalogReleasedAt);

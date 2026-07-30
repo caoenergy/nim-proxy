@@ -25,6 +25,66 @@ const EN_US_SOURCE: &str = include_str!("web/locales/en-US.json");
 pub const DEFAULT_LOCALE: &str = "en-US";
 pub const INSTALLED_LOCALES: [&str; 1] = [DEFAULT_LOCALE];
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum LocaleError {
+    Invalid,
+    NotInstalled(String),
+}
+
+/// Parse the deliberately small locale-v1 grammar and return its canonical
+/// BCP 47 spelling. Extensions, variants and private-use subtags are outside
+/// this frozen v1 contract.
+pub fn canonical_locale(locale: &str) -> Result<String, LocaleError> {
+    if locale.is_empty() || locale.trim() != locale || !locale.is_ascii() {
+        return Err(LocaleError::Invalid);
+    }
+    let parts: Vec<&str> = locale.split('-').collect();
+    let language = parts.first().copied().ok_or(LocaleError::Invalid)?;
+    if !(matches!(language.len(), 2 | 3) && language.bytes().all(|byte| byte.is_ascii_alphabetic()))
+    {
+        return Err(LocaleError::Invalid);
+    }
+
+    let mut canonical = language.to_ascii_lowercase();
+    let mut index = 1;
+    if let Some(script) = parts.get(index).copied() {
+        if script.len() == 4 && script.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+            let mut chars = script.to_ascii_lowercase().into_bytes();
+            chars[0] = chars[0].to_ascii_uppercase();
+            canonical.push('-');
+            canonical.push_str(std::str::from_utf8(&chars).expect("ASCII script"));
+            index += 1;
+        }
+    }
+    if let Some(region) = parts.get(index).copied() {
+        let alpha = region.len() == 2 && region.bytes().all(|byte| byte.is_ascii_alphabetic());
+        let numeric = region.len() == 3 && region.bytes().all(|byte| byte.is_ascii_digit());
+        if !alpha && !numeric {
+            return Err(LocaleError::Invalid);
+        }
+        canonical.push('-');
+        if alpha {
+            canonical.push_str(&region.to_ascii_uppercase());
+        } else {
+            canonical.push_str(region);
+        }
+        index += 1;
+    }
+    if index != parts.len() {
+        return Err(LocaleError::Invalid);
+    }
+    Ok(canonical)
+}
+
+pub fn installed_locale(locale: &str) -> Result<String, LocaleError> {
+    let canonical = canonical_locale(locale)?;
+    if INSTALLED_LOCALES.contains(&canonical.as_str()) {
+        Ok(canonical)
+    } else {
+        Err(LocaleError::NotInstalled(canonical))
+    }
+}
+
 #[derive(Deserialize)]
 struct AuthoringCatalog {
     locale: String,

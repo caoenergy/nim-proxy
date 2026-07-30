@@ -55,6 +55,17 @@ generated public fixture. That projection must contain every `setup.*`, every
 ordered ids fail. The self-test contains 12 file fixtures and seven in-memory
 projection/schema cases, 19 named negative cases in total.
 
+**Locale preference tag grammar.** Persisted and API-supplied preferences use
+one Rust canonicalizer for the frozen `language[-Script][-REGION]` subset:
+language is 2–3 ASCII letters, Script is four ASCII letters, and REGION is two
+ASCII letters or three digits. Canonical output lowercases language,
+title-cases Script, and uppercases alphabetic REGION. Whitespace, underscores,
+non-ASCII, variants, extensions, private use, and extra subtags are invalid.
+Syntax is checked before the compiled installed-locale registry, so a valid
+but unavailable tag has the distinct `locale_not_installed` contract.
+Production installs only `en-US`; `en-XA` remains valid syntax but is test-only
+and therefore rejected by the production preference APIs.
+
 **Untagged-string lint.** Fails on a display literal that bypasses `message()`,
 covering attributes as well as text. Without it, English creeps back within two
 PRs, because a hardcoded label looks exactly like the code beside it.

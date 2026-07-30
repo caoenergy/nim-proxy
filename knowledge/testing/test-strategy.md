@@ -63,10 +63,20 @@ that proof.
   catalog resolution, request-stage stylesheet loss on all three pages, and a
   later operator application-script loss. They require failed CSS to leave the
   page hard-hidden with no bootstrap/catalog/API work, bootstrap before
-  catalog, catalog before reveal or API work, and later dependency failure to
-  reveal only the emergency message with no subsequent application request.
+  catalog, catalog before reveal or application-data work, and later
+  dependency failure to reveal only the emergency message with no subsequent
+  application request. The authenticated operator `/api/config` read is a
+  catalog-selection prerequisite, not application-data work; startup probes
+  allow exactly that read between bootstrap and catalog while continuing to
+  reject dashboard/history requests before catalog resolution.
   Every behavior mode treats browser/proxy shutdown and run-directory removal
   as part of the result; cleanup failure is a failing check.
+  Locale-precedence mode additionally requires the operator sequence
+  bootstrap → authenticated `/api/config` → exactly one selected catalog,
+  with separate runs proving an explicit user override and a null override
+  falling back to the server default. The probe mutates only verified real
+  responses at the existing CDP response boundary; production remains
+  `en-US`-only.
   The escape probe enforces the id/descriptor context-owned-sink contract:
   lexical resolver isolation, descriptor coercion refusal and one HTML
   resolver, the exact four-attribute
@@ -145,10 +155,10 @@ Two tests exist purely so the JSON contract cannot move by accident (see
   from the committed file. Regenerate with
   `UPDATE_OPENAPI=1 cargo test --test openapi`; CI's `check` job runs that and
   then `git diff --exit-code -- openapi.json`. `spec_is_usable` additionally
-  asserts the document is consumable — 15 operations, each tagged with a
-  documented 200, the 12 protected `/api/*` operations inheriting the auth
+  asserts the document is consumable — 16 operations, each tagged with a
+  documented 200, the 13 protected `/api/*` operations inheriting the auth
   requirement, and public bootstrap plus `/setup` explicitly waiving it.
-- `routes::tests::inventory_agrees_with_generated_openapi` owns the 33-row
+- `routes::tests::inventory_agrees_with_generated_openapi` owns the 34-row
   compiled method/path inventory, including explicit OpenAPI omissions, the
   `/v1/{*path}` template versus concrete probe, all nine presentation assets,
   and zero superuser-exclusive routes. `route_contract_behavior_matrix` sends the
@@ -164,6 +174,17 @@ Two tests exist purely so the JSON contract cannot move by accident (see
   setup POSTs. It asserts status, `application/json`, exact `ApiError` bytes,
   and unchanged `config.json` bytes. Run it with `cargo test --test e2e
   control_plane_rejections_are_typed -- --exact`.
+- `locale_preferences_are_fail_closed` exercises both locale writers through
+  the real binary. Its boundary table distinguishes invalid syntax from
+  canonical valid-but-uninstalled tags, proves admin/superuser server-default
+  authority and every role's caller-only override/clear, proves authorization
+  wins before malformed or wrong-media server-locale bodies, and compares raw
+  `config.json` bytes across all 58 rejected mutations. Separate raw account
+  rows prove duplicate known fields return `422 invalid_json` without changing
+  durable bytes, while password bodies retain unknown-field compatibility.
+  Six invalid/noncanonical/uninstalled durable-locale rows run through both
+  direct load and real binary startup; each refusal compares the original
+  `config.json` bytes before cleanup.
 - `unknown_control_plane_paths_are_gated_before_fallback` proves that the
   control-plane fallback remains inside the setup/auth gate: a fresh install
   returns `503 setup_required`, an anonymous configured install returns 401,

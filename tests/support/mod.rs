@@ -513,6 +513,12 @@ fn base_cmd(port: u16, data_dir: &std::path::Path) -> std::process::Command {
 /// non-zero without ever becoming healthy — used for boot-posture tests
 /// (corrupt store, future version, unwritable DATA_DIR).
 pub async fn expect_refuses_to_start(data_dir: std::path::PathBuf) {
+    let store_path = data_dir.join("config.json");
+    let store_before = if data_dir.is_absolute() && store_path.is_file() {
+        Some(std::fs::read(&store_path).expect("read startup-refusal store snapshot"))
+    } else {
+        None
+    };
     let port = {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         l.local_addr().unwrap().port()
@@ -526,6 +532,14 @@ pub async fn expect_refuses_to_start(data_dir: std::path::PathBuf) {
                 !status.success(),
                 "proxy should exit non-zero, got {status:?}"
             );
+            if let Some(before) = store_before {
+                assert_eq!(
+                    std::fs::read(&store_path)
+                        .expect("startup refusal must retain the existing config store"),
+                    before,
+                    "failed startup changed config.json bytes"
+                );
+            }
             let _ = std::fs::remove_dir_all(&data_dir);
             return;
         }

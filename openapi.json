@@ -175,7 +175,7 @@
         "tags": [
           "settings"
         ],
-        "summary": "`POST /api/settings/account` — own password change; always re-verifies\nthe current password regardless of the session. Existing sessions die\n(the cookie binds a password-hash fragment); the response carries a fresh\ncookie so THIS session survives.",
+        "summary": "`POST /api/settings/account` — change the caller's password or locale preference.\nPassword changes always re-verify the current password and return a fresh\ncookie; locale changes preserve the existing session.",
         "operationId": "account",
         "requestBody": {
           "content": {
@@ -189,7 +189,7 @@
         },
         "responses": {
           "200": {
-            "description": "Changed. Sets a fresh session cookie; the caller's other sessions are invalidated.",
+            "description": "Password changed with a fresh session cookie and other sessions invalidated, or locale preference applied without changing the session.",
             "content": {
               "application/json": {
                 "schema": {
@@ -199,7 +199,7 @@
             }
           },
           "400": {
-            "description": "New password shorter than 10 characters",
+            "description": "Request failed with weak_password, invalid_action, invalid_locale, locale_not_installed, or invalid_config",
             "content": {
               "application/json": {
                 "schema": {
@@ -230,6 +230,16 @@
           },
           "409": {
             "description": "An admin reset the password while this request was in flight; the reset wins",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON request body",
             "content": {
               "application/json": {
                 "schema": {
@@ -504,6 +514,77 @@
           },
           "422": {
             "description": "A field is missing or the wrong type — a partial body is never a silent reset",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings/locale": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "`POST /api/settings/locale` — change the persisted server default. Admin\nand superuser roles share the existing server-settings authority.",
+        "operationId": "locale",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetServerLocale"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or uninstalled locale",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or the caller's user was deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Server settings require an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON request body",
             "content": {
               "application/json": {
                 "schema": {
@@ -857,20 +938,46 @@
   "components": {
     "schemas": {
       "AccountReq": {
-        "type": "object",
-        "required": [
-          "current_password",
-          "new_password"
-        ],
-        "properties": {
-          "current_password": {
-            "type": "string"
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "current_password",
+              "new_password"
+            ],
+            "properties": {
+              "current_password": {
+                "type": "string"
+              },
+              "new_password": {
+                "type": "string",
+                "description": "At least 10 characters."
+              }
+            }
           },
-          "new_password": {
-            "type": "string",
-            "description": "At least 10 characters."
+          {
+            "type": "object",
+            "required": [
+              "action",
+              "locale"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "locale"
+                ]
+              },
+              "locale": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "additionalProperties": false
           }
-        }
+        ]
       },
       "AddClient": {
         "type": "object",
@@ -1049,6 +1156,7 @@
         "description": "The Settings page's data source. `server` and `users` are absent — not\nnull — for non-admin callers: the filtering happens before serialization,\nso DOM tampering reveals nothing.",
         "required": [
           "client_keys",
+          "locale",
           "mode",
           "nim_keys",
           "pool",
@@ -1061,6 +1169,12 @@
             "items": {
               "$ref": "#/components/schemas/ClientKeyRow"
             }
+          },
+          "locale": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "mode": {
             "$ref": "#/components/schemas/Mode"
@@ -1585,7 +1699,7 @@
       },
       "LocaleBootstrap": {
         "type": "object",
-        "description": "The installed presentation locales and the server-wide default used before\nper-user locale preferences are introduced.",
+        "description": "Public startup data: the installed presentation locales and the\npersisted server default.",
         "required": [
           "installed_locales",
           "server_default"
@@ -1846,6 +1960,7 @@
         "required": [
           "base_url",
           "dashboard",
+          "default_locale",
           "governor",
           "history",
           "limits"
@@ -1856,6 +1971,9 @@
           },
           "dashboard": {
             "$ref": "#/components/schemas/DashboardCfg"
+          },
+          "default_locale": {
+            "type": "string"
           },
           "governor": {
             "$ref": "#/components/schemas/GovernorCfg"
@@ -1904,6 +2022,17 @@
             "description": "`admin` or `user`."
           },
           "username": {
+            "type": "string"
+          }
+        }
+      },
+      "SetServerLocale": {
+        "type": "object",
+        "required": [
+          "locale"
+        ],
+        "properties": {
+          "locale": {
             "type": "string"
           }
         }

@@ -9,7 +9,8 @@ use std::sync::Arc;
 use axum::extract::{FromRequest, Request, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use serde::Deserialize;
+use serde::de::{self, IgnoredAny, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer};
 use utoipa::ToSchema;
 
 use crate::api::{
@@ -154,6 +155,7 @@ pub async fn setup_submit(State(state): State<Arc<AppState>>, req: Request) -> R
             username: req.username.clone(),
             password_hash: hash.clone(),
             role: Role::Superuser,
+            locale: None,
         }];
         // Lockout recovery: keys already in the store belonged to hand-deleted
         // users; the new superuser adopts any orphans, restoring both the
@@ -436,6 +438,7 @@ pub async fn api_config(
         let server = ServerSettings {
             base_url: sc.upstream.base_url.clone(),
             dashboard: sc.dashboard.clone(),
+            default_locale: sc.default_locale.clone(),
             governor: sc.governor.clone(),
             history: HistorySettings {
                 available_from: history.available_from,
@@ -472,6 +475,7 @@ pub async fn api_config(
 
     axum::Json(ConfigResponse {
         client_keys,
+        locale: sc.user(&username).and_then(|user| user.locale.clone()),
         mode: sc.client_auth.mode,
         nim_keys,
         pool: PoolSummary {
@@ -970,6 +974,7 @@ pub async fn users(
                 username: add.username.trim().to_owned(),
                 password_hash: new_hash.expect("hashed above"),
                 role,
+                locale: None,
             });
         }
         (None, Some(target), None, None) => {
@@ -1021,12 +1026,147 @@ pub async fn users(
     }
 }
 
-#[derive(Deserialize, ToSchema)]
-pub struct AccountReq {
+pub(crate) struct AccountPasswordReq {
     current_password: String,
     /// At least 10 characters.
     new_password: String,
 }
+
+pub(crate) enum AccountBody {
+    Password(AccountPasswordReq),
+    Locale(Option<String>),
+    InvalidLocale,
+    InvalidAction,
+}
+
+impl<'de> Deserialize<'de> for AccountBody {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct AccountVisitor;
+
+        impl<'de> Visitor<'de> for AccountVisitor {
+            type Value = AccountBody;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a password change or locale preference object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut current_password = None;
+                let mut new_password = None;
+                let mut action = None;
+                let mut locale = None;
+                let mut current_password_seen = false;
+                let mut new_password_seen = false;
+                let mut action_seen = false;
+                let mut locale_seen = false;
+                let mut unknown_seen = false;
+
+                while let Some(field) = map.next_key::<String>()? {
+                    match field.as_str() {
+                        "current_password" => {
+                            if current_password_seen {
+                                return Err(de::Error::duplicate_field("current_password"));
+                            }
+                            current_password_seen = true;
+                            current_password = Some(map.next_value()?);
+                        }
+                        "new_password" => {
+                            if new_password_seen {
+                                return Err(de::Error::duplicate_field("new_password"));
+                            }
+                            new_password_seen = true;
+                            new_password = Some(map.next_value()?);
+                        }
+                        "action" => {
+                            if action_seen {
+                                return Err(de::Error::duplicate_field("action"));
+                            }
+                            action_seen = true;
+                            action = Some(map.next_value::<serde_json::Value>()?);
+                        }
+                        "locale" => {
+                            if locale_seen {
+                                return Err(de::Error::duplicate_field("locale"));
+                            }
+                            locale_seen = true;
+                            locale = Some(map.next_value::<serde_json::Value>()?);
+                        }
+                        _ => {
+                            unknown_seen = true;
+                            map.next_value::<IgnoredAny>()?;
+                        }
+                    }
+                }
+
+                if current_password_seen || new_password_seen {
+                    return Ok(AccountBody::Password(AccountPasswordReq {
+                        current_password: current_password
+                            .ok_or_else(|| de::Error::missing_field("current_password"))?,
+                        new_password: new_password
+                            .ok_or_else(|| de::Error::missing_field("new_password"))?,
+                    }));
+                }
+                if action_seen || locale_seen {
+                    if unknown_seen
+                        || !action_seen
+                        || !locale_seen
+                        || action.as_ref().and_then(serde_json::Value::as_str) != Some("locale")
+                    {
+                        return Ok(AccountBody::InvalidAction);
+                    }
+                    return match locale.expect("locale field checked above") {
+                        serde_json::Value::Null => Ok(AccountBody::Locale(None)),
+                        serde_json::Value::String(locale) => Ok(AccountBody::Locale(Some(locale))),
+                        _ => Ok(AccountBody::InvalidLocale),
+                    };
+                }
+                Err(de::Error::missing_field("current_password"))
+            }
+        }
+
+        deserializer.deserialize_map(AccountVisitor)
+    }
+}
+
+/// OpenAPI union for the unchanged password body and the locale set/clear
+/// action. utoipa 5.5 collapses an untagged mixed enum to its first variant,
+/// so this small schema-only type spells the two native JSON object shapes.
+pub struct AccountReq;
+
+impl utoipa::PartialSchema for AccountReq {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        use utoipa::openapi::schema::{AdditionalProperties, Object, OneOf, SchemaType, Type};
+
+        let string = || Object::builder().schema_type(Type::String);
+        let password = Object::builder()
+            .property("current_password", string())
+            .required("current_password")
+            .property(
+                "new_password",
+                string().description(Some("At least 10 characters.")),
+            )
+            .required("new_password");
+        let action = string().enum_values(Some(["locale"]));
+        let nullable_locale =
+            Object::builder().schema_type(SchemaType::from_iter([Type::String, Type::Null]));
+        let locale = Object::builder()
+            .property("action", action)
+            .required("action")
+            .property("locale", nullable_locale)
+            .required("locale")
+            .additional_properties(Some(AdditionalProperties::FreeForm(false)));
+
+        OneOf::builder().item(password).item(locale).into()
+    }
+}
+
+impl ToSchema for AccountReq {}
 
 /// Why an own-password change could not be applied to the candidate store.
 #[derive(Debug, PartialEq)]
@@ -1056,31 +1196,74 @@ fn apply_password_change(
     Ok(())
 }
 
-/// `POST /api/settings/account` — own password change; always re-verifies
-/// the current password regardless of the session. Existing sessions die
-/// (the cookie binds a password-hash fragment); the response carries a fresh
-/// cookie so THIS session survives.
+/// `POST /api/settings/account` — change the caller's password or locale preference.
+/// Password changes always re-verify the current password and return a fresh
+/// cookie; locale changes preserve the existing session.
 #[utoipa::path(
     post,
     path = "/api/settings/account",
     tag = "settings",
     request_body = AccountReq,
     responses(
-        (status = 200, description = "Changed. Sets a fresh session cookie; the caller's \
-            other sessions are invalidated.", body = OkResponse),
-        (status = 400, description = "New password shorter than 10 characters", body = ApiError),
+        (status = 200, description = "Password changed with a fresh session cookie and other \
+            sessions invalidated, or locale preference applied without changing the session.",
+            body = OkResponse),
+        (status = 400, description = "Request failed with weak_password, invalid_action, \
+            invalid_locale, locale_not_installed, or invalid_config", body = ApiError),
         (status = 401, description = "No session, or the caller's user was deleted", body = ApiError),
         (status = 403, description = "The current password is wrong", body = ApiError),
         (status = 409, description = "An admin reset the password while this request was in \
             flight; the reset wins", body = ApiError),
+        (status = 422, description = "Invalid JSON request body", body = ApiError),
     ),
 )]
 pub async fn account(
     State(state): State<Arc<AppState>>,
     Extension(Identity(username)): Extension<Identity>,
     headers: HeaderMap,
-    ApiJson(req): ApiJson<AccountReq>,
+    ApiJson(req): ApiJson<AccountBody>,
 ) -> Response {
+    let req = match req {
+        AccountBody::InvalidAction => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_action",
+                "account action must be locale",
+            )
+        }
+        AccountBody::InvalidLocale => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_locale",
+                "locale is not valid",
+            )
+        }
+        AccountBody::Locale(locale) => {
+            let locale = match locale {
+                None => None,
+                Some(locale) => match crate::presentation::installed_locale(&locale) {
+                    Ok(locale) => Some(locale),
+                    Err(error) => return locale_error_response(error),
+                },
+            };
+            let result = {
+                let mut guard = state.store.lock().unwrap();
+                let Some(user) = guard.users.iter().find(|user| user.username == username) else {
+                    return stale_session();
+                };
+                let mut cand = guard.clone();
+                cand.user_mut(&user.username)
+                    .expect("candidate cloned from store")
+                    .locale = locale;
+                commit(&state, &mut guard, cand)
+            };
+            return match result {
+                Ok(()) => ok_json(),
+                Err(e) => bad_request(e),
+            };
+        }
+        AccountBody::Password(req) => req,
+    };
     if req.new_password.len() < 10 {
         return json_error(
             StatusCode::BAD_REQUEST,
@@ -1154,6 +1337,79 @@ pub async fn account(
     }
 }
 
+fn locale_error_response(error: crate::presentation::LocaleError) -> Response {
+    match error {
+        crate::presentation::LocaleError::Invalid => json_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_locale",
+            "locale is not valid",
+        ),
+        crate::presentation::LocaleError::NotInstalled(locale) => json_error(
+            StatusCode::BAD_REQUEST,
+            "locale_not_installed",
+            format!("locale {locale} is not installed"),
+        ),
+    }
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct SetServerLocale {
+    pub locale: String,
+}
+
+/// `POST /api/settings/locale` — change the persisted server default. Admin
+/// and superuser roles share the existing server-settings authority.
+#[utoipa::path(
+    post,
+    path = "/api/settings/locale",
+    tag = "settings",
+    request_body = SetServerLocale,
+    responses(
+        (status = 200, description = "Applied", body = OkResponse),
+        (status = 400, description = "Invalid or uninstalled locale", body = ApiError),
+        (status = 401, description = "No session, or the caller's user was deleted", body = ApiError),
+        (status = 403, description = "Server settings require an admin", body = ApiError),
+        (status = 422, description = "Invalid JSON request body", body = ApiError),
+    ),
+)]
+pub async fn locale(
+    State(state): State<Arc<AppState>>,
+    Extension(Identity(username)): Extension<Identity>,
+    req: Request,
+) -> Response {
+    {
+        let guard = state.store.lock().unwrap();
+        match role_of(&guard, &username) {
+            Some(role) if role.is_admin() => {}
+            Some(_) => return forbidden("server settings require an admin"),
+            None => return stale_session(),
+        }
+    }
+    let ApiJson(req) = match ApiJson::<SetServerLocale>::from_request(req, &state).await {
+        Ok(req) => req,
+        Err(response) => return response,
+    };
+    let locale = match crate::presentation::installed_locale(&req.locale) {
+        Ok(locale) => locale,
+        Err(error) => return locale_error_response(error),
+    };
+    let result = {
+        let mut guard = state.store.lock().unwrap();
+        match role_of(&guard, &username) {
+            Some(role) if role.is_admin() => {}
+            Some(_) => return forbidden("server settings require an admin"),
+            None => return stale_session(),
+        }
+        let mut cand = guard.clone();
+        cand.default_locale = locale;
+        commit(&state, &mut guard, cand)
+    };
+    match result {
+        Ok(()) => ok_json(),
+        Err(e) => bad_request(e),
+    }
+}
+
 /// `POST /api/settings/validate-key` — authenticated twin of the setup
 /// probe. The upstream is ALWAYS the configured `base_url`, never a
 /// caller-supplied one: a request-supplied target would let any logged-in
@@ -1193,6 +1449,7 @@ mod tests {
             username: username.into(),
             password_hash: hash.into(),
             role: Role::User,
+            locale: None,
         });
         sc
     }

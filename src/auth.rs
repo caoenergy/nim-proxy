@@ -603,6 +603,7 @@ mod tests {
                 username: username.into(),
                 password_hash: password_hash.into(),
                 role: Role::Superuser,
+                locale: None,
             }],
             ..Default::default()
         }
@@ -801,11 +802,13 @@ mod tests {
                     username: "alice".into(),
                     password_hash: "h".into(),
                     role: Role::User,
+                    locale: None,
                 },
                 User {
                     username: "admin".into(),
                     password_hash: "h".into(),
                     role: Role::Superuser,
+                    locale: None,
                 },
             ],
             ..Default::default()

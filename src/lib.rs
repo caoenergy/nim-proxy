@@ -302,29 +302,6 @@ async fn metrics_text(State(state): State<Arc<AppState>>) -> String {
     state.prometheus.render()
 }
 
-#[utoipa::path(
-    get,
-    path = "/api/locale-bootstrap",
-    tag = "localization",
-    security(),
-    responses(
-        (status = 200, description = "Installed locales and the server default", body = api::LocaleBootstrap),
-    ),
-)]
-async fn api_locale_bootstrap() -> Response {
-    (
-        [(axum::http::header::CACHE_CONTROL, "no-store")],
-        axum::Json(api::LocaleBootstrap {
-            installed_locales: presentation::INSTALLED_LOCALES
-                .iter()
-                .map(|locale| (*locale).to_owned())
-                .collect(),
-            server_default: presentation::DEFAULT_LOCALE.to_owned(),
-        }),
-    )
-        .into_response()
-}
-
 fn page_response(page: presentation::Page) -> Response {
     (
         [
@@ -626,6 +603,7 @@ pub async fn run() {
         .route(routes::API_SETTINGS_GOVERNOR, post(settings::governor_cfg))
         .route(routes::API_SETTINGS_USERS, post(settings::users))
         .route(routes::API_SETTINGS_ACCOUNT, post(settings::account))
+        .route(routes::API_SETTINGS_LOCALE, post(settings::locale))
         .route(
             routes::API_SETTINGS_VALIDATE_KEY,
             post(settings::validate_key),
@@ -663,7 +641,7 @@ pub async fn run() {
         .route(routes::ASSET_PUBLIC_LOCALE, get(public_catalog))
         .nest(
             routes::API_PREFIX,
-            Router::new().route(routes::API_LOCALE_BOOTSTRAP, get(api_locale_bootstrap)),
+            Router::new().route(routes::API_LOCALE_BOOTSTRAP, get(api::locale_bootstrap)),
         )
         .route(
             routes::LOGIN,

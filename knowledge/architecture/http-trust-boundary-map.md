@@ -15,7 +15,7 @@ module are test-only descriptive metadata and cannot dispatch a request.
 `probe_path` is a concrete fixture-backed request path. This distinction is
 load-bearing for `/v1/{*path}` and future parameterized routes.
 
-The current router has 33 method/path contracts, including nine presentation
+The current router has 34 method/path contracts, including nine presentation
 asset routes. A
 superuser has no exclusive route: it has admin endpoint power plus the
 undeletable/undemotable account invariant. `OperatorSuperuser` exists so a
@@ -61,8 +61,8 @@ not a second copy here.
 | `GET /metrics` | Prometheus/operator | Private | Post-setup | Session, Basic, or header credentials; any role | None | Prometheus text | `setup_required`, `unauthorized` | Config unchanged; no upstream call | External scraper | No | B, M |
 | `GET /api/dashboard` | Browser operator | Private | Post-setup | Session/header credentials; any role | Query | JSON | `setup_required`, `unauthorized`, `invalid_query`, `invalid_time_window` | Config unchanged; no upstream call | Dashboard range load | Yes | B, M |
 | `GET /api/dashboard/now` | Browser operator | Private | Post-setup | Session/header credentials; any role | None | JSON | `setup_required`, `unauthorized` | Config unchanged; no upstream call | Dashboard polling | Yes | B, M |
-| `GET /api/config` | Browser operator | Private | Post-setup | Session/header credentials; any role; response filtered by role/ownership | None | JSON | `setup_required`, `unauthorized` | Config unchanged; no upstream call | Settings startup | Yes | B, M |
-| `GET /api/locale-bootstrap` | Browser | Public | Always | None | None | `LocaleBootstrap` JSON | None | None | Dashboard/setup/login startup | Yes, explicit no security | B, M |
+| `GET /api/config` | Browser operator | Private | Post-setup | Session/header credentials; any role; response filtered by role/ownership | None | JSON including current-user `locale`; admin server includes `default_locale` | `setup_required`, `unauthorized` | Config unchanged; no upstream call | Operator startup and Settings | Yes | B, M |
+| `GET /api/locale-bootstrap` | Browser | Public | Always | None | None | Installed locale registry plus persisted server default | None | None | Dashboard/setup/login startup | Yes, explicit no security | B, M |
 | `POST /api/settings/nim-keys` | Browser/operator API | Private | Post-setup | Session/header credentials; own keys for user, any key for admin | JSON | JSON | `setup_required`, `unauthorized`, `forbidden`, `invalid_config` | Success changes config bytes; rejection does not | Settings Access & keys | Yes | B, O, M |
 | `POST /api/settings/clients` | Browser/operator API | Private | Post-setup | Session/header credentials; own keys for user, any key/mode for admin | JSON | JSON | `setup_required`, `unauthorized`, `forbidden`, `invalid_config` | Success changes config bytes; rejection does not | Settings Access & keys | Yes | B, O, M |
 | `POST /api/settings/upstream` | Browser/operator API | Private | Post-setup | Session/header credentials; admin or superuser | JSON | JSON | `setup_required`, `unauthorized`, `forbidden`, `invalid_config` | Success changes config bytes; rejection does not | Settings Server | Yes | B, M |
@@ -70,7 +70,8 @@ not a second copy here.
 | `POST /api/settings/history` | Browser/operator API | Private | Post-setup | Session/header credentials; admin or superuser | JSON | JSON | `setup_required`, `unauthorized`, `forbidden`, `invalid_config` | Success changes config bytes; rejection does not | Settings Server | Yes | B, M |
 | `POST /api/settings/governor` | Browser/operator API | Private | Post-setup | Session/header credentials; admin or superuser | JSON | JSON | `setup_required`, `unauthorized`, `forbidden`, `invalid_config` | Success changes config bytes; rejection does not | Settings Server | Yes | B, M |
 | `POST /api/settings/users` | Browser/operator API | Private | Post-setup | Session/header credentials; admin or superuser; superuser target protected | JSON | JSON | `setup_required`, `unauthorized`, `forbidden`, `weak_password`, `invalid_config` | Success changes config bytes; rejection does not | Settings Users | Yes | B, M |
-| `POST /api/settings/account` | Browser/operator API | Private | Post-setup | Session/header credentials; any role, own account only | JSON | JSON + session cookie | `setup_required`, `unauthorized`, `wrong_password`, `weak_password`, `password_changed`, `invalid_config` | Success changes config bytes and sets a session cookie | Settings Account | Yes | B, M |
+| `POST /api/settings/account` | Browser/operator API | Private | Post-setup | Session/header credentials; any role, own account only | Password change or exact locale set/clear JSON; duplicate known fields fail as typed 422 before dispatch, while password-only unknown extensions remain ignored | JSON; password success also sets session cookie | `setup_required`, `unauthorized`, `invalid_json`, `wrong_password`, `weak_password`, `password_changed`, `invalid_action`, `invalid_locale`, `locale_not_installed`, `invalid_config` | Success changes only the caller's account bytes; password success sets a session cookie | Settings Account and dormant locale contract | Yes | B, M |
+| `POST /api/settings/locale` | Browser/operator API | Private | Post-setup | Session/header credentials; admin or superuser; role check precedes locale validation | `SetServerLocale` JSON | `OkResponse` JSON | `setup_required`, `unauthorized`, `forbidden`, `invalid_locale`, `locale_not_installed`, `invalid_config` | Success changes server-default config bytes; rejection does not | Dormant; no visible selector | Yes | B, M |
 | `POST /api/settings/validate-key` | Browser/operator API | Private | Post-setup | Session/header credentials; any role | JSON | JSON | `setup_required`, `unauthorized` | Success makes one upstream call; config unchanged | Settings key validation | Yes | B, M |
 | `GET /health` | Orchestrator | Public | Always | None | None | Plain text | None | None | Container healthcheck | No | B, M |
 | `GET /assets/public/public.css` | Browser | Public | Always | None | None | CSS | None | None | Setup/login pages | No | B, M |
@@ -99,9 +100,9 @@ durable byte changes. Upstream-only probes must change no config bytes. The
 data-plane scheduling, response, and observation details remain in the
 [streaming pipeline](streaming-pipeline.md).
 
-Generated OpenAPI describes 13 `/api` operations and two setup POST
+Generated OpenAPI describes 14 `/api` operations and two setup POST
 operations. The locale bootstrap is public with explicit `security: []`; the
-other 12 `/api` operations inherit operator authentication. HTML/form,
+other 13 `/api` operations inherit operator authentication. HTML/form,
 presentation assets, health, metrics, and `/v1`
 omissions are explicit
 decisions. The generated-file authority and error schema remain in
