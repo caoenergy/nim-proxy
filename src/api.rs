@@ -715,6 +715,16 @@ mod tests {
         );
     }
 
+    #[test]
+    fn api_error_wire_order_is_exact() {
+        let body = serde_json::to_string(&ApiError::new("invalid_json", "invalid JSON"))
+            .unwrap();
+        assert_eq!(
+            body,
+            r#"{"error":{"code":"invalid_json","message":"invalid JSON","type":"proxy_error"}}"#
+        );
+    }
+
     /// The spec must actually describe every route the router serves.
     #[test]
     fn spec_covers_every_documented_route() {

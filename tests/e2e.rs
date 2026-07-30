@@ -1855,6 +1855,167 @@ async fn setup_wizard_claims_the_proxy() {
     assert_eq!(v["error"]["code"], "unauthorized");
 }
 
+/// Every rejection from the JSON control plane keeps the same typed envelope
+/// and leaves the durable config store untouched. Removing the narrow
+/// extractors or `/api` fallbacks makes one or more rows answer Axum's plain
+/// text defaults instead.
+#[tokio::test]
+async fn control_plane_rejections_are_typed() {
+    struct RejectionCase {
+        method: reqwest::Method,
+        path: &'static str,
+        content_type: Option<&'static str>,
+        body: &'static str,
+        status: reqwest::StatusCode,
+        code: &'static str,
+        message: &'static str,
+        oversized: bool,
+    }
+
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let cookie = login(&proxy).await;
+    let before = std::fs::read(proxy.data_dir.join("config.json")).unwrap();
+    let cases = [
+        RejectionCase {
+            method: reqwest::Method::POST,
+            path: "/api/settings/upstream",
+            content_type: Some("application/json"),
+            body: "{",
+            status: reqwest::StatusCode::BAD_REQUEST,
+            code: "invalid_json",
+            message: "invalid JSON",
+            oversized: false,
+        },
+        RejectionCase {
+            method: reqwest::Method::POST,
+            path: "/api/settings/upstream",
+            content_type: None,
+            body: r#"{"base_url":"http://example.invalid"}"#,
+            status: reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            code: "unsupported_media_type",
+            message: "Content-Type must be application/json",
+            oversized: false,
+        },
+        RejectionCase {
+            method: reqwest::Method::POST,
+            path: "/api/settings/upstream",
+            content_type: Some("text/plain"),
+            body: r#"{"base_url":"http://example.invalid"}"#,
+            status: reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            code: "unsupported_media_type",
+            message: "Content-Type must be application/json",
+            oversized: false,
+        },
+        RejectionCase {
+            method: reqwest::Method::POST,
+            path: "/api/settings/upstream",
+            content_type: Some("application/json"),
+            body: "",
+            status: reqwest::StatusCode::PAYLOAD_TOO_LARGE,
+            code: "body_too_large",
+            message: "request body is too large",
+            oversized: true,
+        },
+        RejectionCase {
+            method: reqwest::Method::GET,
+            path: "/api/dashboard?from=not-a-timestamp",
+            content_type: None,
+            body: "",
+            status: reqwest::StatusCode::BAD_REQUEST,
+            code: "invalid_query",
+            message: "invalid query",
+            oversized: false,
+        },
+        RejectionCase {
+            method: reqwest::Method::GET,
+            path: "/api/not-a-route",
+            content_type: None,
+            body: "",
+            status: reqwest::StatusCode::NOT_FOUND,
+            code: "not_found",
+            message: "not found",
+            oversized: false,
+        },
+        RejectionCase {
+            method: reqwest::Method::PUT,
+            path: "/api/dashboard",
+            content_type: None,
+            body: "",
+            status: reqwest::StatusCode::METHOD_NOT_ALLOWED,
+            code: "method_not_allowed",
+            message: "method not allowed",
+            oversized: false,
+        },
+        RejectionCase {
+            method: reqwest::Method::POST,
+            path: "/setup",
+            content_type: Some("application/json"),
+            body: r#"{"username":"another","password":"long-enough-password"}"#,
+            status: reqwest::StatusCode::CONFLICT,
+            code: "setup_complete",
+            message: "setup is already complete",
+            oversized: false,
+        },
+        RejectionCase {
+            method: reqwest::Method::POST,
+            path: "/setup/validate-key",
+            content_type: Some("application/json"),
+            body: r#"{"key":"another"}"#,
+            status: reqwest::StatusCode::CONFLICT,
+            code: "setup_complete",
+            message: "setup is already complete",
+            oversized: false,
+        },
+    ];
+
+    for case in cases {
+        let body = if case.oversized {
+            "x".repeat(64 * 1024 * 1024 + 1)
+        } else {
+            case.body.to_owned()
+        };
+        let mut request = client()
+            .request(case.method.clone(), proxy.url(case.path))
+            .body(body);
+        if case.path.starts_with("/api/") {
+            request = request.header("cookie", &cookie);
+        }
+        if let Some(content_type) = case.content_type {
+            request = request.header("content-type", content_type);
+        }
+
+        let response = request.send().await.unwrap();
+        assert_eq!(response.status(), case.status, "{} {}", case.method, case.path);
+        assert_eq!(
+            response.headers()["content-type"],
+            "application/json",
+            "{} {}",
+            case.method,
+            case.path
+        );
+        let body = response.bytes().await.unwrap();
+        assert_eq!(
+            body.as_ref(),
+            format!(
+                r#"{{"error":{{"code":"{}","message":"{}","type":"proxy_error"}}}}"#,
+                case.code, case.message
+            )
+            .as_bytes(),
+            "{} {}",
+            case.method,
+            case.path
+        );
+        assert_eq!(
+            std::fs::read(proxy.data_dir.join("config.json")).unwrap(),
+            before,
+            "{} {} changed config.json",
+            case.method,
+            case.path
+        );
+    }
+}
+
 /// The claim persists: after a restart on the same data dir, the created user
 /// can log in and the setup-provided key is still in the pool.
 #[tokio::test]
