@@ -139,6 +139,9 @@ faked.
   process group when descendants survive, stops the proxy, and verifies the
   run directory was removed. `--cleanup-selftest` forces a descendant to keep
   writing the profile so parent-only termination or note-only cleanup fails.
+  It also forces proxy startup to time out and requires the proxy exit event
+  before run-directory removal. An intercepted missing-locale failure must
+  print that originating cause before the generic asset-load summary.
 - `--escape-probe` gives the contextual-sink rule in
   [message-catalog-and-escaping](message-catalog-and-escaping.md) an
   enforcement mechanism instead of a paragraph. The probe requires inert

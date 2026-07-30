@@ -6,6 +6,16 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-30] fix — close render failure lifecycle gaps
+
+The render gate now uses the same bounded child-stop primitive when proxy
+startup times out and during normal shutdown, and observes proxy exit before
+removing the run directory. Its cleanup self-test also forces that pre-return
+timeout and an intercepted missing-locale failure. The latter must retain its
+specific diagnostic instead of being hidden by a generic asset-load summary.
+See the [render-gate decision](decisions/render-gate.md) and
+[test strategy](testing/test-strategy.md).
+
 ## [2026-07-30] fix — make render-gate cleanup part of the result
 
 The served-browser gate no longer kills only Chromium's launcher parent or

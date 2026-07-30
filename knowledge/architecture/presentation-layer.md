@@ -85,7 +85,10 @@ browser tree does not exit. The proxy is stopped, the run directory is removed
 and verified absent, and cleanup failure fails the command rather than being
 downgraded beneath a green page result. `--cleanup-selftest` uses real
 processes and a continuing profile writer to force the fallback path and prove
-no `nimproxy-render-*` directory survives.
+no `nimproxy-render-*` directory survives. It separately forces a proxy
+startup timeout so the pre-return child is observed stopped before directory
+removal, and requires intercepted presentation failures to retain their
+specific diagnostic.
 
 See [dashboard](dashboard.md), [HTTP trust boundaries](http-trust-boundary-map.md),
 [render gate](../decisions/render-gate.md), and

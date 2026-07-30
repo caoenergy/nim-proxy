@@ -47,7 +47,10 @@ that proof.
   `node scripts/render_check.js --page setup --escape-probe`. Run
   `node scripts/render_check.js --cleanup-selftest` when changing the browser
   lifecycle; it forces a real descendant to continue writing the profile and
-  requires bounded tree shutdown plus verified directory removal.
+  requires bounded tree shutdown plus verified directory removal. The same
+  self-test forces a proxy startup timeout and requires its exit before
+  removal, then verifies a missing-locale failure prints its originating cause
+  and leaves no run directory.
   Behavior mode builds and starts the current binary, loads the real routed
   page/CSS/JS bytes, rejects an initial missing/error/external resource,
   fulfills captured API responses through CDP, and proves the bounded

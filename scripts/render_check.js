@@ -539,7 +539,7 @@ async function cleanupSelftest() {
     if (stderr.trim()) console.error(stderr.trim());
     return 1;
   }
-  console.log('cleanup selftest ok — browser descendants stopped and run directory removed');
+  console.log('cleanup selftest ok — browser/proxy lifecycle and failure diagnostics passed');
   return 0;
 }
 // Which embedded page to drive. The dashboard renders from captured payloads;
@@ -796,7 +796,9 @@ async function startProxy(tmpdir) {
     } catch (_) {}
     await sleep(50);
   }
-  proc.kill('SIGKILL');
+  if (!await stopChild(proc, 'SIGKILL')) {
+    throw new Error(`proxy did not become healthy and did not exit\n${stderr}`);
+  }
   throw new Error(`proxy did not become healthy\n${stderr}`);
 }
 
@@ -941,6 +943,14 @@ function waitForProcessExit(proc, timeoutMs) {
   });
 }
 
+async function stopChild(proc, firstSignal = 'SIGTERM') {
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) return true;
+  proc.kill(firstSignal);
+  if (await waitForProcessExit(proc, 2000)) return true;
+  if (firstSignal !== 'SIGKILL') proc.kill('SIGKILL');
+  return firstSignal === 'SIGKILL' ? false : await waitForProcessExit(proc, 2000);
+}
+
 function browserGroupAlive(pid) {
   if (!pid || process.platform === 'win32') return false;
   try {
@@ -992,12 +1002,8 @@ async function shutdownRun(browser, browserProc, proxyProc, tmpdir) {
   }
   try { browser?.ws.close(); } catch (_) {}
 
-  if (proxyProc && proxyProc.exitCode === null && proxyProc.signalCode === null) {
-    proxyProc.kill('SIGTERM');
-    if (!await waitForProcessExit(proxyProc, 2000)) {
-      proxyProc.kill('SIGKILL');
-      if (!await waitForProcessExit(proxyProc, 2000)) failures.push('proxy process did not exit');
-    }
+  if (!await stopChild(proxyProc)) {
+    failures.push('proxy process did not exit');
   }
 
   if (tmpdir) {
@@ -1272,6 +1278,9 @@ async function main() {
   if (initialAssetErrors.length) {
     console.error('FAIL — initial presentation asset load was incomplete or external');
     for (const error of new Set(initialAssetErrors)) console.error('  ' + error);
+    for (const cause of new Set(errors.map(error => error.text))) {
+      console.error('  cause: ' + cause);
+    }
     throw reportedFailure();
   }
 
