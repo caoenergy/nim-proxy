@@ -21,14 +21,16 @@ if (process.env.TZ !== "UTC") {
 }
 
 const ROOT = path.join(__dirname, "..");
-const src = fs.readFileSync(path.join(ROOT, "src/dashboard.html"), "utf8");
+const src = fs.readFileSync(path.join(ROOT, "src/web/shared.js"), "utf8");
+const dashboard = fs.readFileSync(path.join(ROOT, "src/web/dashboard.js"), "utf8");
+const page = fs.readFileSync(path.join(ROOT, "src/web/dashboard.html"), "utf8");
 
 // Pull the formatter definitions straight out of the page so the fixture can
 // never drift from the code it is meant to pin.
 function grab(re, what) {
   const m = src.match(re);
   if (!m) {
-    console.error(`could not find ${what} in src/dashboard.html`);
+    console.error(`could not find ${what} in src/web/shared.js`);
     process.exit(2);
   }
   return m[0];
@@ -40,8 +42,12 @@ const block = grab(
   /\/\* -+ formatting -+[\s\S]*?(?=\n\/\* -+ [a-z])/,
   "the formatting block"
 );
-const scopeDate = grab(/const scopeDate = [^\n]*\n/, "scopeDate");
-const scopeTime = grab(/const scopeTime = [^\n]*\n/, "scopeTime");
+const scopeDate = dashboard.match(/const scopeDate = [^\n]*\n/)?.[0];
+const scopeTime = dashboard.match(/const scopeTime = [^\n]*\n/)?.[0];
+if (!scopeDate || !scopeTime) {
+  console.error("could not find scope formatters in src/web/dashboard.js");
+  process.exit(2);
+}
 // axisLabel and the non-finite guard `at` are real shared definitions inside
 // the formatting block, so nothing here re-implements them. An earlier version
 // hand-wrote an axisLabel whose threshold was wrong in both value and unit, so
@@ -51,10 +57,12 @@ const axis = "const stamp = ms => at(STAMP, ms);";
 // The formatters now read their locale from the shipped catalog, so take it
 // from the same place the page does rather than assuming en-US.
 const catalog = JSON.parse(
-  grab(
-    /(?<=<script type="application\/json" id="i18n-catalog">)[\s\S]*?(?=<\/script>)/,
-    "the inline catalog"
-  )
+  page.match(
+    /(?<=<script type="application\/json" id="i18n-catalog">)[\s\S]*?(?=<\/script>)/
+  )?.[0] || (() => {
+    console.error("could not find the inline catalog in src/web/dashboard.html");
+    process.exit(2);
+  })()
 );
 const preamble = `const I18N = ${JSON.stringify({ locale: catalog.locale })};`;
 

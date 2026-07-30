@@ -69,8 +69,9 @@ days of history.
 - `secs()` now reads `1.0 sec` rather than `1.0 s`. Slightly longer, but it is
   what `Intl` considers correct for en-US and it matches the `ms`/`min` forms,
   which already used a space and an abbreviation.
-- The fixture harness reads the formatter bodies straight out of
-  `src/dashboard.html`, so it cannot drift from the code it pins, and it refuses
+- The fixture harness reads formatter bodies straight out of
+  `src/web/shared.js` and `src/web/dashboard.js`, plus the locale from the real
+  dashboard page, so it cannot drift from the code it pins, and it refuses
   to run unless `TZ=UTC`. An unpinned fixture would encode whichever machine
   last wrote it.
 - Verified in a second locale: `de-DE` yields `1,2 Mio.`, `1,5 Sek.`, `50 %`

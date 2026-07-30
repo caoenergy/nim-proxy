@@ -30,6 +30,39 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+PAGE_SOURCES = {
+    "src/web/dashboard.html": (
+        "src/web/shared.js",
+        "src/web/dashboard.js",
+        "src/web/settings.js",
+    ),
+    "src/web/setup.html": ("src/web/setup.js",),
+}
+
+
+def bundled_page(name: str) -> str:
+    """Return authored markup plus the real split scripts in one lint input.
+
+    The synthetic wrapper is scanner input only; browser execution always uses
+    the separately served production assets.
+    """
+    page = (ROOT / name).read_text()
+    if name == "src/web/dashboard.html":
+        shared = (ROOT / "src/web/shared.js").read_text()
+        dashboard = (ROOT / "src/web/dashboard.js").read_text()
+        settings = (ROOT / "src/web/settings.js").read_text()
+        marker = "const RENDERERS ="
+        before, after = dashboard.split(marker, 1)
+        # Preserve the monolith's scanner order. The existing lint intentionally
+        # stops at renderSettings() because settings vocabulary belongs to the
+        # later rationalization task; source splitting must not silently widen
+        # that scope to code that originally followed the settings block.
+        scripts = f"{shared}\n{before}\n{settings}\n{marker}{after}"
+    else:
+        scripts = "\n".join(
+            (ROOT / script).read_text() for script in PAGE_SOURCES[name]
+        )
+    return f"{page}\n<script>\n{scripts}\n</script>\n"
 
 
 def load_catalog(source: str):
@@ -252,7 +285,7 @@ def lint_runtime_helpers(name: str, raw: str) -> list:
 
 I18N_TEXT_ATTRS = {"title", "placeholder", "aria-label", "alt"}
 CANONICAL_LOOKUPS = {
-    "src/dashboard.html": (
+    "src/web/dashboard.html": (
         r"""function escapeHtml\(value\) \{
   const text = value && value\.type === CATALOG_MESSAGE
     \? message\(value\.id, value\.params\)
@@ -268,7 +301,7 @@ CANONICAL_LOOKUPS = {
   node\.setAttribute\(attr, message\(id, params\)\);
 \}""",
     ),
-    "src/setup.html": (
+    "src/web/setup.html": (
         r"""function setMessageText\(node, id, params = \{\}\) \{
   assertMessageTextTarget\(node\);
   node\.textContent = message\(id, params\);
@@ -999,9 +1032,9 @@ def main() -> int:
     errors = []
     referenced = set()
 
-    for name in ("src/dashboard.html", "src/setup.html"):
+    for name in PAGE_SOURCES:
         path = ROOT / name
-        raw = path.read_text()
+        raw = bundled_page(name)
         if 'id="i18n-catalog"' not in raw:
             continue
         catalog = load_catalog(raw)
@@ -1091,8 +1124,8 @@ def main() -> int:
     # The standalone locale files are what translators and the PR 6 pipeline
     # edit; the inline block is what ships. They must not drift.
     for page, standalone in (
-        ("src/dashboard.html", "locales/en-US.json"),
-        ("src/setup.html", "locales/setup-en-US.json"),
+        ("src/web/dashboard.html", "locales/en-US.json"),
+        ("src/web/setup.html", "locales/setup-en-US.json"),
     ):
         inline = load_catalog((ROOT / page).read_text())
         disk = json.loads((ROOT / standalone).read_text())["messages"]
@@ -1107,8 +1140,8 @@ def main() -> int:
                 if inline[mid] != disk[mid]:
                     errors.append(f"{standalone}: {mid} differs from the inline catalog")
 
-    for name in ("src/dashboard.html", "src/setup.html"):
-        page = (ROOT / name).read_text()
+    for name in PAGE_SOURCES:
+        page = bundled_page(name)
         errors += lint_runtime_helpers(name, page)
         errors += [
             f"[{check}] {detail}"

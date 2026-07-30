@@ -70,8 +70,11 @@ pub async fn setup_page(State(state): State<Arc<AppState>>) -> Response {
         return not_found();
     }
     (
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        include_str!("setup.html"),
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        crate::presentation::page(crate::presentation::Page::Setup),
     )
         .into_response()
 }

@@ -33,6 +33,7 @@ const ROOT = path.resolve(__dirname, '..');
 const FIXTURES = path.join(ROOT, 'tests', 'fixtures', 'api');
 
 const args = process.argv.slice(2);
+const PRESENTATION_CSP = "default-src 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 const ASSET_CASES = [
   {
@@ -97,31 +98,103 @@ const ASSET_CASES = [
   },
 ];
 
+function isExternalUrl(value) {
+  return /^(?:https?:)?\/\//i.test(String(value || '').trim());
+}
+
+function srcsetHasExternalUrl(value) {
+  return String(value || '').split(',').some(candidate =>
+    isExternalUrl(candidate.trim().split(/\s+/, 1)[0]));
+}
+
+/* This is deliberately a small context parser, not a spelling regex. It
+   tokenizes start tags and attributes so attribute order, quote style and
+   unquoted values cannot change what resource-loading context is inspected. */
+function htmlElements(source) {
+  const elements = [];
+  const tags = /<([A-Za-z][A-Za-z0-9:-]*)(\s(?:[^"'<>]|"[^"]*"|'[^']*')*)?>/g;
+  for (const match of source.matchAll(tags)) {
+    const attrs = new Map();
+    const attrSource = match[2] || '';
+    const attributes = /([^\s"'=<>`]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+    for (const attr of attrSource.matchAll(attributes)) {
+      attrs.set(attr[1].toLowerCase(), attr[2] ?? attr[3] ?? attr[4] ?? '');
+    }
+    elements.push({
+      tag: match[1].toLowerCase(),
+      attrs,
+      end: (match.index || 0) + match[0].length,
+    });
+  }
+  return elements;
+}
+
+function cssUrls(source) {
+  const urls = [];
+  const pattern = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)\s]+))\s*\)/gi;
+  for (const match of source.matchAll(pattern)) {
+    urls.push(match[1] ?? match[2] ?? match[3] ?? '');
+  }
+  return urls;
+}
+
+function cssImports(source) {
+  const urls = [];
+  const pattern = /@import\s+(?:url\(\s*)?(?:"([^"]*)"|'([^']*)'|([^;\s)]+))/gi;
+  for (const match of source.matchAll(pattern)) {
+    urls.push(match[1] ?? match[2] ?? match[3] ?? '');
+  }
+  return urls;
+}
+
 function assetProblems(files) {
   const problems = [];
   for (const [filename, source] of Object.entries(files)) {
-    if (/<script\b[^>]*\bsrc\s*=\s*["']https?:\/\//i.test(source)) {
-      problems.push({ check: 'external-script', detail: filename });
-    }
-    if (/<link\b[^>]*\brel\s*=\s*["'](?:stylesheet|preconnect)["'][^>]*\bhref\s*=\s*["']https?:\/\//i.test(source)
-        || /@font-face[\s\S]*?url\(\s*["']?https?:\/\//i.test(source)) {
-      problems.push({ check: 'external-stylesheet-font', detail: filename });
-    }
-    if (/<(?:img|image)\b[^>]*(?:src|href)\s*=\s*["']https?:\/\//i.test(source)) {
-      problems.push({ check: 'external-image', detail: filename });
-    }
-    if (/url\(\s*["']?https?:\/\//i.test(source)
-        && !/@font-face[\s\S]*?url\(\s*["']?https?:\/\//i.test(source)) {
-      problems.push({ check: 'external-css-url', detail: filename });
-    }
-    if (filename.endsWith('.html')) {
-      if (/<style\b/i.test(source)) problems.push({ check: 'inline-style', detail: filename });
-      if (/\sstyle\s*=/i.test(source)) problems.push({ check: 'inline-style', detail: filename });
-      if (/<script\b(?![^>]*\btype\s*=\s*["']application\/json["'])[^>]*>(?!\s*<\/script>)/i.test(source)) {
-        problems.push({ check: 'inline-script', detail: filename });
+    const markup = filename.endsWith('.html') || filename.endsWith('.svg');
+    if (markup) {
+      for (const element of htmlElements(source)) {
+        const { tag, attrs } = element;
+        if (tag === 'script' && isExternalUrl(attrs.get('src'))) {
+          problems.push({ check: 'external-script', detail: filename });
+        }
+        if (tag === 'link'
+            && isExternalUrl(attrs.get('href'))
+            && attrs.get('rel')?.toLowerCase().split(/\s+/)
+              .some(rel => ['stylesheet', 'preconnect', 'dns-prefetch', 'icon'].includes(rel))) {
+          problems.push({ check: 'external-stylesheet-font', detail: filename });
+        }
+        if (['img', 'image', 'source', 'video'].includes(tag)) {
+          const direct = ['src', 'href', 'xlink:href', 'poster']
+            .some(attr => isExternalUrl(attrs.get(attr)));
+          if (direct || srcsetHasExternalUrl(attrs.get('srcset'))) {
+            problems.push({ check: 'external-image', detail: filename });
+          }
+        }
+        if (!filename.endsWith('.html')) continue;
+        if (tag === 'style' || attrs.has('style')) {
+          problems.push({ check: 'inline-style', detail: filename });
+        }
+        if ([...attrs.keys()].some(attr => /^on[a-z]+$/i.test(attr))) {
+          problems.push({ check: 'inline-event-handler', detail: filename });
+        }
+        if (tag === 'script' && !attrs.has('src')
+            && attrs.get('type')?.toLowerCase() !== 'application/json') {
+          const closing = source.toLowerCase().indexOf('</script', element.end);
+          if (closing < 0 || source.slice(element.end, closing).trim()) {
+            problems.push({ check: 'inline-script', detail: filename });
+          }
+        }
       }
-      if (/\son[a-z]+\s*=/i.test(source)) {
-        problems.push({ check: 'inline-event-handler', detail: filename });
+    }
+    if (filename.endsWith('.css')) {
+      const importsExternal = cssImports(source).some(isExternalUrl);
+      const fontBlocks = [...source.matchAll(/@font-face\s*\{([^}]*)\}/gi)]
+        .some(match => cssUrls(match[1]).some(isExternalUrl));
+      if (importsExternal || fontBlocks) {
+        problems.push({ check: 'external-stylesheet-font', detail: filename });
+      }
+      if (cssUrls(source).some(isExternalUrl) && !fontBlocks) {
+        problems.push({ check: 'external-css-url', detail: filename });
       }
     }
   }
@@ -295,7 +368,6 @@ if (!['dashboard', 'setup'].includes(pageArg)) {
 }
 const IS_SETUP = pageArg === 'setup';
 const PAGE_REL = path.join('src', 'web', `${pageArg}.html`);
-const PAGE = path.join(ROOT, PAGE_REL);
 const CATALOG_PREFIX = IS_SETUP ? 'setup-' : '';
 const localeArg = (() => {
   const i = args.indexOf('--locale');
@@ -416,12 +488,8 @@ function loadFixtures() {
   );
 }
 
-function probePageHtml() {
-  let html = fs.readFileSync(PAGE, 'utf8');
-  if (!IS_SETUP) {
-    const icon = fs.readFileSync(path.join(ROOT, 'src', 'web', 'icons', 'nim-proxy.svg'), 'utf8');
-    html = html.replace('<!-- nim-proxy-icon -->', icon);
-  }
+function probeCatalogHtml(serverHtml) {
+  let html = serverHtml;
   if (localeArg) {
     const catalogFile = `${CATALOG_PREFIX}${localeArg}.json`;
     const cp = path.join(ROOT, 'locales', catalogFile);
@@ -448,6 +516,13 @@ function probePageHtml() {
         return a + JSON.stringify(cat) + b;
       },
     );
+  }
+  const withoutCatalog = value => value.replace(
+    /(<script type="application\/json" id="i18n-catalog">)[\s\S]*?(<\/script>)/,
+    '$1[PROBE CATALOG]$2',
+  );
+  if (withoutCatalog(html) !== withoutCatalog(serverHtml)) {
+    throw new Error('probe changed server HTML outside the catalog body');
   }
   return html;
 }
@@ -690,8 +765,72 @@ async function main() {
   const consoleErrors = [];
   const requestUrls = new Map();
   const initialAssetErrors = [];
+  const requestedPresentation = new Set();
   const servedPresentation = new Set();
+  const serverPageResponses = new Set();
+  const fetchOperations = new Set();
   const fetched = [];
+  const pagePath = IS_SETUP ? '/setup' : '/';
+  const presentationPath = value =>
+    value === '/' || value === '/setup' || value.startsWith('/assets/');
+  const headerValue = (headers, name) =>
+    (headers || []).find(header => header.name.toLowerCase() === name)?.value;
+  async function handleFetchPaused(params) {
+    const { request } = params;
+    const url = new URL(request.url);
+    if (params.responseStatusCode !== undefined) {
+      const headers = params.responseHeaders || [];
+      if (url.pathname !== pagePath || request.method !== 'GET') {
+        throw new Error(`unexpected response-stage interception: ${request.method} ${url.pathname}`);
+      }
+      if (params.responseStatusCode !== 200) {
+        throw new Error(`server page response was ${params.responseStatusCode} ${url.pathname}`);
+      }
+      if (headerValue(headers, 'content-type') !== 'text/html; charset=utf-8'
+          || headerValue(headers, 'cache-control') !== 'no-store'
+          || headerValue(headers, 'content-security-policy') !== PRESENTATION_CSP) {
+        throw new Error(`server page response headers violated the presentation contract: ${url.pathname}`);
+      }
+      const response = await browser.send(
+        'Fetch.getResponseBody',
+        { requestId: params.requestId },
+        S,
+      );
+      const serverHtml = response.base64Encoded
+        ? Buffer.from(response.body, 'base64').toString('utf8')
+        : response.body;
+      const body = probeCatalogHtml(serverHtml);
+      serverPageResponses.add(url.pathname);
+      await browser.send('Fetch.fulfillRequest', {
+        requestId: params.requestId,
+        responseCode: params.responseStatusCode,
+        responseHeaders: headers.filter(header =>
+          !['content-length', 'content-encoding', 'transfer-encoding']
+            .includes(header.name.toLowerCase())),
+        body: Buffer.from(body).toString('base64'),
+      }, S);
+      return;
+    }
+    let body = null;
+    if (url.pathname === '/api/config') body = fixtures['config.json'];
+    else if (url.pathname === '/api/dashboard/now') body = fixtures['dashboard-now.json'];
+    else if (url.pathname === '/api/dashboard') body = fixtures['dashboard.json'];
+    else if (url.pathname === '/setup/validate-key' && request.method === 'POST')
+      body = { ok: true, models: 63 };
+    else if (url.pathname === '/setup' && request.method === 'POST')
+      body = { ok: true, client_key: { name: 'default', secret: 'npk_probe_secret' } };
+    if (body !== null) {
+      fetched.push(url.pathname);
+      await browser.send('Fetch.fulfillRequest', {
+        requestId: params.requestId,
+        responseCode: 200,
+        responseHeaders: [{ name: 'Content-Type', value: 'application/json' }],
+        body: Buffer.from(JSON.stringify(body)).toString('base64'),
+      }, S);
+    } else {
+      await browser.send('Fetch.continueRequest', { requestId: params.requestId }, S);
+    }
+  }
   browser.on((msg) => {
     if (msg.sessionId !== S) return;
     if (msg.method === 'Runtime.exceptionThrown') {
@@ -716,6 +855,10 @@ async function main() {
       if (url.startsWith('http') && !url.startsWith(proxy.origin)) {
         initialAssetErrors.push(`external request ${url}`);
       }
+      if (url.startsWith(proxy.origin)) {
+        const pathname = new URL(url).pathname;
+        if (presentationPath(pathname)) requestedPresentation.add(pathname);
+      }
     }
     if (msg.method === 'Network.responseReceived') {
       const { response } = msg.params;
@@ -736,42 +879,10 @@ async function main() {
       }
     }
     if (msg.method === 'Fetch.requestPaused') {
-      const request = msg.params.request;
-      const url = new URL(request.url);
-      let body = null;
-      if (url.pathname === '/api/config') body = fixtures['config.json'];
-      else if (url.pathname === '/api/dashboard/now') body = fixtures['dashboard-now.json'];
-      else if (url.pathname === '/api/dashboard') body = fixtures['dashboard.json'];
-      else if (url.pathname === '/setup/validate-key' && request.method === 'POST')
-        body = { ok: true, models: 63 };
-      else if (url.pathname === '/setup' && request.method === 'POST')
-        body = { ok: true, client_key: { name: 'default', secret: 'npk_probe_secret' } };
-      if (body !== null) {
-        fetched.push(url.pathname);
-        browser.send('Fetch.fulfillRequest', {
-          requestId: msg.params.requestId,
-          responseCode: 200,
-          responseHeaders: [{ name: 'Content-Type', value: 'application/json' }],
-          body: Buffer.from(JSON.stringify(body)).toString('base64'),
-        }, S).catch(error => errors.push({ text: error.message, line: 0, col: 0 }));
-      } else if ((escapeProbe || localeArg)
-          && request.method === 'GET'
-          && url.pathname === (IS_SETUP ? '/setup' : '/')) {
-        browser.send('Fetch.fulfillRequest', {
-          requestId: msg.params.requestId,
-          responseCode: 200,
-          responseHeaders: [
-            { name: 'Content-Type', value: 'text/html; charset=utf-8' },
-            { name: 'Content-Security-Policy', value: "default-src 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" },
-            { name: 'Cache-Control', value: 'no-store' },
-          ],
-          body: Buffer.from(probePageHtml()).toString('base64'),
-        }, S).catch(error => errors.push({ text: error.message, line: 0, col: 0 }));
-      } else {
-        browser.send('Fetch.continueRequest', {
-          requestId: msg.params.requestId,
-        }, S).catch(error => errors.push({ text: error.message, line: 0, col: 0 }));
-      }
+      const operation = handleFetchPaused(msg.params)
+        .catch(error => errors.push({ text: error.message, line: 0, col: 0 }))
+        .finally(() => fetchOperations.delete(operation));
+      fetchOperations.add(operation);
     }
   });
 
@@ -780,7 +891,14 @@ async function main() {
   await browser.send('Page.enable', {}, S);
   await browser.send('DOM.enable', {}, S);
   await browser.send('Network.enable', {}, S);
-  await browser.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] }, S);
+  const fetchPatterns = [{ urlPattern: '*', requestStage: 'Request' }];
+  if (escapeProbe || localeArg) {
+    fetchPatterns.push({
+      urlPattern: proxy.origin + pagePath,
+      requestStage: 'Response',
+    });
+  }
+  await browser.send('Fetch.enable', { patterns: fetchPatterns }, S);
   if (!IS_SETUP) {
     await browser.send('Network.setExtraHTTPHeaders', {
       headers: { Authorization: 'Bearer root:test-password-1' },
@@ -820,12 +938,17 @@ async function main() {
   }
   // let the first poll land and paint
   await sleep(1500);
+  await Promise.all([...fetchOperations]);
   const requiredPresentation = IS_SETUP
     ? ['/setup', '/assets/public/public.css', '/assets/public/setup.js']
     : ['/', '/assets/operator/operator.css', '/assets/operator/shared.js',
        '/assets/operator/dashboard.js', '/assets/operator/settings.js'];
   for (const resource of requiredPresentation) {
-    if (!servedPresentation.has(resource)) initialAssetErrors.push(`not requested ${resource}`);
+    if (!requestedPresentation.has(resource)) initialAssetErrors.push(`not requested ${resource}`);
+    if (!servedPresentation.has(resource)) initialAssetErrors.push(`not served ${resource}`);
+  }
+  if ((escapeProbe || localeArg) && !serverPageResponses.has(pagePath)) {
+    initialAssetErrors.push(`probe did not mutate a server response ${pagePath}`);
   }
   if (initialAssetErrors.length) {
     console.error('FAIL — initial presentation asset load was incomplete or external');
@@ -880,6 +1003,7 @@ async function main() {
         document.body.appendChild(anchor);
         applyDynamicStyles(anchor);
         const before = anchor.getBoundingClientRect();
+        const compactionsBefore = dynamicStyleCompactions;
         for (let i = 0; i < MAX_DYNAMIC_STYLE_RULES * 2; i++) {
           const node = document.createElement('div');
           node.dataset.style = 'position:absolute;width:' + (1000 + i) + 'px';
@@ -893,10 +1017,14 @@ async function main() {
         const rules = [...sheet.cssRules].filter(rule =>
           rule.selectorText?.startsWith('.dynamic-style-')).length;
         const problem =
-          dynamicStyleClasses.size > MAX_DYNAMIC_STYLE_RULES
+          dynamicStyleCompactions <= compactionsBefore
+            ? 'probe did not exercise live-node compaction'
+            : dynamicStyleClasses.size > MAX_DYNAMIC_STYLE_RULES
             ? 'dynamic style cache exceeded its bound'
             : rules > MAX_DYNAMIC_STYLE_RULES
               ? 'dynamic stylesheet exceeded its bound'
+              : rules !== dynamicStyleClasses.size
+                ? 'dynamic style cache and stylesheet disagree'
               : before.width !== after.width || before.height !== after.height
                 ? 'compaction changed live-node geometry'
                 : '';

@@ -32,14 +32,24 @@ that proof.
   route_contract_ -- --nocapture` proves real phase/auth/role behavior,
   request and success content types, side effects, ownership, and durable
   bytes. Neither table is a router.
-- **Embedded pages:** `node scripts/render_check.js --syntax-selftest` proves
-  the syntax gate can reject its fixtures. `node scripts/render_check.js
-  --syntax-only` parses the real dashboard and setup scripts without launching
-  Chromium. Syntax-only mode proves parsing, not behavior. For behavior, run
+- **Embedded presentation:** `node scripts/render_check.js --asset-selftest`
+  proves the four external-origin classes across nine adversarial forms,
+  including protocol-relative URLs, reordered/unquoted attributes, `srcset`,
+  and quoted CSS imports; `--assets-only` parses real split sources for
+  external and inline active/style contexts. `--served-page-selftest` requires
+  hostile/locale probes to derive from and record the real server response.
+  `--syntax-selftest` proves the syntax gate can reject its fixtures, and
+  `--syntax-only` parses all five real split scripts without Chromium. These
+  modes prove source structure, not behavior. For behavior, run
   `node scripts/render_check.js`,
   `node scripts/render_check.js --escape-probe`,
   `node scripts/render_check.js --page setup`, and
   `node scripts/render_check.js --page setup --escape-probe`.
+  Behavior mode builds and starts the current binary, loads the real routed
+  page/CSS/JS bytes, rejects an initial missing/error/external resource,
+  fulfills captured API responses through CDP, and proves the bounded
+  dynamic-style rule cache compacts without changing live geometry. Hostile
+  catalog modes mutate only the catalog in the verified real server response.
   The escape probe enforces the id/descriptor context-owned-sink contract:
   lexical resolver isolation, descriptor coercion refusal and one HTML
   resolver, the exact four-attribute
@@ -118,10 +128,10 @@ Two tests exist purely so the JSON contract cannot move by accident (see
   asserts the document is consumable — 14 operations, each tagged with a
   documented 200, `/api/*` inheriting the auth requirement and `/setup`
   explicitly waiving it.
-- `routes::tests::inventory_agrees_with_generated_openapi` owns the 23-row
+- `routes::tests::inventory_agrees_with_generated_openapi` owns the 30-row
   compiled method/path inventory, including explicit OpenAPI omissions, the
-  `/v1/{*path}` template versus concrete probe, zero current asset routes, and
-  zero superuser-exclusive routes. `route_contract_behavior_matrix` sends the
+  `/v1/{*path}` template versus concrete probe, all seven presentation assets,
+  and zero superuser-exclusive routes. `route_contract_behavior_matrix` sends the
   five-state matrix through the real binary and asserts request/success
   content types, stable boundary errors, side effects, and `config.json`
   bytes. `route_contract_ownership_matrix` adds own/other NIM-key and
@@ -193,12 +203,15 @@ cargo +nightly fuzz run sse_scan -- -max_total_time=60
 
 Dashboard changes get two more checks.
 
-**Automated — `node scripts/render_check.js`.** Renders the page against the
-captured payloads in `tests/fixtures/api/`, walks all five tabs, hovers every
-chart with real pointer input, and fails on any uncaught page error.
+**Automated — `node scripts/render_check.js`.** Starts the real binary, loads
+its served page/assets, fulfills captured API payloads from
+`tests/fixtures/api/`, walks all five tabs, hovers every chart with real
+pointer input, and fails on an initial resource or uncaught page error.
 `--escape-probe` additionally mutates every catalog value with hostile literal
 text and fails if a page parses it as markup, renders entity text, permits a
 forbidden catalog attribute, or retains an escaped/plain compatibility helper.
+The mutation starts from the real binary response, preserves its server-owned
+HTML outside the catalog, and pins the response's status and security headers.
 `check_i18n.py --selftest` carries the static forbidden-context matrix, while
 `locale_v1.py --selftest` distinguishes raw and entity-encoded catalog markup
 and rejects inline-marker structure the runtime cannot render.
