@@ -26,6 +26,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vm = require('vm');
+const net = require('net');
 const { spawn, execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -58,6 +59,35 @@ const ASSET_CASES = [
     want: 'external-css-url',
   },
   {
+    name: 'external-script-protocol-relative-unquoted',
+    files: { 'dashboard.html': '<script defer src=//cdn.invalid/app.js></script>' },
+    want: 'external-script',
+  },
+  {
+    name: 'external-stylesheet-reordered-attributes',
+    files: {
+      'dashboard.html': '<link href="//fonts.invalid/ui.css" media="screen" rel="stylesheet">',
+    },
+    want: 'external-stylesheet-font',
+  },
+  {
+    name: 'external-image-srcset-protocol-relative',
+    files: {
+      'dashboard.html': '<img alt="model" srcset="//images.invalid/model.svg 1x, /local.svg 2x">',
+    },
+    want: 'external-image',
+  },
+  {
+    name: 'external-css-quoted-import',
+    files: { 'operator.css': '@import "//fonts.invalid/ui.css";' },
+    want: 'external-stylesheet-font',
+  },
+  {
+    name: 'external-css-url-protocol-relative',
+    files: { 'operator.css': '.logo { background: url("//images.invalid/logo.svg"); }' },
+    want: 'external-css-url',
+  },
+  {
     name: 'local-only',
     files: {
       'dashboard.html': '<link rel="stylesheet" href="/assets/operator/operator.css"><script src="/assets/operator/dashboard.js"></script>',
@@ -83,6 +113,16 @@ function assetProblems(files) {
     if (/url\(\s*["']?https?:\/\//i.test(source)
         && !/@font-face[\s\S]*?url\(\s*["']?https?:\/\//i.test(source)) {
       problems.push({ check: 'external-css-url', detail: filename });
+    }
+    if (filename.endsWith('.html')) {
+      if (/<style\b/i.test(source)) problems.push({ check: 'inline-style', detail: filename });
+      if (/\sstyle\s*=/i.test(source)) problems.push({ check: 'inline-style', detail: filename });
+      if (/<script\b(?![^>]*\btype\s*=\s*["']application\/json["'])[^>]*>(?!\s*<\/script>)/i.test(source)) {
+        problems.push({ check: 'inline-script', detail: filename });
+      }
+      if (/\son[a-z]+\s*=/i.test(source)) {
+        problems.push({ check: 'inline-event-handler', detail: filename });
+      }
     }
   }
   return problems;
@@ -134,7 +174,7 @@ function assetsOnly() {
     for (const { check, detail } of problems) console.error(`[${check}] ${detail}`);
     return 1;
   }
-  console.log(`presentation assets OK — ${paths.length} local source files, no external origins`);
+  console.log(`presentation assets OK — ${paths.length} local sources; no external origins or inline executable/style contexts`);
   return 0;
 }
 
@@ -227,7 +267,7 @@ if (!['dashboard', 'setup'].includes(pageArg)) {
   process.exit(2);
 }
 const IS_SETUP = pageArg === 'setup';
-const PAGE_REL = path.join('src', `${pageArg}.html`);
+const PAGE_REL = path.join('src', 'web', `${pageArg}.html`);
 const PAGE = path.join(ROOT, PAGE_REL);
 const CATALOG_PREFIX = IS_SETUP ? 'setup-' : '';
 const localeArg = (() => {
@@ -333,13 +373,9 @@ async function evaluateRaw(browser, sessionId, expression) {
   return r.result.value;
 }
 
-/* ---------- build the page under test ------------------------------------- */
+/* ---------- production server and captured API responses ------------------ */
 
-function buildPage(tmpdir) {
-  let html = fs.readFileSync(PAGE, 'utf8');
-
-  // The wizard fetches nothing at load; it only POSTs on user action. Requiring
-  // the dashboard fixtures for it would be a fake dependency.
+function loadFixtures() {
   const need = IS_SETUP ? [] : ['config.json', 'dashboard.json', 'dashboard-now.json'];
   for (const f of need) {
     const p = path.join(FIXTURES, f);
@@ -348,10 +384,17 @@ function buildPage(tmpdir) {
       process.exit(2);
     }
   }
-  const fixtures = Object.fromEntries(
+  return Object.fromEntries(
     need.map((f) => [f, JSON.parse(fs.readFileSync(path.join(FIXTURES, f), 'utf8'))]),
   );
+}
 
+function probePageHtml() {
+  let html = fs.readFileSync(PAGE, 'utf8');
+  if (!IS_SETUP) {
+    const icon = fs.readFileSync(path.join(ROOT, 'src', 'web', 'icons', 'nim-proxy.svg'), 'utf8');
+    html = html.replace('<!-- nim-proxy-icon -->', icon);
+  }
   if (localeArg) {
     const catalogFile = `${CATALOG_PREFIX}${localeArg}.json`;
     const cp = path.join(ROOT, 'locales', catalogFile);
@@ -365,80 +408,91 @@ function buildPage(tmpdir) {
       (_m, a, b) => a + cat + b,
     );
   }
-
-  // Replay the captured payloads. Anything else (fonts, CDN logos) resolves to
-  // a rejected promise, which is what an offline install already does.
-  // In-page capture as well as CDP: the page boots from an async IIFE, so a
-  // throw there surfaces as an unhandled rejection, which Runtime.exceptionThrown
-  // does not reliably report. A gate blind to that is blind to boot failure.
-  // The probe string carries both directions of the contextual-sink rule:
-  //   `&` and `'`  — escaped as text, they surface as literal entities
-  //   `<b>`        — parsed as HTML, it becomes a real ELEMENT in the DOM
-  // Without the tag the probe was a double-escape detector only, structurally
-  // blind to the missing-escape direction — which is the XSS direction.
   if (escapeProbe) {
     html = html.replace(
       /(<script type="application\/json" id="i18n-catalog">)([\s\S]*?)(<\/script>)/,
       (_m, a, json, b) => {
         const cat = JSON.parse(json);
-        for (const k of Object.keys(cat.messages)) {
-          const v = cat.messages[k];
-          if (typeof v === 'string') cat.messages[k] = v + PROBE_SUFFIX;
-          else v.en = v.en + PROBE_SUFFIX;
+        for (const key of Object.keys(cat.messages)) {
+          const value = cat.messages[key];
+          if (typeof value === 'string') cat.messages[key] = value + PROBE_SUFFIX;
+          else value.en += PROBE_SUFFIX;
         }
         return a + JSON.stringify(cat) + b;
       },
     );
   }
+  return html;
+}
 
-  const stub = `<script>
-window.__fetched = [];
-window.__pageErrors = [];
-window.addEventListener('error', function (e) {
-  window.__pageErrors.push({ kind: 'error', msg: e.message,
-    line: e.lineno, col: e.colno, stack: e.error && e.error.stack });
-});
-window.addEventListener('unhandledrejection', function (e) {
-  var r = e.reason;
-  window.__pageErrors.push({ kind: 'unhandledrejection',
-    msg: String((r && r.message) || r), stack: r && r.stack });
-});
-(function () {
-  const FIX = ${JSON.stringify(fixtures)};
-  window.fetch = function (input) {
-    const url = String(typeof input === 'string' ? input : input.url);
-    window.__fetched.push(url);
-    let body = null;
-    if (url.includes('/api/config')) body = FIX['config.json'];
-    else if (url.includes('/api/dashboard/now')) body = FIX['dashboard-now.json'];
-    else if (url.includes('/api/dashboard')) body = FIX['dashboard.json'];
-    // The wizard's only two endpoints. Hand-written rather than captured
-    // because a real /setup claims a proxy and mints a secret; the shapes are
-    // asserted against the Rust handlers by the openapi test.
-    // Shapes taken from openapi.json (ValidateKeyResponse, SetupResponse /
-    // MintedClientKey), not invented — a stub that answers in a shape the
-    // server never sends would prove the page works against fiction. The
-    // openapi test keeps that spec honest against the handlers.
-    else if (url.includes('/setup/validate-key')) body = { ok: true, models: 63 };
-    else if (url.endsWith('/setup')) {
-      body = { ok: true, client_key: { name: 'default', secret: 'npk_probe_secret' } };
-    }
-    if (body === null) return Promise.reject(new Error('offline: ' + url));
-    return Promise.resolve(new Response(JSON.stringify(body), {
-      status: 200, headers: { 'Content-Type': 'application/json' },
-    }));
+function configuredStore() {
+  return {
+    version: 1,
+    upstream: {
+      base_url: 'http://127.0.0.1:9',
+      nim_keys: [{ key: 'render-fixture-key', owner: 'root', enabled: true, rpm: 40 }],
+    },
+    client_auth: { mode: 'open', keys: [] },
+    limits: { heartbeat_secs: 1 },
+    users: [{
+      username: 'root',
+      password_hash: 'pbkdf2-sha256$1000$00000000000000000000000000000000$dd5fe0be04ca7f9e24642561a5d4635c52c40be82cbd7587b5eddc913ad3c7a7',
+      role: 'superuser',
+    }],
   };
-})();
-</script>`;
-  // Every injected line shifts the page's own line numbers, and a gate that
-  // reports the wrong line is a gate nobody trusts. Record the shift and undo
-  // it when reporting.
-  LINE_OFFSET = (stub.match(/\n/g) || []).length;
-  html = html.replace(/<head>/i, '<head>' + stub);
+}
 
-  const out = path.join(tmpdir, 'dashboard.html');
-  fs.writeFileSync(out, html);
-  return out;
+async function freePort() {
+  return await new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const port = server.address().port;
+      server.close((error) => error ? reject(error) : resolve(port));
+    });
+  });
+}
+
+async function startProxy(tmpdir) {
+  const binary = path.join(ROOT, 'target', 'debug', 'nim-proxy');
+  execFileSync('cargo', ['build', '--quiet', '--bin', 'nim-proxy'], {
+    cwd: ROOT,
+    stdio: 'inherit',
+  });
+  const dataDir = path.join(tmpdir, 'data');
+  fs.mkdirSync(dataDir);
+  if (!IS_SETUP) {
+    fs.writeFileSync(
+      path.join(dataDir, 'config.json'),
+      JSON.stringify(configuredStore(), null, 2),
+    );
+  }
+  const port = await freePort();
+  const proc = spawn(binary, [], {
+    cwd: tmpdir,
+    env: {
+      DATA_DIR: dataDir,
+      HISTORY_SAMPLE_SECS: '3600',
+      HOST: '127.0.0.1',
+      PORT: String(port),
+      RUST_LOG: 'nim_proxy=warn',
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  const origin = `http://127.0.0.1:${port}`;
+  let stderr = '';
+  proc.stderr.on('data', chunk => { stderr += chunk.toString(); });
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    if (proc.exitCode !== null) throw new Error(`proxy exited early: ${proc.exitCode}\n${stderr}`);
+    try {
+      const response = await fetch(origin + '/health');
+      if (response.ok) return { proc, origin };
+    } catch (_) {}
+    await sleep(50);
+  }
+  proc.kill('SIGKILL');
+  throw new Error(`proxy did not become healthy\n${stderr}`);
 }
 
 /* ---------- the run -------------------------------------------------------- */
@@ -572,9 +626,10 @@ async function main() {
   }
 
   const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'nimproxy-render-'));
-  const pageFile = buildPage(tmpdir);
+  const fixtures = loadFixtures();
+  const proxy = await startProxy(tmpdir);
 
-  const proc = spawn(chrome, [
+  const browserProc = spawn(chrome, [
     '--headless=new',
     '--disable-gpu',
     '--no-sandbox',
@@ -588,7 +643,7 @@ async function main() {
   const wsUrl = await new Promise((resolve, reject) => {
     let buf = '';
     const timer = setTimeout(() => reject(new Error('browser did not report a debug port')), 20000);
-    proc.stderr.on('data', (d) => {
+    browserProc.stderr.on('data', (d) => {
       buf += d.toString();
       const m = buf.match(/ws:\/\/[^\s]+/);
       if (m) {
@@ -596,7 +651,7 @@ async function main() {
         resolve(m[0]);
       }
     });
-    proc.on('exit', (c) => reject(new Error('browser exited early: ' + c)));
+    browserProc.on('exit', (c) => reject(new Error('browser exited early: ' + c)));
   });
 
   const browser = await CDP.connect(wsUrl);
@@ -606,6 +661,10 @@ async function main() {
 
   const errors = [];
   const consoleErrors = [];
+  const requestUrls = new Map();
+  const initialAssetErrors = [];
+  const servedPresentation = new Set();
+  const fetched = [];
   browser.on((msg) => {
     if (msg.sessionId !== S) return;
     if (msg.method === 'Runtime.exceptionThrown') {
@@ -617,10 +676,75 @@ async function main() {
       });
     }
     if (msg.method === 'Log.entryAdded' && msg.params.entry.level === 'error') {
-      consoleErrors.push('[' + msg.params.entry.source + '] ' + msg.params.entry.text);
+      const entry = msg.params.entry;
+      consoleErrors.push('[' + entry.source + '] ' + entry.text
+        + (entry.url ? ` (${entry.url})` : ''));
     }
     if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error') {
       consoleErrors.push(msg.params.args.map((a) => a.value ?? a.description).join(' '));
+    }
+    if (msg.method === 'Network.requestWillBeSent') {
+      const url = msg.params.request.url;
+      requestUrls.set(msg.params.requestId, url);
+      if (url.startsWith('http') && !url.startsWith(proxy.origin)) {
+        initialAssetErrors.push(`external request ${url}`);
+      }
+    }
+    if (msg.method === 'Network.responseReceived') {
+      const { response } = msg.params;
+      const url = new URL(response.url);
+      if (response.url.startsWith(proxy.origin)
+          && (url.pathname === '/' || url.pathname === '/setup' || url.pathname.startsWith('/assets/'))
+          && response.status >= 400) {
+        initialAssetErrors.push(`${response.status} ${url.pathname}`);
+      } else if (response.url.startsWith(proxy.origin)
+          && (url.pathname === '/' || url.pathname === '/setup' || url.pathname.startsWith('/assets/'))) {
+        servedPresentation.add(url.pathname);
+      }
+    }
+    if (msg.method === 'Network.loadingFailed') {
+      const url = requestUrls.get(msg.params.requestId) || 'unknown request';
+      if (url.startsWith(proxy.origin)) {
+        initialAssetErrors.push(`${msg.params.errorText} ${url}`);
+      }
+    }
+    if (msg.method === 'Fetch.requestPaused') {
+      const request = msg.params.request;
+      const url = new URL(request.url);
+      let body = null;
+      if (url.pathname === '/api/config') body = fixtures['config.json'];
+      else if (url.pathname === '/api/dashboard/now') body = fixtures['dashboard-now.json'];
+      else if (url.pathname === '/api/dashboard') body = fixtures['dashboard.json'];
+      else if (url.pathname === '/setup/validate-key' && request.method === 'POST')
+        body = { ok: true, models: 63 };
+      else if (url.pathname === '/setup' && request.method === 'POST')
+        body = { ok: true, client_key: { name: 'default', secret: 'npk_probe_secret' } };
+      if (body !== null) {
+        fetched.push(url.pathname);
+        browser.send('Fetch.fulfillRequest', {
+          requestId: msg.params.requestId,
+          responseCode: 200,
+          responseHeaders: [{ name: 'Content-Type', value: 'application/json' }],
+          body: Buffer.from(JSON.stringify(body)).toString('base64'),
+        }, S).catch(error => errors.push({ text: error.message, line: 0, col: 0 }));
+      } else if ((escapeProbe || localeArg)
+          && request.method === 'GET'
+          && url.pathname === (IS_SETUP ? '/setup' : '/')) {
+        browser.send('Fetch.fulfillRequest', {
+          requestId: msg.params.requestId,
+          responseCode: 200,
+          responseHeaders: [
+            { name: 'Content-Type', value: 'text/html; charset=utf-8' },
+            { name: 'Content-Security-Policy', value: "default-src 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" },
+            { name: 'Cache-Control', value: 'no-store' },
+          ],
+          body: Buffer.from(probePageHtml()).toString('base64'),
+        }, S).catch(error => errors.push({ text: error.message, line: 0, col: 0 }));
+      } else {
+        browser.send('Fetch.continueRequest', {
+          requestId: msg.params.requestId,
+        }, S).catch(error => errors.push({ text: error.message, line: 0, col: 0 }));
+      }
     }
   });
 
@@ -629,14 +753,25 @@ async function main() {
   await browser.send('Page.enable', {}, S);
   await browser.send('DOM.enable', {}, S);
   await browser.send('Network.enable', {}, S);
-
-  // The page render-blocks on the Google Fonts stylesheet. Offline it hangs
-  // rather than failing, the parser never reaches the page's own <script>, and
-  // a check that waits a fixed interval then measures the DOM concludes that a
-  // page which never booted is fine. Block them so they fail immediately — the
-  // same monogram/system-font fallback an offline install already takes.
-  await browser.send('Network.setBlockedURLs', {
-    urls: ['*fonts.googleapis.com*', '*fonts.gstatic.com*', '*unpkg.com*'],
+  await browser.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] }, S);
+  if (!IS_SETUP) {
+    await browser.send('Network.setExtraHTTPHeaders', {
+      headers: { Authorization: 'Bearer root:test-password-1' },
+    }, S);
+  }
+  await browser.send('Page.addScriptToEvaluateOnNewDocument', {
+    source: `
+      window.__pageErrors = [];
+      window.addEventListener('error', function (e) {
+        window.__pageErrors.push({ kind: 'error', msg: e.message,
+          line: e.lineno, col: e.colno, stack: e.error && e.error.stack });
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e.reason;
+        window.__pageErrors.push({ kind: 'unhandledrejection',
+          msg: String((r && r.message) || r), stack: r && r.stack });
+      });
+    `,
   }, S);
 
   const loaded = new Promise((resolve) => {
@@ -644,22 +779,39 @@ async function main() {
       if (m.sessionId === S && m.method === 'Page.loadEventFired') resolve();
     });
   });
-  await browser.send('Page.navigate', { url: 'file://' + pageFile }, S);
+  await browser.send('Page.navigate', {
+    url: proxy.origin + (IS_SETUP ? '/setup' : '/'),
+  }, S);
   await Promise.race([loaded, sleep(20000)]);
 
   const state = await evaluateRaw(browser, S, 'document.readyState');
   if (state !== 'complete') {
     console.error(`FAIL — page never finished loading (readyState=${state}).`);
-    proc.kill('SIGKILL');
+    browserProc.kill('SIGKILL');
+    proxy.proc.kill('SIGKILL');
     process.exit(1);
   }
   // let the first poll land and paint
   await sleep(1500);
+  const requiredPresentation = IS_SETUP
+    ? ['/setup', '/assets/public/public.css', '/assets/public/setup.js']
+    : ['/', '/assets/operator/operator.css', '/assets/operator/shared.js',
+       '/assets/operator/dashboard.js', '/assets/operator/settings.js'];
+  for (const resource of requiredPresentation) {
+    if (!servedPresentation.has(resource)) initialAssetErrors.push(`not requested ${resource}`);
+  }
+  if (initialAssetErrors.length) {
+    console.error('FAIL — initial presentation asset load was incomplete or external');
+    for (const error of new Set(initialAssetErrors)) console.error('  ' + error);
+    browserProc.kill('SIGKILL');
+    proxy.proc.kill('SIGKILL');
+    process.exit(1);
+  }
 
   if (process.env.DEBUG) {
     const diag = await browser.send('Runtime.evaluate', {
       expression: `JSON.stringify({
-        fetches: (window.__fetched || []).slice(0, 8),
+        fetches: ${JSON.stringify(fetched)}.slice(0, 8),
         svgAny: document.querySelectorAll('svg').length,
         svgBig: Array.from(document.querySelectorAll('svg')).filter(s => {
           const r = s.getBoundingClientRect(); return r.width > 80 && r.height > 40; }).length,
@@ -688,6 +840,49 @@ async function main() {
     }
     return r.result.value;
   };
+
+  /* Generated metric geometry changes on every poll. Prove the CSSOM bridge
+     bounds its cache/rules without invalidating a live node during compaction. */
+  if (!IS_SETUP) {
+    const dynamicStyleFailure = await evaluate(`
+      (() => {
+        if (typeof MAX_DYNAMIC_STYLE_RULES !== 'number')
+          return 'MAX_DYNAMIC_STYLE_RULES is not defined';
+        const anchor = document.createElement('div');
+        anchor.dataset.style = 'position:absolute;width:37px;height:11px';
+        document.body.appendChild(anchor);
+        applyDynamicStyles(anchor);
+        const before = anchor.getBoundingClientRect();
+        for (let i = 0; i < MAX_DYNAMIC_STYLE_RULES * 2; i++) {
+          const node = document.createElement('div');
+          node.dataset.style = 'position:absolute;width:' + (1000 + i) + 'px';
+          document.body.appendChild(node);
+          applyDynamicStyles(node);
+          node.remove();
+        }
+        const after = anchor.getBoundingClientRect();
+        const sheet = [...document.styleSheets].find(candidate =>
+          candidate.href?.endsWith('/assets/operator/operator.css'));
+        const rules = [...sheet.cssRules].filter(rule =>
+          rule.selectorText?.startsWith('.dynamic-style-')).length;
+        const problem =
+          dynamicStyleClasses.size > MAX_DYNAMIC_STYLE_RULES
+            ? 'dynamic style cache exceeded its bound'
+            : rules > MAX_DYNAMIC_STYLE_RULES
+              ? 'dynamic stylesheet exceeded its bound'
+              : before.width !== after.width || before.height !== after.height
+                ? 'compaction changed live-node geometry'
+                : '';
+        anchor.remove();
+        return problem;
+      })()`);
+    if (dynamicStyleFailure) {
+      console.error(`[dynamic-style-bound] FAIL — ${dynamicStyleFailure}`);
+      browserProc.kill('SIGKILL');
+      proxy.proc.kill('SIGKILL');
+      process.exit(1);
+    }
+  }
 
   /* Exercise the page's real ID/descriptor runtime. Static self-tests cover
      source-level forbidden contexts; this probe proves the helpers use native
@@ -889,7 +1084,8 @@ async function main() {
       })()`);
     if (sinkContext) {
       console.error(`[sink-context] FAIL — ${PAGE_REL}: ${sinkContext}`);
-      proc.kill('SIGKILL');
+      browserProc.kill('SIGKILL');
+      proxy.proc.kill('SIGKILL');
       process.exit(1);
     }
   }
@@ -910,7 +1106,8 @@ async function main() {
       })()`);
     if (!switched) {
       console.error(`FAIL — could not reach ${tab} in ${PAGE_REL}; the gate would measure the wrong panels`);
-      proc.kill('SIGKILL');
+      browserProc.kill('SIGKILL');
+      proxy.proc.kill('SIGKILL');
       process.exit(1);
     }
     await sleep(1200);
@@ -1068,8 +1265,12 @@ async function main() {
     });
   }
 
-  proc.kill('SIGKILL');
-  await new Promise((r) => proc.on('exit', r));
+  browserProc.kill('SIGKILL');
+  proxy.proc.kill('SIGKILL');
+  await Promise.all([
+    new Promise((r) => browserProc.on('exit', r)),
+    new Promise((r) => proxy.proc.on('exit', r)),
+  ]);
   // The browser's renderer children can outlive the parent and keep the
   // profile busy. Cleanup is housekeeping: a failure here must never be
   // reported as, or hide, a page result.
