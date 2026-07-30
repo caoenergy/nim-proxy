@@ -354,6 +354,123 @@ function servedPageSelftest() {
 }
 
 if (args.includes('--served-page-selftest')) process.exit(servedPageSelftest());
+
+function renderTempdirs() {
+  return new Set(fs.readdirSync(os.tmpdir())
+    .filter(name => name.startsWith('nimproxy-render-'))
+    .map(name => path.join(os.tmpdir(), name)));
+}
+
+function processDescendants(rootPid) {
+  if (process.platform === 'win32') return [];
+  const rows = execFileSync('ps', ['-eo', 'pid=,ppid='], { encoding: 'utf8' })
+    .trim().split('\n').map(line => line.trim().split(/\s+/).map(Number));
+  const found = [];
+  const pending = [rootPid];
+  while (pending.length) {
+    const parent = pending.pop();
+    for (const [pid, ppid] of rows) {
+      if (ppid !== parent || found.includes(pid)) continue;
+      found.push(pid);
+      pending.push(pid);
+    }
+  }
+  return found;
+}
+
+async function cleanupSelftest() {
+  const realChrome = findChrome();
+  if (!realChrome) {
+    console.error('cleanup selftest needs Chromium');
+    return 2;
+  }
+  const probeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nimproxy-cleanup-probe-'));
+  const wrapper = path.join(probeRoot, 'chrome-wrapper.js');
+  const pidFile = path.join(probeRoot, 'pids.json');
+  const writerSource = [
+    '"use strict";',
+    'const fs = require("fs");',
+    'const path = require("path");',
+    'const profile = process.argv[1];',
+    'let n = 0;',
+    'setInterval(() => {',
+    '  try {',
+    '    fs.mkdirSync(profile, { recursive: true });',
+    '    fs.writeFileSync(path.join(profile, "cleanup-race-" + (n++ % 8)), "x");',
+    '  } catch (_) {}',
+    '}, 5);',
+  ].join('\n');
+  const wrapperSource = [
+    '#!/usr/bin/env node',
+    '"use strict";',
+    'const fs = require("fs");',
+    'const { spawn } = require("child_process");',
+    'const args = process.argv.slice(2);',
+    'const profileArg = args.find(value => value.startsWith("--user-data-dir="));',
+    'const profile = profileArg.slice("--user-data-dir=".length);',
+    'const chrome = spawn(process.env.NIMPROXY_REAL_CHROME, args,',
+    '  { stdio: ["ignore", "pipe", "pipe"] });',
+    'chrome.stdout.pipe(process.stdout);',
+    'chrome.stderr.pipe(process.stderr);',
+    `const writer = spawn(process.execPath, ["-e", ${JSON.stringify(writerSource)}, profile],`,
+    '  { stdio: "ignore" });',
+    'fs.writeFileSync(process.env.NIMPROXY_CLEANUP_PID_FILE,',
+    '  JSON.stringify({ chrome: chrome.pid, writer: writer.pid }));',
+    'chrome.on("exit", code => { process.exitCode = code || 0; });',
+  ].join('\n');
+  fs.writeFileSync(wrapper, wrapperSource, { mode: 0o700 });
+
+  const before = renderTempdirs();
+  let stdout = '';
+  let stderr = '';
+  const child = spawn(process.execPath, [__filename, '--page', 'setup'], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      CHROME: wrapper,
+      NIMPROXY_CLEANUP_PID_FILE: pidFile,
+      NIMPROXY_REAL_CHROME: realChrome,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  child.stdout.on('data', chunk => { stdout += chunk.toString(); });
+  child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+  const result = await Promise.race([
+    new Promise(resolve => child.once('exit', code => resolve({ code, timedOut: false }))),
+    sleep(30000).then(() => ({ code: null, timedOut: true })),
+  ]);
+  if (result.timedOut) child.kill('SIGKILL');
+  await sleep(300);
+  const leaked = [...renderTempdirs()].filter(dir => !before.has(dir));
+
+  let pids = [];
+  try {
+    const recorded = JSON.parse(fs.readFileSync(pidFile, 'utf8'));
+    pids = [recorded.chrome, recorded.writer].filter(Number.isInteger);
+  } catch (_) {}
+  const descendants = pids.flatMap(processDescendants);
+  for (const pid of [...new Set([...descendants.reverse(), ...pids])]) {
+    try { process.kill(pid, 'SIGKILL'); } catch (_) {}
+  }
+  await sleep(300);
+  for (const dir of leaked) {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+  fs.rmSync(probeRoot, { recursive: true, force: true });
+
+  const failures = [];
+  if (result.timedOut) failures.push('render process stayed alive after reporting its result');
+  else if (result.code !== 0) failures.push(`render process exited ${result.code}`);
+  if (leaked.length) failures.push(`left ${leaked.length} nimproxy-render temp director${leaked.length === 1 ? 'y' : 'ies'}`);
+  if (/note: left .*nimproxy-render-/.test(stderr)) failures.push('cleanup failure was downgraded to a note');
+  if (failures.length) {
+    for (const failure of failures) console.error(`[cleanup] ${failure}`);
+    if (stderr.trim()) console.error(stderr.trim());
+    return 1;
+  }
+  console.log('cleanup selftest ok — browser descendants stopped and run directory removed');
+  return 0;
+}
 // Which embedded page to drive. The dashboard renders from captured payloads;
 // the wizard has no payloads and is driven by filling and clicking instead.
 // Both were being proved by hand-built one-off harnesses, which is more work
@@ -1508,7 +1625,14 @@ async function main() {
   console.log('render ok — no uncaught page errors');
 }
 
-main().catch((e) => {
-  console.error('render_check failed to run: ' + e.message);
-  process.exit(2);
-});
+if (args.includes('--cleanup-selftest')) {
+  cleanupSelftest().then(code => process.exit(code)).catch((e) => {
+    console.error('cleanup selftest failed to run: ' + e.message);
+    process.exit(2);
+  });
+} else {
+  main().catch((e) => {
+    console.error('render_check failed to run: ' + e.message);
+    process.exit(2);
+  });
+}
