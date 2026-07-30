@@ -3626,6 +3626,194 @@ async fn dashboard_sends_security_headers() {
     assert_eq!(h["x-frame-options"], "DENY");
 }
 
+#[derive(Clone, Copy, Debug)]
+enum PresentationActor {
+    BeforeSetup,
+    Anonymous,
+    Authenticated,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PresentationRoute {
+    content_type: Option<&'static str>,
+    path: &'static str,
+    statuses: [u16; 3],
+}
+
+#[tokio::test]
+async fn presentation_assets_are_gated() {
+    const CSP: &str = "default-src 'none'; img-src 'self' data:; style-src 'self'; \
+        script-src 'self'; connect-src 'self'; frame-ancestors 'none'; \
+        base-uri 'none'; form-action 'self'";
+    const PAGE_ROUTES: &[PresentationRoute] = &[
+        PresentationRoute {
+            content_type: Some("text/html; charset=utf-8"),
+            path: "/",
+            statuses: [302, 302, 200],
+        },
+        PresentationRoute {
+            content_type: Some("text/html; charset=utf-8"),
+            path: "/dash",
+            statuses: [302, 302, 200],
+        },
+        PresentationRoute {
+            content_type: Some("text/html; charset=utf-8"),
+            path: "/login",
+            statuses: [302, 200, 302],
+        },
+        PresentationRoute {
+            content_type: Some("text/html; charset=utf-8"),
+            path: "/setup",
+            statuses: [200, 404, 404],
+        },
+    ];
+    const PUBLIC_ASSETS: &[PresentationRoute] = &[
+        PresentationRoute {
+            content_type: Some("text/css; charset=utf-8"),
+            path: "/assets/public/public.css",
+            statuses: [200, 200, 200],
+        },
+        PresentationRoute {
+            content_type: Some("text/javascript; charset=utf-8"),
+            path: "/assets/public/setup.js",
+            statuses: [200, 200, 200],
+        },
+        PresentationRoute {
+            content_type: Some("text/javascript; charset=utf-8"),
+            path: "/assets/public/login.js",
+            statuses: [200, 200, 200],
+        },
+    ];
+    const OPERATOR_ASSETS: &[PresentationRoute] = &[
+        PresentationRoute {
+            content_type: Some("text/css; charset=utf-8"),
+            path: "/assets/operator/operator.css",
+            statuses: [503, 401, 200],
+        },
+        PresentationRoute {
+            content_type: Some("text/javascript; charset=utf-8"),
+            path: "/assets/operator/shared.js",
+            statuses: [503, 401, 200],
+        },
+        PresentationRoute {
+            content_type: Some("text/javascript; charset=utf-8"),
+            path: "/assets/operator/dashboard.js",
+            statuses: [503, 401, 200],
+        },
+        PresentationRoute {
+            content_type: Some("text/javascript; charset=utf-8"),
+            path: "/assets/operator/settings.js",
+            statuses: [503, 401, 200],
+        },
+    ];
+
+    let before_setup = start_proxy_fresh().await;
+    let mock = start_mock().await;
+    let configured = start_proxy_with(
+        &mock.url,
+        StoreOpts {
+            clients: vec![(
+                "presentation-private-client".into(),
+                "presentation-private-secret".into(),
+            )],
+            nim_keys: vec![("presentation-private-nim-key".into(), 40)],
+            ..Default::default()
+        },
+        &[],
+    )
+    .await;
+    let cookie = login(&configured).await;
+    let actors = [
+        (PresentationActor::BeforeSetup, &before_setup, None),
+        (PresentationActor::Anonymous, &configured, None),
+        (
+            PresentationActor::Authenticated,
+            &configured,
+            Some(cookie.as_str()),
+        ),
+    ];
+    let mut public_bodies: std::collections::HashMap<&str, Vec<u8>> =
+        std::collections::HashMap::new();
+
+    for route in PAGE_ROUTES
+        .iter()
+        .chain(PUBLIC_ASSETS)
+        .chain(OPERATOR_ASSETS)
+    {
+        for (actor_index, (actor, proxy, cookie)) in actors.iter().enumerate() {
+            let mut request = no_redirect_client()
+                .get(proxy.url(route.path))
+                .header("accept", "text/html");
+            if let Some(cookie) = cookie {
+                request = request.header("cookie", *cookie);
+            }
+            let response = request.send().await.unwrap();
+            assert_eq!(
+                response.status().as_u16(),
+                route.statuses[actor_index],
+                "presentation-assets:status: GET {} actor={actor:?}",
+                route.path
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get("cache-control")
+                    .and_then(|value| value.to_str().ok()),
+                Some("no-store"),
+                "presentation-assets:no-store: GET {} actor={actor:?}",
+                route.path
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get("content-security-policy")
+                    .and_then(|value| value.to_str().ok()),
+                Some(CSP),
+                "presentation-assets:csp: GET {} actor={actor:?}",
+                route.path
+            );
+            if response.status().is_success() {
+                assert_eq!(
+                    response
+                        .headers()
+                        .get(CONTENT_TYPE)
+                        .and_then(|value| value.to_str().ok()),
+                    route.content_type,
+                    "presentation-assets:content-type: GET {} actor={actor:?}",
+                    route.path
+                );
+            }
+            let body = response.bytes().await.unwrap().to_vec();
+            if PUBLIC_ASSETS.iter().any(|public| public.path == route.path) {
+                if let Some(first) = public_bodies.get(route.path) {
+                    assert_eq!(
+                        &body, first,
+                        "presentation-assets:public-byte-isolation: GET {} actor={actor:?}",
+                        route.path
+                    );
+                } else {
+                    public_bodies.insert(route.path, body.clone());
+                }
+                let text = String::from_utf8_lossy(&body);
+                for forbidden in [
+                    "settings.",
+                    "presentation-private-client",
+                    "presentation-private-secret",
+                    "presentation-private-nim-key",
+                    support::TEST_USER,
+                    TEST_PASSWORD,
+                ] {
+                    assert!(
+                        !text.contains(forbidden),
+                        "presentation-assets:public-byte-isolation: GET {} contains {forbidden:?}",
+                        route.path
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn worker_exhaustion_governs_the_model_and_spares_the_lane() {
     let mock = start_mock().await;

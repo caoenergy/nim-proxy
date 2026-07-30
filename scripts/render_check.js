@@ -33,6 +33,114 @@ const FIXTURES = path.join(ROOT, 'tests', 'fixtures', 'api');
 
 const args = process.argv.slice(2);
 
+const ASSET_CASES = [
+  {
+    name: 'external-script',
+    files: { 'dashboard.html': '<script src="https://cdn.invalid/app.js"></script>' },
+    want: 'external-script',
+  },
+  {
+    name: 'external-stylesheet-font',
+    files: {
+      'dashboard.html': '<link rel="stylesheet" href="https://fonts.invalid/ui.css">',
+      'operator.css': '@font-face { src: url(https://fonts.invalid/ui.woff2); }',
+    },
+    want: 'external-stylesheet-font',
+  },
+  {
+    name: 'external-image',
+    files: { 'dashboard.html': '<img src="https://images.invalid/model.svg">' },
+    want: 'external-image',
+  },
+  {
+    name: 'external-css-url',
+    files: { 'operator.css': '.logo { background: url(http://images.invalid/logo.svg); }' },
+    want: 'external-css-url',
+  },
+  {
+    name: 'local-only',
+    files: {
+      'dashboard.html': '<link rel="stylesheet" href="/assets/operator/operator.css"><script src="/assets/operator/dashboard.js"></script>',
+      'operator.css': '.logo { background: none; }',
+    },
+    want: null,
+  },
+];
+
+function assetProblems(files) {
+  const problems = [];
+  for (const [filename, source] of Object.entries(files)) {
+    if (/<script\b[^>]*\bsrc\s*=\s*["']https?:\/\//i.test(source)) {
+      problems.push({ check: 'external-script', detail: filename });
+    }
+    if (/<link\b[^>]*\brel\s*=\s*["'](?:stylesheet|preconnect)["'][^>]*\bhref\s*=\s*["']https?:\/\//i.test(source)
+        || /@font-face[\s\S]*?url\(\s*["']?https?:\/\//i.test(source)) {
+      problems.push({ check: 'external-stylesheet-font', detail: filename });
+    }
+    if (/<(?:img|image)\b[^>]*(?:src|href)\s*=\s*["']https?:\/\//i.test(source)) {
+      problems.push({ check: 'external-image', detail: filename });
+    }
+    if (/url\(\s*["']?https?:\/\//i.test(source)
+        && !/@font-face[\s\S]*?url\(\s*["']?https?:\/\//i.test(source)) {
+      problems.push({ check: 'external-css-url', detail: filename });
+    }
+  }
+  return problems;
+}
+
+function assetSelftest() {
+  const failures = [];
+  for (const { name, files, want } of ASSET_CASES) {
+    const problems = assetProblems(files);
+    const got = problems[0] ? problems[0].check : null;
+    if (got !== want) {
+      failures.push(`${name}: expected check ${want || 'nothing'}, got ${got || 'nothing'}`);
+    } else {
+      console.log(`  ok  ${name}: ${got || 'no problem'}`);
+    }
+  }
+  if (failures.length) {
+    for (const failure of failures) console.error(failure);
+    return 1;
+  }
+  console.log('asset selftest ok — every external-origin check observed');
+  return 0;
+}
+
+function sourceFilesUnder(dir) {
+  if (!fs.existsSync(dir)) return [];
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...sourceFilesUnder(full));
+    else out.push(full);
+  }
+  return out;
+}
+
+function assetsOnly() {
+  const web = path.join(ROOT, 'src', 'web');
+  const paths = sourceFilesUnder(web);
+  if (!paths.length) {
+    console.error('[asset-directory] src/web has no split presentation sources');
+    return 1;
+  }
+  const files = Object.fromEntries(paths.map((filename) => [
+    path.relative(web, filename),
+    fs.readFileSync(filename, 'utf8'),
+  ]));
+  const problems = assetProblems(files);
+  if (problems.length) {
+    for (const { check, detail } of problems) console.error(`[${check}] ${detail}`);
+    return 1;
+  }
+  console.log(`presentation assets OK — ${paths.length} local source files, no external origins`);
+  return 0;
+}
+
+if (args.includes('--asset-selftest')) process.exit(assetSelftest());
+if (args.includes('--assets-only')) process.exit(assetsOnly());
+
 const SYNTAX_CASES = [
   { name: 'valid', html: '<script>const ok = 1;</script>', want: null },
   { name: 'invalid', html: '<script>const = ;</script>', want: 'syntax' },
@@ -82,15 +190,26 @@ function syntaxSelftest() {
 if (args.includes('--syntax-selftest')) process.exit(syntaxSelftest());
 
 function syntaxOnly() {
-  const problems = ['dashboard', 'setup'].flatMap((page) => {
-    const filename = path.join('src', `${page}.html`);
-    return syntaxProblems(fs.readFileSync(path.join(ROOT, filename), 'utf8'), filename);
-  });
+  const scripts = ['shared.js', 'dashboard.js', 'settings.js', 'setup.js', 'login.js'];
+  const problems = [];
+  for (const script of scripts) {
+    const filename = path.join('src', 'web', script);
+    const full = path.join(ROOT, filename);
+    if (!fs.existsSync(full)) {
+      problems.push({ check: 'script-file', detail: `${filename}: missing` });
+      continue;
+    }
+    try {
+      new vm.Script(fs.readFileSync(full, 'utf8'), { filename });
+    } catch (err) {
+      problems.push({ check: 'syntax', detail: `${filename}: ${err.message}` });
+    }
+  }
   if (problems.length) {
     for (const { check, detail } of problems) console.error(`[${check}] ${detail}`);
     return 1;
   }
-  console.log('embedded page syntax OK — dashboard and setup parse');
+  console.log('presentation script syntax OK — all split sources parse');
   return 0;
 }
 
