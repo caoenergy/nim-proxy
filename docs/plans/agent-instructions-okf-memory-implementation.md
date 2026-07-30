@@ -193,7 +193,7 @@ matching self-test update.
   `python3 scripts/check_agent_guide.py` and
   `python3 scripts/check_agent_guide.py --selftest`.
 
-- [ ] **Step 1: Write the validator self-test before its checks**
+- [x] **Step 1: Write the validator self-test before its checks**
 
 Create the script with the `Problem` type, `REQUIRED` mapping, CLI parsing, and
 a temporary valid bundle. The first version deliberately leaves
@@ -274,7 +274,7 @@ named file's token, call `validate()`, and compare the returned
 `problem.check` values with the expected id. No mutation carries into the next
 case.
 
-- [ ] **Step 2: Run the self-test and observe the intended red result**
+- [x] **Step 2: Run the self-test and observe the intended red result**
 
 Run:
 
@@ -291,7 +291,7 @@ missing-memory: expected check 'contract:memory', got nothing
 
 The assertion is on check ids, not fragments of diagnostic prose.
 
-- [ ] **Step 3: Implement the minimum validator**
+- [x] **Step 3: Implement the minimum validator**
 
 Implement contract and local-link validation with the standard library:
 
@@ -348,7 +348,7 @@ def validate(root: pathlib.Path, guide: pathlib.Path) -> list[Problem]:
 `main()` derives `root = pathlib.Path(__file__).resolve().parent.parent`, runs
 the requested mode, prints each `[check] detail`, and returns 1 on problems.
 
-- [ ] **Step 4: Run red/green and syntax checks**
+- [x] **Step 4: Run red/green and syntax checks**
 
 Run:
 
@@ -365,7 +365,7 @@ Expected:
 - normal mode: exit 1 on the old guide, including
   `[contract:memory]`, proving the checker can reject the pre-rewrite state.
 
-- [ ] **Step 5: Independent review**
+- [x] **Step 5: Independent review**
 
 Give the reviewer the approved design, this task, and
 `scripts/check_agent_guide.py`. Require it to check path traversal handling,
@@ -373,7 +373,7 @@ URL/anchor exclusions, self-test specificity, working-directory independence,
 stdlib-only imports, and whether every `REQUIRED` marker is stable rather than
 an inventory.
 
-- [ ] **Step 6: Commit the green self-test**
+- [x] **Step 6: Commit the green self-test**
 
 ```sh
 git add scripts/check_agent_guide.py
@@ -382,6 +382,23 @@ git commit -m "checks: guard the agent instruction contract"
 
 Record the self-test and expected normal-mode failure beneath Task 1 before
 marking it complete.
+
+**Proof record (2026-07-30):**
+
+- RED: `python3 scripts/check_agent_guide.py --selftest` exited 1 while
+  `validate()` returned no problems; all ten named fixtures reported their
+  expected check id as missing.
+- GREEN: `python3 scripts/check_agent_guide.py --selftest` exited 0 and
+  reported every one of the ten fixtures as `trips <check id>`; its assertion
+  requires the exact singleton check-id set for each mutation.
+- Syntax: `python3 -m py_compile scripts/check_agent_guide.py` exited 0.
+- Expected pre-rewrite normal-mode failure: `python3 scripts/check_agent_guide.py`
+  exited 1 and included `[contract:memory] AGENTS.md: missing
+  '## Memory: Query → Ingest → Lint'` (the existing guide remains intentionally
+  pre-rewrite for Task 1).
+- Independent review: initial review found one Important self-test-isolation
+  defect; the fix was scoped re-reviewed and approved with spec compliance PASS
+  and task quality APPROVED, with no Critical or Important findings.
 
 ---
 
