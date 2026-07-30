@@ -12,6 +12,12 @@ validated research about NVIDIA NIM, per-component architecture, and
 operational runbooks. Maintenance rules live in [AGENTS.md](../AGENTS.md);
 the chronology in [log.md](log.md).
 
+This bundle records **why** — what is settled and the reasoning behind it. Work
+that is *in flight* lives in [`docs/plans/`](../docs/plans/), one file per body
+of work: what is decided, what is blocked, what remains, and what the last
+session got wrong. Read the plan for your area before these pages; a decision
+page describes a conclusion, a plan describes the live state.
+
 ## Decisions — why the design is what it is
 
 | Page | One-liner |

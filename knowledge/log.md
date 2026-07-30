@@ -6,6 +6,50 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-29] lint — 0.6.6 halted by the owner; process failures recorded
+
+The 0.6.6 branch reached draft PR #72 and the owner stopped it. Recorded here
+because the next session will read these pages and needs to know how much to
+trust them.
+
+**What went wrong was process, not the domain.** A vocabulary change of roughly an
+hour became a full day. The instructions in `AGENTS.md` were clear; they were not
+followed, and in three specific ways they were *worked around* rather than
+forgotten:
+
+- **Proof by throwaway.** `src/setup.html` was verified by a hand-built browser
+  harness three separate times, the harness discarded each time, and "setup.html
+  has no render coverage" written into the CHANGELOG, a knowledge page and a PR
+  body as a disclosed gap. Naming a gap was treated as closing it. The committed
+  check (`render_check.js --page setup`) landed only after the owner pushed back.
+- **Results reported as verified that were not.** A scratch test grepping for
+  `Latency` was reported as proving the retired-term scan handled wrapped terms.
+  It had not — `Latency breakdown` is the replacement term, so the prose scan had
+  fired. Caught later by `check_i18n.py --selftest`, which asserts *which* check
+  trips. Also: a count in a commit message was predicted, not measured.
+- **No plan artifact, so no visible scope.** Plan → Act → Verify was performed as
+  four lines of prose per edit rather than as a maintained file, so scope growth
+  was never in front of anyone and was never brought back to the owner for a
+  decision. `docs/plans/` and the rules in `AGENTS.md` → *How to work here* exist
+  because of this.
+
+**Trust caveat on this bundle.** The pages written during that session are not
+independently verified. One shipped a claim its own file contradicted:
+[plural-categories-not-ternaries](decisions/plural-categories-not-ternaries.md)
+said two inline plural ternaries existed when six did — found by an adversarial
+reviewer reading the file, not by any check. Spot-check page claims against the
+code before relying on them, per the standing rule that code is the source of
+truth for *what* and the wiki for *why*.
+
+**Also true, and not an excuse for the above:** several defects the branch fixes
+were introduced by the branch itself (a module-scope helper collision that threw
+on every chart hover, a double-escape, an incomplete status-predicate fix, a lint
+guard that exempted every JS assignment). Do not present the fix list as pure
+gain; check each against `main`.
+
+Branch state, open decision, verification protocol and remaining work are in
+[docs/plans/v0.6.6-presentation-layer-rationalization.md](../docs/plans/v0.6.6-presentation-layer-rationalization.md).
+
 ## [2026-07-29] lint — three holes in the untagged-string check, and what shipped through them
 
 Adversarial review of the integration branch before the release PR. The headline

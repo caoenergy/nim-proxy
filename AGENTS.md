@@ -40,6 +40,7 @@ decision page is the most common way work here goes wrong.
 
 | Touching | Read first |
 |---|---|
+| any multi-step work, or picking up work in flight | `docs/plans/` — one file per body of work, named for the work. Read the plan for what you are touching *before* the knowledge pages; it says what is decided, what is blocked, and what the last session got wrong |
 | pacing, key pool, lanes | `decisions/sliding-window-not-token-bucket.md`, `decisions/window-jitter-margin.md`, `architecture/key-pool.md` |
 | queueing, dispatch order | `decisions/global-fifo-dispatcher.md`, `architecture/dispatcher.md` |
 | affinity, prefix cache | `decisions/sticky-affinity-with-spillover.md`, `research/nim-kv-cache-reuse.md` |
@@ -86,12 +87,47 @@ observed. Fix in-scope defects as you go; never silently leave one behind.
 
 ## How to work here
 
+**The plan is a file, not a paragraph.** Multi-step work gets a plan under
+`docs/plans/`, named for the work (`v0.6.6-presentation-layer-rationalization.md`,
+not `plan.md`). It lists every known work item, its status, and the *committed*
+check that proves it. **Every turn that discovers work appends to it, and says
+what it appended.** If work was discovered and the file did not change, planning
+did not happen.
+
+This is the rule whose absence cost a full day. Planning continuously is what
+keeps the shape of the remaining work in front of you — so scope growth surfaces
+itself in the artifact instead of needing anyone to ask "is this still in
+scope?". Four lines of prose before a tool call is the *format* of a plan step,
+not a substitute for the plan.
+
+**Scope deltas go to the user before they are built.** Discovering unplanned work
+is normal and expected; deciding on your own what to do with it is not. Append it
+to the plan, show the delta, and let the user re-scope. "I'll proceed carefully"
+is not the same as asking.
+
+**Read before acting, and cite what you read.** Before the first tool call
+against a task, restate the scope in your own words and name the document that
+defines it. If you cannot cite it, you have not read it. A session here read the
+supplied plan four hours in and had to retract five findings it had already
+reported.
+
 **Every task gets a visible Plan → Act → Verify.** A task is any edit you are
 about to make — not a release, not a PR. Sub-tasks get their own loop.
 
-**The plan is output, not thought.** Before the first tool call that changes a
-file, your reply must contain these four lines. If they are not in the reply,
-you have not planned:
+**Track it with the task tool, gated on proof.** A task moves to done when the
+name of a *committed* check is recorded against it and that check has been run —
+never on "verified by hand". Closing a task because the edit is written is how
+work that was never proven gets reported as finished.
+
+**Run the adversarial reviewer per work item, before you commit it** — not once
+at the end of a release. Every genuine defect on the 0.6.6 branch was found by a
+reviewer, and running them last is why that work took a day instead of an
+afternoon. You cannot adversarially review your own work in the context that
+produced it.
+
+**The four lines are the format of each step.** Before the first tool call that
+changes a file, your reply must contain them. If they are not in the reply, you
+have not planned:
 
 - **Outcome** — what will be true after this change that is not true now.
 - **Proof** — the exact command, *and what its output looks like if the change
@@ -151,6 +187,17 @@ replacement term, not a retired one.
 
 **Report what happened.** If a check was skipped, say it was skipped. A green
 summary that omits the unrun check is worse than no summary.
+
+**Assert on which check fired, never on a substring of the output.** A scratch
+test here grepped stdout for `Latency` and reported the retired-term scan
+working, when only the prose scan had fired — `Latency breakdown` is the
+*replacement* term, not a retired one. That wrong result was reported to the user
+as verified. If your assertion cannot distinguish which check produced the
+output, it is not an assertion.
+
+**Never report a number you did not read from output, and never carry a previous
+session's numbers forward as fact.** Re-run and quote. A count in a commit
+message on this branch was predicted rather than measured, and was wrong.
 
 ## Before adding anything new
 
