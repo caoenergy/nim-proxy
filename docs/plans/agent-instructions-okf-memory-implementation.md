@@ -640,7 +640,7 @@ marking it complete.
 - Produces: a validator-clean startup contract and a durable decision page
   explaining the memory model.
 
-- [ ] **Step 1: Observe the guide-contract failure before rewriting**
+- [x] **Step 1: Observe the guide-contract failure before rewriting**
 
 Run:
 
@@ -652,7 +652,7 @@ Expected: exit 1 with the missing stable contract ids, including
 `[contract:memory]`, and no `[proof-route]` after Task 2. Save the exact ids in
 the Task 3 proof record.
 
-- [ ] **Step 2: Add the durable OKF decision before removing its schema**
+- [x] **Step 2: Add the durable OKF decision before removing its schema**
 
 Create `knowledge/decisions/okf-query-ingest-lint.md` with this frontmatter:
 
@@ -699,7 +699,7 @@ validator evidence. Do not copy the entire guide into the log. The schema now
 has a durable destination before the next step removes its detailed copy from
 `AGENTS.md`.
 
-- [ ] **Step 3: Replace `AGENTS.md` with the stable router**
+- [x] **Step 3: Replace `AGENTS.md` with the stable router**
 
 Use this exact top-level structure:
 
@@ -832,7 +832,7 @@ Retain the seven-rung ladder without examples that will decay:
   replacing the plan.
 - External systems: read-only unless the owner authorizes a write.
 
-- [ ] **Step 4: Run the committed contract proof**
+- [x] **Step 4: Run the committed contract proof**
 
 Run:
 
@@ -848,7 +848,7 @@ Expected: all commands exit 0. Normal mode prints:
 agent guide OK — stable contracts present; local links resolve
 ```
 
-- [ ] **Step 5: Run an adversarial semantic review**
+- [x] **Step 5: Run an adversarial semantic review**
 
 Give the reviewer:
 
@@ -869,7 +869,7 @@ Require explicit findings on:
 - index and log roles match OKF;
 - code/knowledge mismatch wording cannot legitimize an accidental code bug.
 
-- [ ] **Step 6: Commit the guide and memory decision**
+- [x] **Step 6: Commit the guide and memory decision**
 
 ```sh
 git add AGENTS.md knowledge/decisions/okf-query-ingest-lint.md \
@@ -879,6 +879,33 @@ git commit -m "docs: make agent guidance an OKF memory router"
 
 Record the red contract ids, green commands, and reviewer result beneath Task 3
 before marking it complete.
+
+**Proof record (2026-07-30):**
+
+- RED: `python3 scripts/check_agent_guide.py` exited 1 on exactly
+  `contract:start`, `contract:invariants`, `contract:work`,
+  `contract:repository`, `contract:memory`, `contract:proof-route`,
+  `contract:ponytail`, and `contract:authority`. It did not report
+  `proof-route`, so Task 2's destination was present before the guide rewrite.
+- Ordering: `knowledge/decisions/okf-query-ingest-lint.md` existed and
+  `knowledge/index.md` plus `knowledge/log.md` contained the ingest while
+  `git diff --quiet -- AGENTS.md` still confirmed the guide was unchanged from
+  the pinned baseline. The three-file migration diff passed
+  `git diff --check` before the guide schema was removed.
+- GREEN: `python3 scripts/check_agent_guide.py --selftest` exited 0 after all
+  10 fixtures tripped their exact check ids; `python3
+  scripts/check_agent_guide.py` exited 0 and printed `agent guide OK — stable
+  contracts present; local links resolve`; `git diff --check` exited 0.
+- Self-review: the guide has exactly the required eight `##` sections, all six
+  invariant labels and binding behavior remain, the new ADR contains the
+  complete former schema contract, Task 2's page contains every displaced
+  proof family, and a volatile-content scan of the guide returned no matches.
+- Independent review: spec compliance PASS and semantic quality APPROVED, with
+  no Critical, Important, or Minor findings. The reviewer explicitly accounted
+  for the six invariants, proof migration, schema/ADR preservation, stable
+  guide content, fresh-session Query → Ingest → Lint flow, index/log roles,
+  code/knowledge mismatch safety, repository operations, and ingest-before-cutover
+  ordering.
 
 ---
 

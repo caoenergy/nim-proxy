@@ -6,6 +6,37 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-30] decision — make agent instructions an OKF memory router
+
+Recorded the repository-memory model in
+[okf-query-ingest-lint](decisions/okf-query-ingest-lint.md): `AGENTS.md`
+becomes the stable startup contract and router; `knowledge/index.md` remains
+the semantic catalog; concept pages own synthesized durable knowledge; and this
+log remains append-only chronology. Query → Ingest → Lint uses repository text
+search, relative links, and Git history without adding a generator, database,
+search service, dependency, or new schema.
+
+The migration boundary is lossless: the existing one-concept-per-file schema,
+frontmatter fields and types, relative-link graph, and decision-page ADR shape
+were moved into the decision page before their detailed copy is removed from
+the guide. Changing proof commands already live in
+[test-strategy](testing/test-strategy.md).
+
+Before the guide cutover, `python3 scripts/check_agent_guide.py` exited 1 on
+the eight intentionally missing stable contracts: `contract:start`,
+`contract:invariants`, `contract:work`, `contract:repository`,
+`contract:memory`, `contract:proof-route`, `contract:ponytail`, and
+`contract:authority`. It did not report `proof-route`, confirming the durable
+proof destination was present before the rewrite.
+
+After the cutover, `python3 scripts/check_agent_guide.py --selftest` exited 0
+after all 10 fixtures tripped their exact check ids,
+`python3 scripts/check_agent_guide.py` exited 0 with `agent guide OK — stable
+contracts present; local links resolve`, and `git diff --check` exited 0. An
+independent semantic review compared the pinned old guide, new router,
+proof-routing page, decision, index, log, and approved design; it returned spec
+PASS and semantic APPROVED with no findings.
+
 ## [2026-07-29] lint — 0.6.6 halted by the owner; process failures recorded
 
 The 0.6.6 branch reached draft PR #72 and the owner stopped it. Recorded here
