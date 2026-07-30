@@ -66,9 +66,10 @@ it would have surfaced as `Jetons d&#39;entrée` on the first real translation.
 
 ## Choice
 
-Option 3. `scripts/render_check.js` renders `src/dashboard.html` against
-captured API payloads, walks all five tabs, hovers every chart with real
-pointer input, and fails on any uncaught page error. Stdlib only, matching the
+Option 3. `scripts/render_check.js` starts the current nim-proxy binary,
+requests its real page and asset routes, fulfills captured API payloads through
+CDP, walks all five tabs, hovers every chart with real pointer input, and fails
+on any uncaught page or initial-resource error. Stdlib only, matching the
 convention both existing scripts already declare.
 
 This does **not** replace the human review the plan assigned. Clipping is a
@@ -76,19 +77,26 @@ layout property and the gate does not judge it; the `.bval` wrap on Models at
 900px is real and was found by eye, not by script. The gate covers the silent
 class — a page that throws, a page that never boots, a value escaped twice.
 
-Three properties it needed before it could see anything at all, each of which
+Four properties it needed before it could see anything at all, each of which
 first produced a confident green while exercising nothing:
 
-- **It must block external hosts and wait for the real load event.** The page
-  render-blocks on the Google Fonts stylesheet; offline that hangs rather than
-  fails, the parser never reaches the page's own `<script>`, and a gate that
-  sleeps and then measures the DOM reports that a page which never booted is
-  fine. It now asserts `readyState === 'complete'`.
+- **It must request production routes and fail external hosts.** The earlier
+  gate assembled a private file page and injected an application. The current
+  gate starts the binary, authenticates through the real operator boundary,
+  observes every required page/CSS/JS request, and fails missing, non-success,
+  or cross-origin initial resources. Only API fixture responses are invented.
+  Hostile/locale runs mutate the inert catalog inside the binary's actual page
+  response after pinning its status, content type, cache policy, and CSP; they
+  reject any mutation outside that catalog body.
+- **It must wait for the real load event.** A fixed sleep can measure a parser
+  that never reached the application. It asserts `readyState === 'complete'`.
 - **It must capture unhandled rejections.** The page boots from an `async`
   IIFE, so a throw there is a rejection, not an exception, and
   `Runtime.exceptionThrown` does not reliably report it.
-- **It must undo its own line-number shift.** Injected setup moves every line;
-  a gate that reports the wrong line is a gate nobody trusts.
+- **It must keep production source line numbers.** Error capture is installed
+  through CDP before navigation rather than injected into page source. Hostile
+  catalog runs replace only the inert catalog block; scripts and styles remain
+  production-served assets.
 
 The payloads are **captured, not hand-written**, and deliberately contain
 failures: 504s, client disconnects, 429 rate-limit cooldowns, worker
@@ -112,6 +120,28 @@ faked.
 - The fixtures are a **snapshot of a wire format**. If `/api/dashboard` changes
   shape, they must be recaptured — the gate will fail loudly rather than
   silently drift, which is the intended failure mode.
+- `--asset-selftest` independently names external script, stylesheet/font,
+  image, and CSS URL defects across direct and protocol-relative URLs,
+  reordered/unquoted attributes, `srcset`, quoted `@import`, font URLs, and
+  ordinary CSS URLs. `--assets-only` parses tag/attribute and CSS contexts in
+  `src/web/` for those origins plus inline executable script,
+  stylesheet/style attributes, and event-handler attributes. The normal CDP
+  modes prove the source scan agrees with what the real routes load.
+- `--served-page-selftest` makes the response provenance non-optional: it
+  rejects the former private source-file assembly and requires a real response
+  body read plus an explicit provenance record before hostile mutation.
+- Generated `data-style` declarations use a 512-entry rule/cache bound.
+  Browser proof creates more than twice that many distinct metric-like values,
+  requires a real compaction, verifies cache/rule agreement, and checks a live
+  node's geometry before and after the rewrite.
+- A green page result also requires a clean browser teardown. The gate closes
+  Chromium through CDP, waits a bounded interval, escalates to its isolated
+  process group when descendants survive, stops the proxy, and verifies the
+  run directory was removed. `--cleanup-selftest` forces a descendant to keep
+  writing the profile so parent-only termination or note-only cleanup fails.
+  It also forces proxy startup to time out and requires the proxy exit event
+  before run-directory removal. An intercepted missing-locale failure must
+  print that originating cause before the generic asset-load summary.
 - `--escape-probe` gives the contextual-sink rule in
   [message-catalog-and-escaping](message-catalog-and-escaping.md) an
   enforcement mechanism instead of a paragraph. The probe requires inert

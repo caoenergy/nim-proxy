@@ -1,16 +1,19 @@
 ---
 type: Component
-title: Dashboard (src/dashboard.html)
-description: Single embedded operator console with one persisted analytical window, typed range/current contracts, and clearly scoped Now values.
+title: Dashboard
+description: Split, compile-time embedded operator console with one persisted analytical window, typed range/current contracts, and clearly scoped Now values.
 tags: [dashboard, dataviz, frontend]
 timestamp: 2026-07-03T00:00:00Z
 ---
 
-# Dashboard — `src/dashboard.html`
+# Dashboard
 
-One self-contained HTML file compiled into the binary (`include_str!`), with
-no frontend build or Grafana and no required external assets. Optional CDN
-logos/fonts have offline fallbacks. A dark, NVIDIA-green "operator console":
+The dashboard is a compile-time embedded page plus same-origin CSS/JavaScript
+sources under `src/web/`, with no frontend build, Grafana, runtime files, or
+external assets. `src/presentation.rs` owns page assembly and asset lookup;
+operator routes share the session gate. See
+[the presentation layer](presentation-layer.md). A dark, NVIDIA-green
+"operator console":
 a 216px sticky sidebar (collapses to an icon-only rail below 860px) with the
 nav and follow-state/uptime/version footer, a top bar with range pills + a
 custom date-range picker, and five persona-aligned tabs, each ordered
@@ -60,7 +63,7 @@ The former **Compare** tab (head-to-head scorecard + bar race) was folded
 into Models as a section — it never carried enough unique content to justify
 a sixth tab. See
 [dashboard-operator-console-redesign](../decisions/dashboard-operator-console-redesign.md)
-for the rationale behind the IA change and the dark-only, fonts-via-CDN, and
+for the rationale behind the IA change and the dark-only, typography, and
 delta-chip decisions.
 
 ## Rendering primitives
@@ -111,14 +114,10 @@ faint green radial glow, cards `rgba(255,255,255,0.03)`, accent
 was a committed design decision, not an oversight — see
 [dashboard-operator-console-redesign](../decisions/dashboard-operator-console-redesign.md).
 
-**Fonts**: Space Grotesk (UI/headings) and Spline Sans Mono (all numeric
-values, axis labels, table cells) load from Google Fonts via
-`<link>`/`@import`, allowed by an extended CSP (`style-src` gained
-`https://fonts.googleapis.com`, a new `font-src` allows
-`https://fonts.gstatic.com`). Offline or CDN-blocked, the CSS falls back to
-`system-ui`/`monospace` — same graceful-degradation pattern as the LobeHub
-logo CDN. The NIM Proxy logo mark itself is inlined as a base64 data URI
-(68×68 PNG, ~10KB) in the sidebar, so it never depends on the network.
+**Fonts and marks** use system UI/monospace stacks and fixed local SVG/text
+primitives. The earlier Google Fonts and model-logo CDN choice was superseded
+when the presentation layer removed every external origin. CSP now permits
+only same-origin styles/scripts/connections plus self/data images.
 
 ## Data flow
 
@@ -185,8 +184,9 @@ recomputed.
 Following history survives refresh and process restart because it is rebuilt
 from the server index; only the adjacent-poll rate shown in **Now** widgets
 needs two current polls. Model cards derive identity from the id namespace
-([schema research](../research/nim-models-endpoint-schema.md)): LobeHub CDN
-logo with brand-colored monogram fallback, ranked by completion tokens.
+([schema research](../research/nim-models-endpoint-schema.md)) and render a
+fixed local monogram with the existing brand-color map, ranked by completion
+tokens.
 
 ## Security invariant
 

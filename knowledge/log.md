@@ -6,6 +6,48 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-30] fix — close render failure lifecycle gaps
+
+The render gate now uses the same bounded child-stop primitive when proxy
+startup times out and during normal shutdown, and observes proxy exit before
+removing the run directory. Its cleanup self-test also forces that pre-return
+timeout and an intercepted missing-locale failure. The latter must retain its
+specific diagnostic instead of being hidden by a generic asset-load summary.
+See the [render-gate decision](decisions/render-gate.md) and
+[test strategy](testing/test-strategy.md).
+
+## [2026-07-30] fix — make render-gate cleanup part of the result
+
+The served-browser gate no longer kills only Chromium's launcher parent or
+downgrades a surviving profile directory to a note. It closes through CDP,
+uses bounded process-group escalation for surviving descendants, stops the
+proxy, verifies removal of the run directory, and fails if cleanup is
+incomplete. A deterministic cleanup self-test forces a descendant profile
+writer so this lifecycle cannot be masked by a green page result. See the
+[render-gate decision](decisions/render-gate.md) and
+[test strategy](testing/test-strategy.md).
+
+## [2026-07-30] component — split and gate embedded presentation assets
+
+Added the [embedded presentation layer](architecture/presentation-layer.md):
+three public and four session-gated operator assets, all compile-time embedded
+with exact content types and `no-store`. Dashboard, setup, and login now load
+same-origin CSS/JavaScript sources; system fonts and fixed local marks replace
+Google Fonts and model-logo CDNs. CSP no longer needs external origins or
+`unsafe-inline`.
+
+The route inventory now owns 30 contracts including all seven assets. Real
+three-state requests prove page/asset gates, CSP, cache policy, and public-byte
+isolation. The dependency-free render gate now starts the current binary,
+requests production-served page/asset bytes, rejects missing or external
+initial resources, invents only captured API payloads through CDP, and drives
+all dashboard tabs/chart hovers and setup steps under the production CSP.
+Hostile and locale runs derive their HTML from the verified server response
+and alter only its inert catalog body. The source scanner parses loading
+contexts across direct and protocol-relative URL forms. Runtime-generated
+style rules are capped at 512 and compacted to the live DOM; browser proof
+forces compaction and pins both the bound and live-node geometry.
+
 ## [2026-07-30] decision — plain catalogs with context-owned DOM sinks
 
 Replaced the escaped/plain catalog duality atomically across the guide,

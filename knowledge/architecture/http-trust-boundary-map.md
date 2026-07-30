@@ -15,7 +15,8 @@ module are test-only descriptive metadata and cannot dispatch a request.
 `probe_path` is a concrete fixture-backed request path. This distinction is
 load-bearing for `/v1/{*path}` and future parameterized routes.
 
-The current router has 23 method/path contracts and no asset routes. A
+The current router has 30 method/path contracts, including seven presentation
+asset routes. A
 superuser has no exclusive route: it has admin endpoint power plus the
 undeletable/undemotable account invariant. `OperatorSuperuser` exists so a
 future exclusive boundary must be declared deliberately, not inferred from
@@ -27,7 +28,7 @@ The compact proof labels are:
 
 - **M** — `routes::tests::inventory_agrees_with_generated_openapi` owns the
   compiled inventory, method/path membership, OpenAPI security inheritance,
-  phase counts, fixture probe paths, the explicit no-assets decision, and the
+  phase counts, fixture probe paths, the explicit asset inventory, and the
   no-superuser-exclusive-route decision.
 - **B** — `route_contract_behavior_matrix` sends real requests through the
   binary in before-setup, anonymous configured, ordinary-user, admin, and
@@ -52,6 +53,10 @@ not a second copy here.
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `GET /` | Browser operator | Private | Post-setup | Session; any role | None | HTML | Pre-setup/anonymous redirect | None | Dashboard navigation | No | B, M |
 | `GET /dash` | Browser operator | Private | Post-setup | Session; any role | None | HTML | Pre-setup/anonymous redirect | None | Dashboard alias | No | B, M |
+| `GET /assets/operator/operator.css` | Browser operator | Private | Post-setup | Session/header credentials; any role | None | CSS | `setup_required`, `unauthorized` | None | Dashboard page | No | B, M |
+| `GET /assets/operator/shared.js` | Browser operator | Private | Post-setup | Session/header credentials; any role | None | JavaScript | `setup_required`, `unauthorized` | None | Dashboard page | No | B, M |
+| `GET /assets/operator/dashboard.js` | Browser operator | Private | Post-setup | Session/header credentials; any role | None | JavaScript | `setup_required`, `unauthorized` | None | Dashboard page | No | B, M |
+| `GET /assets/operator/settings.js` | Browser operator | Private | Post-setup | Session/header credentials; any role | None | JavaScript | `setup_required`, `unauthorized` | None | Dashboard page | No | B, M |
 | `GET /metrics` | Prometheus/operator | Private | Post-setup | Session, Basic, or header credentials; any role | None | Prometheus text | `setup_required`, `unauthorized` | Config unchanged; no upstream call | External scraper | No | B, M |
 | `GET /api/dashboard` | Browser operator | Private | Post-setup | Session/header credentials; any role | Query | JSON | `setup_required`, `unauthorized`, `invalid_query`, `invalid_time_window` | Config unchanged; no upstream call | Dashboard range load | Yes | B, M |
 | `GET /api/dashboard/now` | Browser operator | Private | Post-setup | Session/header credentials; any role | None | JSON | `setup_required`, `unauthorized` | Config unchanged; no upstream call | Dashboard polling | Yes | B, M |
@@ -66,6 +71,9 @@ not a second copy here.
 | `POST /api/settings/account` | Browser/operator API | Private | Post-setup | Session/header credentials; any role, own account only | JSON | JSON + session cookie | `setup_required`, `unauthorized`, `wrong_password`, `weak_password`, `password_changed`, `invalid_config` | Success changes config bytes and sets a session cookie | Settings Account | Yes | B, M |
 | `POST /api/settings/validate-key` | Browser/operator API | Private | Post-setup | Session/header credentials; any role | JSON | JSON | `setup_required`, `unauthorized` | Success makes one upstream call; config unchanged | Settings key validation | Yes | B, M |
 | `GET /health` | Orchestrator | Public | Always | None | None | Plain text | None | None | Container healthcheck | No | B, M |
+| `GET /assets/public/public.css` | Browser | Public | Always | None | None | CSS | None | None | Setup/login pages | No | B, M |
+| `GET /assets/public/setup.js` | Browser | Public | Always | None | None | JavaScript | None | None | Setup page | No | B, M |
+| `GET /assets/public/login.js` | Browser | Public | Always | None | None | JavaScript | None | None | Login page | No | B, M |
 | `GET /login` | Browser operator | Public | Always | None; authenticated callers redirect | None | HTML/redirect | None (HTML flow) | None | Login page | No | B, M |
 | `POST /login` | Browser operator | Public | Always | Username/password form | Form URL encoded | Redirect + session cookie | HTML 401 or plain 429; no `ApiError` code | Success sets a session cookie; config unchanged | Login form | No | B, M |
 | `POST /logout` | Browser operator | Public | Always | None required | None | Redirect + clearing cookie | None | Response sets a clearing cookie; config unchanged | Account/logout control | No | B, M |
@@ -89,6 +97,7 @@ data-plane scheduling, response, and observation details remain in the
 [streaming pipeline](streaming-pipeline.md).
 
 Generated OpenAPI describes only the 12 `/api` operations and two setup POST
-operations. HTML/form, health, metrics, and `/v1` omissions are explicit
+operations. HTML/form, presentation assets, health, metrics, and `/v1`
+omissions are explicit
 decisions. The generated-file authority and error schema remain in
 [typed responses and generated OpenAPI](../decisions/typed-responses-and-generated-openapi.md).

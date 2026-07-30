@@ -430,7 +430,7 @@ pub async fn login_page(State(state): State<Arc<AppState>>, headers: HeaderMap) 
     if identify(&state, &headers).await.is_some() {
         return redirect_found("/");
     }
-    login_html(false)
+    login_html(None)
 }
 
 /// `POST /login` — verify username + password, set the session cookie.
@@ -479,7 +479,7 @@ pub async fn login_submit(
     metrics::counter!("nimproxy_login_failures_total").increment(1);
     admin.note_failure();
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    login_html(true)
+    login_html(Some("invalid_credentials"))
 }
 
 /// Mint a Set-Cookie value for a just-verified user — shared by login and
@@ -571,47 +571,19 @@ fn hex_val(b: u8) -> Option<u8> {
     }
 }
 
-fn login_html(error: bool) -> Response {
-    let err = if error {
-        r#"<p class="err">Incorrect username or password.</p>"#
-    } else {
-        ""
-    };
-    let html = format!(
-        r##"<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>NIM Proxy — Sign in</title>
-<style>
-:root {{ color-scheme: light dark; }}
-body {{ margin:0; min-height:100vh; display:grid; place-items:center;
-  font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; background:#f9f9f7; color:#0b0b0b; }}
-@media (prefers-color-scheme:dark) {{ body {{ background:#0d0d0d; color:#fff; }} }}
-.card {{ background:Canvas; border:1px solid rgba(128,128,128,.25); border-radius:14px;
-  padding:28px 26px; width:300px; box-shadow:0 6px 24px rgba(0,0,0,.12); }}
-h1 {{ font-size:17px; margin:0 0 4px; }}
-p.sub {{ color:#898781; font-size:13px; margin:0 0 18px; }}
-input {{ width:100%; box-sizing:border-box; font:inherit; padding:9px 11px; border-radius:9px;
-  border:1px solid rgba(128,128,128,.4); background:Field; color:inherit; margin-bottom:12px; }}
-button {{ width:100%; font:inherit; font-weight:600; padding:9px; border:0; border-radius:9px;
-  background:#2a78d6; color:#fff; cursor:pointer; }}
-.err {{ color:#d03b3b; font-size:13px; margin:0 0 12px; }}
-</style></head><body>
-<form class="card" method="post" action="/login">
-  <h1>NIM&nbsp;Proxy</h1><p class="sub">Sign in to the dashboard.</p>
-  {err}
-  <input type="text" name="username" placeholder="Username" autofocus autocomplete="username">
-  <input type="password" name="password" placeholder="Password" autocomplete="current-password">
-  <button type="submit">Sign in</button>
-</form></body></html>"##
-    );
-    let status = if error {
+fn login_html(error_code: Option<&'static str>) -> Response {
+    let status = if error_code.is_some() {
         StatusCode::UNAUTHORIZED
     } else {
         StatusCode::OK
     };
     (
         status,
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        html,
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        crate::presentation::page(crate::presentation::Page::Login { error_code }),
     )
         .into_response()
 }

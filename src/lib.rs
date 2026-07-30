@@ -5,6 +5,7 @@ mod dispatch;
 mod governor;
 mod history;
 mod pool;
+mod presentation;
 mod proxy;
 mod routes;
 mod settings;
@@ -27,7 +28,7 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::StatusCode;
+use axum::http::{StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
 use axum::Router;
@@ -301,28 +302,70 @@ async fn metrics_text(State(state): State<Arc<AppState>>) -> String {
     state.prometheus.render()
 }
 
-/// Add hardening headers to every response. The CSP allows the dashboard's
-/// own inline script/style, unpkg logos, and Google Fonts (system-font
-/// fallback offline), but pins `connect-src` to 'self' so an injected
-/// element can't exfiltrate to another origin — a second line of defense
-/// behind server-side sanitizing and the dashboard's `esc()`.
+fn page_response(page: presentation::Page) -> Response {
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+        ],
+        presentation::page(page),
+    )
+        .into_response()
+}
+
+async fn public_asset(uri: Uri) -> Response {
+    asset_response(presentation::public_asset(uri.path()))
+}
+
+async fn operator_asset(uri: Uri) -> Response {
+    asset_response(presentation::operator_asset(uri.path()))
+}
+
+fn asset_response(asset: Option<presentation::Asset>) -> Response {
+    let Some(asset) = asset else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, asset.content_type),
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+        ],
+        asset.body,
+    )
+        .into_response()
+}
+
+fn is_presentation_path(path: &str) -> bool {
+    matches!(
+        path,
+        routes::ROOT | routes::DASH | routes::LOGIN | routes::SETUP
+    ) || path.starts_with("/assets/")
+}
+
+/// Add hardening headers to every response. Presentation resources are
+/// same-origin compile-time assets, so the policy needs no inline or external
+/// source exceptions.
 async fn security_headers(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     use axum::http::HeaderValue;
+    let no_store = is_presentation_path(req.uri().path());
     let mut resp = next.run(req).await;
     let h = resp.headers_mut();
     h.insert(
         "content-security-policy",
         HeaderValue::from_static(
-            "default-src 'none'; img-src 'self' https://unpkg.com data:; \
-             style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; \
-             font-src https://fonts.gstatic.com; \
-             script-src 'self' 'unsafe-inline'; \
+            "default-src 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; \
              connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
         ),
     );
+    if no_store {
+        h.insert(
+            axum::http::header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        );
+    }
     h.insert(
         "x-content-type-options",
         HeaderValue::from_static("nosniff"),
@@ -527,12 +570,7 @@ pub async fn run() {
         cfg: RwLock::new(Arc::new(cfg)),
     });
 
-    let dash = || async {
-        (
-            [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
-            include_str!("dashboard.html"),
-        )
-    };
+    let dash = || async { page_response(presentation::Page::Dashboard) };
     // Session-gated surface: dashboard, config, history, metrics. The guard
     // middleware requires an authenticated user (session cookie, or
     // user:password header credentials for scrapers); pre-setup it routes
@@ -564,6 +602,10 @@ pub async fn run() {
         .route(routes::ROOT, get(dash))
         .route(routes::DASH, get(dash))
         .route(routes::METRICS, get(metrics_text))
+        .route(routes::ASSET_OPERATOR_CSS, get(operator_asset))
+        .route(routes::ASSET_OPERATOR_SHARED_JS, get(operator_asset))
+        .route(routes::ASSET_OPERATOR_DASHBOARD_JS, get(operator_asset))
+        .route(routes::ASSET_OPERATOR_SETTINGS_JS, get(operator_asset))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_session,
@@ -575,6 +617,9 @@ pub async fn run() {
     let app = Router::new()
         .merge(protected)
         .route(routes::HEALTH, get(|| async { "ok" }))
+        .route(routes::ASSET_PUBLIC_CSS, get(public_asset))
+        .route(routes::ASSET_PUBLIC_SETUP_JS, get(public_asset))
+        .route(routes::ASSET_PUBLIC_LOGIN_JS, get(public_asset))
         .route(
             routes::LOGIN,
             get(auth::login_page).post(auth::login_submit),

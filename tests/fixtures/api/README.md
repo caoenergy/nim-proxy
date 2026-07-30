@@ -1,8 +1,8 @@
 # Captured API payloads
 
-Real responses from the real binary, replayed into `src/dashboard.html` by
-`scripts/render_check.js` so the page can be rendered and driven without
-booting a server in CI.
+Real responses from the real binary, fulfilled through CDP while
+`scripts/render_check.js` boots the current binary and loads its real
+dashboard page/assets.
 
 Do not delete these as unused files: nothing imports them, but the render gate
 refuses to run without them.

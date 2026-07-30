@@ -26,12 +26,233 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vm = require('vm');
+const net = require('net');
 const { spawn, execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const FIXTURES = path.join(ROOT, 'tests', 'fixtures', 'api');
 
 const args = process.argv.slice(2);
+const PRESENTATION_CSP = "default-src 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+
+const ASSET_CASES = [
+  {
+    name: 'external-script',
+    files: { 'dashboard.html': '<script src="https://cdn.invalid/app.js"></script>' },
+    want: 'external-script',
+  },
+  {
+    name: 'external-stylesheet-font',
+    files: {
+      'dashboard.html': '<link rel="stylesheet" href="https://fonts.invalid/ui.css">',
+      'operator.css': '@font-face { src: url(https://fonts.invalid/ui.woff2); }',
+    },
+    want: 'external-stylesheet-font',
+  },
+  {
+    name: 'external-image',
+    files: { 'dashboard.html': '<img src="https://images.invalid/model.svg">' },
+    want: 'external-image',
+  },
+  {
+    name: 'external-css-url',
+    files: { 'operator.css': '.logo { background: url(http://images.invalid/logo.svg); }' },
+    want: 'external-css-url',
+  },
+  {
+    name: 'external-script-protocol-relative-unquoted',
+    files: { 'dashboard.html': '<script defer src=//cdn.invalid/app.js></script>' },
+    want: 'external-script',
+  },
+  {
+    name: 'external-stylesheet-reordered-attributes',
+    files: {
+      'dashboard.html': '<link href="//fonts.invalid/ui.css" media="screen" rel="stylesheet">',
+    },
+    want: 'external-stylesheet-font',
+  },
+  {
+    name: 'external-image-srcset-protocol-relative',
+    files: {
+      'dashboard.html': '<img alt="model" srcset="//images.invalid/model.svg 1x, /local.svg 2x">',
+    },
+    want: 'external-image',
+  },
+  {
+    name: 'external-css-quoted-import',
+    files: { 'operator.css': '@import "//fonts.invalid/ui.css";' },
+    want: 'external-stylesheet-font',
+  },
+  {
+    name: 'external-css-url-protocol-relative',
+    files: { 'operator.css': '.logo { background: url("//images.invalid/logo.svg"); }' },
+    want: 'external-css-url',
+  },
+  {
+    name: 'local-only',
+    files: {
+      'dashboard.html': '<link rel="stylesheet" href="/assets/operator/operator.css"><script src="/assets/operator/dashboard.js"></script>',
+      'operator.css': '.logo { background: none; }',
+    },
+    want: null,
+  },
+];
+
+function isExternalUrl(value) {
+  return /^(?:https?:)?\/\//i.test(String(value || '').trim());
+}
+
+function srcsetHasExternalUrl(value) {
+  return String(value || '').split(',').some(candidate =>
+    isExternalUrl(candidate.trim().split(/\s+/, 1)[0]));
+}
+
+/* This is deliberately a small context parser, not a spelling regex. It
+   tokenizes start tags and attributes so attribute order, quote style and
+   unquoted values cannot change what resource-loading context is inspected. */
+function htmlElements(source) {
+  const elements = [];
+  const tags = /<([A-Za-z][A-Za-z0-9:-]*)(\s(?:[^"'<>]|"[^"]*"|'[^']*')*)?>/g;
+  for (const match of source.matchAll(tags)) {
+    const attrs = new Map();
+    const attrSource = match[2] || '';
+    const attributes = /([^\s"'=<>`]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+    for (const attr of attrSource.matchAll(attributes)) {
+      attrs.set(attr[1].toLowerCase(), attr[2] ?? attr[3] ?? attr[4] ?? '');
+    }
+    elements.push({
+      tag: match[1].toLowerCase(),
+      attrs,
+      end: (match.index || 0) + match[0].length,
+    });
+  }
+  return elements;
+}
+
+function cssUrls(source) {
+  const urls = [];
+  const pattern = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)\s]+))\s*\)/gi;
+  for (const match of source.matchAll(pattern)) {
+    urls.push(match[1] ?? match[2] ?? match[3] ?? '');
+  }
+  return urls;
+}
+
+function cssImports(source) {
+  const urls = [];
+  const pattern = /@import\s+(?:url\(\s*)?(?:"([^"]*)"|'([^']*)'|([^;\s)]+))/gi;
+  for (const match of source.matchAll(pattern)) {
+    urls.push(match[1] ?? match[2] ?? match[3] ?? '');
+  }
+  return urls;
+}
+
+function assetProblems(files) {
+  const problems = [];
+  for (const [filename, source] of Object.entries(files)) {
+    const markup = filename.endsWith('.html') || filename.endsWith('.svg');
+    if (markup) {
+      for (const element of htmlElements(source)) {
+        const { tag, attrs } = element;
+        if (tag === 'script' && isExternalUrl(attrs.get('src'))) {
+          problems.push({ check: 'external-script', detail: filename });
+        }
+        if (tag === 'link'
+            && isExternalUrl(attrs.get('href'))
+            && attrs.get('rel')?.toLowerCase().split(/\s+/)
+              .some(rel => ['stylesheet', 'preconnect', 'dns-prefetch', 'icon'].includes(rel))) {
+          problems.push({ check: 'external-stylesheet-font', detail: filename });
+        }
+        if (['img', 'image', 'source', 'video'].includes(tag)) {
+          const direct = ['src', 'href', 'xlink:href', 'poster']
+            .some(attr => isExternalUrl(attrs.get(attr)));
+          if (direct || srcsetHasExternalUrl(attrs.get('srcset'))) {
+            problems.push({ check: 'external-image', detail: filename });
+          }
+        }
+        if (!filename.endsWith('.html')) continue;
+        if (tag === 'style' || attrs.has('style')) {
+          problems.push({ check: 'inline-style', detail: filename });
+        }
+        if ([...attrs.keys()].some(attr => /^on[a-z]+$/i.test(attr))) {
+          problems.push({ check: 'inline-event-handler', detail: filename });
+        }
+        if (tag === 'script' && !attrs.has('src')
+            && attrs.get('type')?.toLowerCase() !== 'application/json') {
+          const closing = source.toLowerCase().indexOf('</script', element.end);
+          if (closing < 0 || source.slice(element.end, closing).trim()) {
+            problems.push({ check: 'inline-script', detail: filename });
+          }
+        }
+      }
+    }
+    if (filename.endsWith('.css')) {
+      const importsExternal = cssImports(source).some(isExternalUrl);
+      const fontBlocks = [...source.matchAll(/@font-face\s*\{([^}]*)\}/gi)]
+        .some(match => cssUrls(match[1]).some(isExternalUrl));
+      if (importsExternal || fontBlocks) {
+        problems.push({ check: 'external-stylesheet-font', detail: filename });
+      }
+      if (cssUrls(source).some(isExternalUrl) && !fontBlocks) {
+        problems.push({ check: 'external-css-url', detail: filename });
+      }
+    }
+  }
+  return problems;
+}
+
+function assetSelftest() {
+  const failures = [];
+  for (const { name, files, want } of ASSET_CASES) {
+    const problems = assetProblems(files);
+    const got = problems[0] ? problems[0].check : null;
+    if (got !== want) {
+      failures.push(`${name}: expected check ${want || 'nothing'}, got ${got || 'nothing'}`);
+    } else {
+      console.log(`  ok  ${name}: ${got || 'no problem'}`);
+    }
+  }
+  if (failures.length) {
+    for (const failure of failures) console.error(failure);
+    return 1;
+  }
+  console.log('asset selftest ok — every external-origin check observed');
+  return 0;
+}
+
+function sourceFilesUnder(dir) {
+  if (!fs.existsSync(dir)) return [];
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...sourceFilesUnder(full));
+    else out.push(full);
+  }
+  return out;
+}
+
+function assetsOnly() {
+  const web = path.join(ROOT, 'src', 'web');
+  const paths = sourceFilesUnder(web);
+  if (!paths.length) {
+    console.error('[asset-directory] src/web has no split presentation sources');
+    return 1;
+  }
+  const files = Object.fromEntries(paths.map((filename) => [
+    path.relative(web, filename),
+    fs.readFileSync(filename, 'utf8'),
+  ]));
+  const problems = assetProblems(files);
+  if (problems.length) {
+    for (const { check, detail } of problems) console.error(`[${check}] ${detail}`);
+    return 1;
+  }
+  console.log(`presentation assets OK — ${paths.length} local sources; no external origins or inline executable/style contexts`);
+  return 0;
+}
+
+if (args.includes('--asset-selftest')) process.exit(assetSelftest());
+if (args.includes('--assets-only')) process.exit(assetsOnly());
 
 const SYNTAX_CASES = [
   { name: 'valid', html: '<script>const ok = 1;</script>', want: null },
@@ -82,19 +303,245 @@ function syntaxSelftest() {
 if (args.includes('--syntax-selftest')) process.exit(syntaxSelftest());
 
 function syntaxOnly() {
-  const problems = ['dashboard', 'setup'].flatMap((page) => {
-    const filename = path.join('src', `${page}.html`);
-    return syntaxProblems(fs.readFileSync(path.join(ROOT, filename), 'utf8'), filename);
-  });
+  const scripts = ['shared.js', 'dashboard.js', 'settings.js', 'setup.js', 'login.js'];
+  const problems = [];
+  for (const script of scripts) {
+    const filename = path.join('src', 'web', script);
+    const full = path.join(ROOT, filename);
+    if (!fs.existsSync(full)) {
+      problems.push({ check: 'script-file', detail: `${filename}: missing` });
+      continue;
+    }
+    try {
+      new vm.Script(fs.readFileSync(full, 'utf8'), { filename });
+    } catch (err) {
+      problems.push({ check: 'syntax', detail: `${filename}: ${err.message}` });
+    }
+  }
   if (problems.length) {
     for (const { check, detail } of problems) console.error(`[${check}] ${detail}`);
     return 1;
   }
-  console.log('embedded page syntax OK — dashboard and setup parse');
+  console.log('presentation script syntax OK — all split sources parse');
   return 0;
 }
 
 if (args.includes('--syntax-only')) process.exit(syntaxOnly());
+
+function servedPageSelftest() {
+  const failures = [];
+  const runSource = String(main);
+  if (typeof probeCatalogHtml !== 'function') {
+    failures.push('catalog probe does not accept server-owned HTML');
+  } else if (/readFileSync\s*\(\s*PAGE\b/.test(String(probeCatalogHtml))) {
+    failures.push('catalog probe still reads a private page source');
+  }
+  if (!runSource.includes("'Fetch.getResponseBody'")) {
+    failures.push('probe does not read the real response body');
+  }
+  if (!runSource.includes('serverPageResponses.add')) {
+    failures.push('probe does not record server response provenance');
+  }
+  if (runSource.includes('probePageHtml()')) {
+    failures.push('test-only page assembly remains reachable');
+  }
+  if (failures.length) {
+    for (const failure of failures) console.error(`[served-page] ${failure}`);
+    return 1;
+  }
+  console.log('served-page selftest ok — probe derives from and tracks the real response');
+  return 0;
+}
+
+if (args.includes('--served-page-selftest')) process.exit(servedPageSelftest());
+
+function renderTempdirs() {
+  return new Set(fs.readdirSync(os.tmpdir())
+    .filter(name => name.startsWith('nimproxy-render-'))
+    .map(name => path.join(os.tmpdir(), name)));
+}
+
+function processDescendants(rootPid) {
+  if (process.platform === 'win32') return [];
+  const rows = execFileSync('ps', ['-eo', 'pid=,ppid='], { encoding: 'utf8' })
+    .trim().split('\n').map(line => line.trim().split(/\s+/).map(Number));
+  const found = [];
+  const pending = [rootPid];
+  while (pending.length) {
+    const parent = pending.pop();
+    for (const [pid, ppid] of rows) {
+      if (ppid !== parent || found.includes(pid)) continue;
+      found.push(pid);
+      pending.push(pid);
+    }
+  }
+  return found;
+}
+
+async function cleanupSelftest() {
+  const realChrome = findChrome();
+  if (!realChrome) {
+    console.error('cleanup selftest needs Chromium');
+    return 2;
+  }
+  const probeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nimproxy-cleanup-probe-'));
+  const wrapper = path.join(probeRoot, 'chrome-wrapper.js');
+  const pidFile = path.join(probeRoot, 'pids.json');
+  const writerSource = [
+    '"use strict";',
+    'const fs = require("fs");',
+    'const path = require("path");',
+    'const profile = process.argv[1];',
+    'let n = 0;',
+    'setInterval(() => {',
+    '  try {',
+    '    fs.mkdirSync(profile, { recursive: true });',
+    '    fs.writeFileSync(path.join(profile, "cleanup-race-" + (n++ % 8)), "x");',
+    '  } catch (_) {}',
+    '}, 5);',
+  ].join('\n');
+  const wrapperSource = [
+    '#!/usr/bin/env node',
+    '"use strict";',
+    'const fs = require("fs");',
+    'const { spawn } = require("child_process");',
+    'const args = process.argv.slice(2);',
+    'const profileArg = args.find(value => value.startsWith("--user-data-dir="));',
+    'const profile = profileArg.slice("--user-data-dir=".length);',
+    'const chrome = spawn(process.env.NIMPROXY_REAL_CHROME, args,',
+    '  { stdio: ["ignore", "pipe", "pipe"] });',
+    'chrome.stdout.pipe(process.stdout);',
+    'chrome.stderr.pipe(process.stderr);',
+    `const writer = spawn(process.execPath, ["-e", ${JSON.stringify(writerSource)}, profile],`,
+    '  { stdio: "ignore" });',
+    'fs.writeFileSync(process.env.NIMPROXY_CLEANUP_PID_FILE,',
+    '  JSON.stringify({ chrome: chrome.pid, writer: writer.pid }));',
+    'chrome.on("exit", code => { process.exitCode = code || 0; });',
+  ].join('\n');
+  fs.writeFileSync(wrapper, wrapperSource, { mode: 0o700 });
+
+  const before = renderTempdirs();
+  let stdout = '';
+  let stderr = '';
+  const child = spawn(process.execPath, [__filename, '--page', 'setup'], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      CHROME: wrapper,
+      NIMPROXY_CLEANUP_PID_FILE: pidFile,
+      NIMPROXY_REAL_CHROME: realChrome,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  child.stdout.on('data', chunk => { stdout += chunk.toString(); });
+  child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+  const result = await Promise.race([
+    new Promise(resolve => child.once('exit', code => resolve({ code, timedOut: false }))),
+    sleep(30000).then(() => ({ code: null, timedOut: true })),
+  ]);
+  if (result.timedOut) child.kill('SIGKILL');
+  await sleep(300);
+  const leaked = [...renderTempdirs()].filter(dir => !before.has(dir));
+
+  let pids = [];
+  try {
+    const recorded = JSON.parse(fs.readFileSync(pidFile, 'utf8'));
+    pids = [recorded.chrome, recorded.writer].filter(Number.isInteger);
+  } catch (_) {}
+  const descendants = pids.flatMap(processDescendants);
+  for (const pid of [...new Set([...descendants.reverse(), ...pids])]) {
+    try { process.kill(pid, 'SIGKILL'); } catch (_) {}
+  }
+  await sleep(300);
+  for (const dir of leaked) {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+
+  const failures = [];
+  if (result.timedOut) failures.push('render process stayed alive after reporting its result');
+  else if (result.code !== 0) failures.push(`render process exited ${result.code}`);
+  if (leaked.length) failures.push(`left ${leaked.length} nimproxy-render temp director${leaked.length === 1 ? 'y' : 'ies'}`);
+  if (/note: left .*nimproxy-render-/.test(stderr)) failures.push('cleanup failure was downgraded to a note');
+
+  const startupMarker = path.join(probeRoot, 'proxy-exit.json');
+  const startupBefore = renderTempdirs();
+  let startupStderr = '';
+  const startup = spawn(process.execPath, [__filename, '--page', 'setup'], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      CHROME: realChrome,
+      NIMPROXY_RENDER_HEALTH_PATH: '/cleanup-selftest-never-ready',
+      NIMPROXY_RENDER_HEALTH_TIMEOUT_MS: '200',
+      NIMPROXY_RENDER_PROXY_EXIT_MARKER: startupMarker,
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  startup.stderr.on('data', chunk => { startupStderr += chunk.toString(); });
+  const startupResult = await Promise.race([
+    new Promise(resolve => startup.once('exit', code => resolve({ code, timedOut: false }))),
+    sleep(10000).then(() => ({ code: null, timedOut: true })),
+  ]);
+  if (startupResult.timedOut) startup.kill('SIGKILL');
+  await sleep(100);
+  const startupLeaked = [...renderTempdirs()].filter(dir => !startupBefore.has(dir));
+  let startupExit = null;
+  try {
+    startupExit = JSON.parse(fs.readFileSync(startupMarker, 'utf8'));
+  } catch (_) {}
+  if (startupResult.timedOut) failures.push('startup-timeout render process stayed alive');
+  else if (startupResult.code !== 2) failures.push(`startup-timeout render process exited ${startupResult.code}`);
+  if (!startupStderr.includes('proxy did not become healthy')) {
+    failures.push('startup-timeout did not report the health failure');
+  }
+  if (!startupExit?.runDirectoryExisted) {
+    failures.push('startup-timeout removed the run directory before the proxy exit was observed');
+  }
+  if (startupLeaked.length) {
+    failures.push(`startup-timeout left ${startupLeaked.length} nimproxy-render temp director${startupLeaked.length === 1 ? 'y' : 'ies'}`);
+  }
+
+  const localeBefore = renderTempdirs();
+  let localeStderr = '';
+  const locale = spawn(
+    process.execPath,
+    [__filename, '--locale', 'cleanup-selftest-missing'],
+    {
+      cwd: ROOT,
+      env: { ...process.env, CHROME: realChrome },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    },
+  );
+  locale.stderr.on('data', chunk => { localeStderr += chunk.toString(); });
+  const localeResult = await Promise.race([
+    new Promise(resolve => locale.once('exit', code => resolve({ code, timedOut: false }))),
+    sleep(30000).then(() => ({ code: null, timedOut: true })),
+  ]);
+  if (localeResult.timedOut) locale.kill('SIGKILL');
+  await sleep(100);
+  const localeLeaked = [...renderTempdirs()].filter(dir => !localeBefore.has(dir));
+  if (localeResult.timedOut) failures.push('missing-locale render process stayed alive');
+  else if (localeResult.code !== 1) failures.push(`missing-locale render process exited ${localeResult.code}`);
+  if (!localeStderr.includes('missing locale locales/cleanup-selftest-missing.json')) {
+    failures.push('missing-locale failure hid its originating diagnostic');
+  }
+  if (localeLeaked.length) {
+    failures.push(`missing-locale left ${localeLeaked.length} nimproxy-render temp director${localeLeaked.length === 1 ? 'y' : 'ies'}`);
+  }
+
+  for (const dir of [...startupLeaked, ...localeLeaked]) {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+  fs.rmSync(probeRoot, { recursive: true, force: true });
+
+  if (failures.length) {
+    for (const failure of failures) console.error(`[cleanup] ${failure}`);
+    if (stderr.trim()) console.error(stderr.trim());
+    return 1;
+  }
+  console.log('cleanup selftest ok — browser/proxy lifecycle and failure diagnostics passed');
+  return 0;
+}
 // Which embedded page to drive. The dashboard renders from captured payloads;
 // the wizard has no payloads and is driven by filling and clicking instead.
 // Both were being proved by hand-built one-off harnesses, which is more work
@@ -108,8 +555,7 @@ if (!['dashboard', 'setup'].includes(pageArg)) {
   process.exit(2);
 }
 const IS_SETUP = pageArg === 'setup';
-const PAGE_REL = path.join('src', `${pageArg}.html`);
-const PAGE = path.join(ROOT, PAGE_REL);
+const PAGE_REL = path.join('src', 'web', `${pageArg}.html`);
 const CATALOG_PREFIX = IS_SETUP ? 'setup-' : '';
 const localeArg = (() => {
   const i = args.indexOf('--locale');
@@ -214,31 +660,32 @@ async function evaluateRaw(browser, sessionId, expression) {
   return r.result.value;
 }
 
-/* ---------- build the page under test ------------------------------------- */
+/* ---------- production server and captured API responses ------------------ */
 
-function buildPage(tmpdir) {
-  let html = fs.readFileSync(PAGE, 'utf8');
-
-  // The wizard fetches nothing at load; it only POSTs on user action. Requiring
-  // the dashboard fixtures for it would be a fake dependency.
+function loadFixtures() {
   const need = IS_SETUP ? [] : ['config.json', 'dashboard.json', 'dashboard-now.json'];
   for (const f of need) {
     const p = path.join(FIXTURES, f);
     if (!fs.existsSync(p)) {
-      console.error(`missing fixture ${path.relative(ROOT, p)} — see ${path.relative(ROOT, path.join(FIXTURES, 'README.md'))}`);
-      process.exit(2);
+      const error = new Error(`missing fixture ${path.relative(ROOT, p)} — see ${path.relative(ROOT, path.join(FIXTURES, 'README.md'))}`);
+      error.exitCode = 2;
+      throw error;
     }
   }
-  const fixtures = Object.fromEntries(
+  return Object.fromEntries(
     need.map((f) => [f, JSON.parse(fs.readFileSync(path.join(FIXTURES, f), 'utf8'))]),
   );
+}
 
+function probeCatalogHtml(serverHtml) {
+  let html = serverHtml;
   if (localeArg) {
     const catalogFile = `${CATALOG_PREFIX}${localeArg}.json`;
     const cp = path.join(ROOT, 'locales', catalogFile);
     if (!fs.existsSync(cp)) {
-      console.error(`missing locale ${path.relative(ROOT, cp)}`);
-      process.exit(2);
+      const error = new Error(`missing locale ${path.relative(ROOT, cp)}`);
+      error.exitCode = 2;
+      throw error;
     }
     const cat = fs.readFileSync(cp, 'utf8').trim();
     html = html.replace(
@@ -246,80 +693,113 @@ function buildPage(tmpdir) {
       (_m, a, b) => a + cat + b,
     );
   }
-
-  // Replay the captured payloads. Anything else (fonts, CDN logos) resolves to
-  // a rejected promise, which is what an offline install already does.
-  // In-page capture as well as CDP: the page boots from an async IIFE, so a
-  // throw there surfaces as an unhandled rejection, which Runtime.exceptionThrown
-  // does not reliably report. A gate blind to that is blind to boot failure.
-  // The probe string carries both directions of the contextual-sink rule:
-  //   `&` and `'`  — escaped as text, they surface as literal entities
-  //   `<b>`        — parsed as HTML, it becomes a real ELEMENT in the DOM
-  // Without the tag the probe was a double-escape detector only, structurally
-  // blind to the missing-escape direction — which is the XSS direction.
   if (escapeProbe) {
     html = html.replace(
       /(<script type="application\/json" id="i18n-catalog">)([\s\S]*?)(<\/script>)/,
       (_m, a, json, b) => {
         const cat = JSON.parse(json);
-        for (const k of Object.keys(cat.messages)) {
-          const v = cat.messages[k];
-          if (typeof v === 'string') cat.messages[k] = v + PROBE_SUFFIX;
-          else v.en = v.en + PROBE_SUFFIX;
+        for (const key of Object.keys(cat.messages)) {
+          const value = cat.messages[key];
+          if (typeof value === 'string') cat.messages[key] = value + PROBE_SUFFIX;
+          else value.en += PROBE_SUFFIX;
         }
         return a + JSON.stringify(cat) + b;
       },
     );
   }
+  const withoutCatalog = value => value.replace(
+    /(<script type="application\/json" id="i18n-catalog">)[\s\S]*?(<\/script>)/,
+    '$1[PROBE CATALOG]$2',
+  );
+  if (withoutCatalog(html) !== withoutCatalog(serverHtml)) {
+    throw new Error('probe changed server HTML outside the catalog body');
+  }
+  return html;
+}
 
-  const stub = `<script>
-window.__fetched = [];
-window.__pageErrors = [];
-window.addEventListener('error', function (e) {
-  window.__pageErrors.push({ kind: 'error', msg: e.message,
-    line: e.lineno, col: e.colno, stack: e.error && e.error.stack });
-});
-window.addEventListener('unhandledrejection', function (e) {
-  var r = e.reason;
-  window.__pageErrors.push({ kind: 'unhandledrejection',
-    msg: String((r && r.message) || r), stack: r && r.stack });
-});
-(function () {
-  const FIX = ${JSON.stringify(fixtures)};
-  window.fetch = function (input) {
-    const url = String(typeof input === 'string' ? input : input.url);
-    window.__fetched.push(url);
-    let body = null;
-    if (url.includes('/api/config')) body = FIX['config.json'];
-    else if (url.includes('/api/dashboard/now')) body = FIX['dashboard-now.json'];
-    else if (url.includes('/api/dashboard')) body = FIX['dashboard.json'];
-    // The wizard's only two endpoints. Hand-written rather than captured
-    // because a real /setup claims a proxy and mints a secret; the shapes are
-    // asserted against the Rust handlers by the openapi test.
-    // Shapes taken from openapi.json (ValidateKeyResponse, SetupResponse /
-    // MintedClientKey), not invented — a stub that answers in a shape the
-    // server never sends would prove the page works against fiction. The
-    // openapi test keeps that spec honest against the handlers.
-    else if (url.includes('/setup/validate-key')) body = { ok: true, models: 63 };
-    else if (url.endsWith('/setup')) {
-      body = { ok: true, client_key: { name: 'default', secret: 'npk_probe_secret' } };
-    }
-    if (body === null) return Promise.reject(new Error('offline: ' + url));
-    return Promise.resolve(new Response(JSON.stringify(body), {
-      status: 200, headers: { 'Content-Type': 'application/json' },
-    }));
+function configuredStore() {
+  return {
+    version: 1,
+    upstream: {
+      base_url: 'http://127.0.0.1:9',
+      nim_keys: [{ key: 'render-fixture-key', owner: 'root', enabled: true, rpm: 40 }],
+    },
+    client_auth: { mode: 'open', keys: [] },
+    limits: { heartbeat_secs: 1 },
+    users: [{
+      username: 'root',
+      password_hash: 'pbkdf2-sha256$1000$00000000000000000000000000000000$dd5fe0be04ca7f9e24642561a5d4635c52c40be82cbd7587b5eddc913ad3c7a7',
+      role: 'superuser',
+    }],
   };
-})();
-</script>`;
-  // Every injected line shifts the page's own line numbers, and a gate that
-  // reports the wrong line is a gate nobody trusts. Record the shift and undo
-  // it when reporting.
-  LINE_OFFSET = (stub.match(/\n/g) || []).length;
-  html = html.replace(/<head>/i, '<head>' + stub);
+}
 
-  const out = path.join(tmpdir, 'dashboard.html');
-  fs.writeFileSync(out, html);
-  return out;
+async function freePort() {
+  return await new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const port = server.address().port;
+      server.close((error) => error ? reject(error) : resolve(port));
+    });
+  });
+}
+
+async function startProxy(tmpdir) {
+  const binary = path.join(ROOT, 'target', 'debug', 'nim-proxy');
+  execFileSync('cargo', ['build', '--quiet', '--bin', 'nim-proxy'], {
+    cwd: ROOT,
+    stdio: 'inherit',
+  });
+  const dataDir = path.join(tmpdir, 'data');
+  fs.mkdirSync(dataDir);
+  if (!IS_SETUP) {
+    fs.writeFileSync(
+      path.join(dataDir, 'config.json'),
+      JSON.stringify(configuredStore(), null, 2),
+    );
+  }
+  const port = await freePort();
+  const proc = spawn(binary, [], {
+    cwd: tmpdir,
+    env: {
+      DATA_DIR: dataDir,
+      HISTORY_SAMPLE_SECS: '3600',
+      HOST: '127.0.0.1',
+      PORT: String(port),
+      RUST_LOG: 'nim_proxy=warn',
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  if (process.env.NIMPROXY_RENDER_PROXY_EXIT_MARKER) {
+    proc.once('exit', () => {
+      fs.writeFileSync(
+        process.env.NIMPROXY_RENDER_PROXY_EXIT_MARKER,
+        JSON.stringify({
+          pid: proc.pid,
+          runDirectoryExisted: fs.existsSync(tmpdir),
+        }),
+      );
+    });
+  }
+  const origin = `http://127.0.0.1:${port}`;
+  let stderr = '';
+  proc.stderr.on('data', chunk => { stderr += chunk.toString(); });
+  const healthPath = process.env.NIMPROXY_RENDER_HEALTH_PATH || '/health';
+  const healthTimeoutMs = Number(process.env.NIMPROXY_RENDER_HEALTH_TIMEOUT_MS || 20000);
+  const deadline = Date.now() + healthTimeoutMs;
+  while (Date.now() < deadline) {
+    if (proc.exitCode !== null) throw new Error(`proxy exited early: ${proc.exitCode}\n${stderr}`);
+    try {
+      const response = await fetch(origin + healthPath);
+      if (response.ok) return { proc, origin };
+    } catch (_) {}
+    await sleep(50);
+  }
+  if (!await stopChild(proc, 'SIGKILL')) {
+    throw new Error(`proxy did not become healthy and did not exit\n${stderr}`);
+  }
+  throw new Error(`proxy did not become healthy\n${stderr}`);
 }
 
 /* ---------- the run -------------------------------------------------------- */
@@ -445,17 +925,129 @@ function frozenTokens() {
   return JSON.parse(out);
 }
 
+function waitForProcessExit(proc, timeoutMs) {
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve(true);
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = value => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      proc.removeListener('exit', onExit);
+      resolve(value);
+    };
+    const onExit = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    proc.once('exit', onExit);
+    if (proc.exitCode !== null || proc.signalCode !== null) finish(true);
+  });
+}
+
+async function stopChild(proc, firstSignal = 'SIGTERM') {
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) return true;
+  proc.kill(firstSignal);
+  if (await waitForProcessExit(proc, 2000)) return true;
+  if (firstSignal !== 'SIGKILL') proc.kill('SIGKILL');
+  return firstSignal === 'SIGKILL' ? false : await waitForProcessExit(proc, 2000);
+}
+
+function browserGroupAlive(pid) {
+  if (!pid || process.platform === 'win32') return false;
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    return error.code !== 'ESRCH';
+  }
+}
+
+async function waitForBrowserGroupExit(pid, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (browserGroupAlive(pid) && Date.now() < deadline) await sleep(25);
+  return !browserGroupAlive(pid);
+}
+
+async function shutdownRun(browser, browserProc, proxyProc, tmpdir) {
+  const failures = [];
+  if (browser) {
+    try {
+      await Promise.race([
+        browser.send('Browser.close'),
+        sleep(2000).then(() => { throw new Error('Browser.close timed out'); }),
+      ]);
+    } catch (_) {
+      // The socket commonly closes before CDP can acknowledge Browser.close.
+      // Process and group exit below are the authoritative result.
+    }
+  }
+
+  const browserExited = await waitForProcessExit(browserProc, 2000);
+  let browserTreeExited = process.platform === 'win32'
+    ? browserExited
+    : await waitForBrowserGroupExit(browserProc?.pid, browserExited ? 250 : 0);
+  if (!browserExited || !browserTreeExited) {
+    try {
+      if (process.platform === 'win32') browserProc?.kill('SIGKILL');
+      else if (browserProc?.pid) process.kill(-browserProc.pid, 'SIGKILL');
+    } catch (error) {
+      if (error.code !== 'ESRCH') failures.push(`browser termination: ${error.message}`);
+    }
+    const forcedParentExit = await waitForProcessExit(browserProc, 2000);
+    browserTreeExited = process.platform === 'win32'
+      ? forcedParentExit
+      : await waitForBrowserGroupExit(browserProc?.pid, 2000);
+    if (!forcedParentExit || !browserTreeExited) {
+      failures.push('browser process tree did not exit');
+    }
+  }
+  try { browser?.ws.close(); } catch (_) {}
+
+  if (!await stopChild(proxyProc)) {
+    failures.push('proxy process did not exit');
+  }
+
+  if (tmpdir) {
+    try {
+      fs.rmSync(tmpdir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    } catch (error) {
+      failures.push(`remove ${tmpdir}: ${error.code || error.message}`);
+    }
+    if (fs.existsSync(tmpdir)) failures.push(`run directory still exists: ${tmpdir}`);
+  }
+  if (failures.length) throw new Error(`render cleanup failed: ${failures.join('; ')}`);
+}
+
+function reportedFailure() {
+  const error = new Error('render proof failed');
+  error.reported = true;
+  error.exitCode = 1;
+  return error;
+}
+
 async function main() {
   const chrome = findChrome();
   if (!chrome) {
-    console.error('no chromium found. Set CHROME=/path/to/chrome.');
-    process.exit(2);
+    const error = new Error('no chromium found. Set CHROME=/path/to/chrome.');
+    error.exitCode = 2;
+    throw error;
   }
 
+  const fixtures = loadFixtures();
   const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'nimproxy-render-'));
-  const pageFile = buildPage(tmpdir);
+  let proxy = null;
+  let browserProc = null;
+  let browser = null;
+  let cleanupPromise = null;
+  const cleanupRun = () => {
+    if (!cleanupPromise) {
+      cleanupPromise = shutdownRun(browser, browserProc, proxy?.proc, tmpdir);
+    }
+    return cleanupPromise;
+  };
+  try {
+    proxy = await startProxy(tmpdir);
 
-  const proc = spawn(chrome, [
+    browserProc = spawn(chrome, [
     '--headless=new',
     '--disable-gpu',
     '--no-sandbox',
@@ -464,12 +1056,15 @@ async function main() {
     '--remote-debugging-port=0',
     `--user-data-dir=${path.join(tmpdir, 'profile')}`,
     'about:blank',
-  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    ], {
+      detached: process.platform !== 'win32',
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
 
   const wsUrl = await new Promise((resolve, reject) => {
     let buf = '';
     const timer = setTimeout(() => reject(new Error('browser did not report a debug port')), 20000);
-    proc.stderr.on('data', (d) => {
+    browserProc.stderr.on('data', (d) => {
       buf += d.toString();
       const m = buf.match(/ws:\/\/[^\s]+/);
       if (m) {
@@ -477,16 +1072,84 @@ async function main() {
         resolve(m[0]);
       }
     });
-    proc.on('exit', (c) => reject(new Error('browser exited early: ' + c)));
+    browserProc.on('exit', (c) => reject(new Error('browser exited early: ' + c)));
   });
 
-  const browser = await CDP.connect(wsUrl);
+  browser = await CDP.connect(wsUrl);
   const { targetId } = await browser.send('Target.createTarget', { url: 'about:blank' });
   const { sessionId } = await browser.send('Target.attachToTarget', { targetId, flatten: true });
   const S = sessionId;
 
   const errors = [];
   const consoleErrors = [];
+  const requestUrls = new Map();
+  const initialAssetErrors = [];
+  const requestedPresentation = new Set();
+  const servedPresentation = new Set();
+  const serverPageResponses = new Set();
+  const fetchOperations = new Set();
+  const fetched = [];
+  const pagePath = IS_SETUP ? '/setup' : '/';
+  const presentationPath = value =>
+    value === '/' || value === '/setup' || value.startsWith('/assets/');
+  const headerValue = (headers, name) =>
+    (headers || []).find(header => header.name.toLowerCase() === name)?.value;
+  async function handleFetchPaused(params) {
+    const { request } = params;
+    const url = new URL(request.url);
+    if (params.responseStatusCode !== undefined) {
+      const headers = params.responseHeaders || [];
+      if (url.pathname !== pagePath || request.method !== 'GET') {
+        throw new Error(`unexpected response-stage interception: ${request.method} ${url.pathname}`);
+      }
+      if (params.responseStatusCode !== 200) {
+        throw new Error(`server page response was ${params.responseStatusCode} ${url.pathname}`);
+      }
+      if (headerValue(headers, 'content-type') !== 'text/html; charset=utf-8'
+          || headerValue(headers, 'cache-control') !== 'no-store'
+          || headerValue(headers, 'content-security-policy') !== PRESENTATION_CSP) {
+        throw new Error(`server page response headers violated the presentation contract: ${url.pathname}`);
+      }
+      const response = await browser.send(
+        'Fetch.getResponseBody',
+        { requestId: params.requestId },
+        S,
+      );
+      const serverHtml = response.base64Encoded
+        ? Buffer.from(response.body, 'base64').toString('utf8')
+        : response.body;
+      const body = probeCatalogHtml(serverHtml);
+      serverPageResponses.add(url.pathname);
+      await browser.send('Fetch.fulfillRequest', {
+        requestId: params.requestId,
+        responseCode: params.responseStatusCode,
+        responseHeaders: headers.filter(header =>
+          !['content-length', 'content-encoding', 'transfer-encoding']
+            .includes(header.name.toLowerCase())),
+        body: Buffer.from(body).toString('base64'),
+      }, S);
+      return;
+    }
+    let body = null;
+    if (url.pathname === '/api/config') body = fixtures['config.json'];
+    else if (url.pathname === '/api/dashboard/now') body = fixtures['dashboard-now.json'];
+    else if (url.pathname === '/api/dashboard') body = fixtures['dashboard.json'];
+    else if (url.pathname === '/setup/validate-key' && request.method === 'POST')
+      body = { ok: true, models: 63 };
+    else if (url.pathname === '/setup' && request.method === 'POST')
+      body = { ok: true, client_key: { name: 'default', secret: 'npk_probe_secret' } };
+    if (body !== null) {
+      fetched.push(url.pathname);
+      await browser.send('Fetch.fulfillRequest', {
+        requestId: params.requestId,
+        responseCode: 200,
+        responseHeaders: [{ name: 'Content-Type', value: 'application/json' }],
+        body: Buffer.from(JSON.stringify(body)).toString('base64'),
+      }, S);
+    } else {
+      await browser.send('Fetch.continueRequest', { requestId: params.requestId }, S);
+    }
+  }
   browser.on((msg) => {
     if (msg.sessionId !== S) return;
     if (msg.method === 'Runtime.exceptionThrown') {
@@ -498,10 +1161,55 @@ async function main() {
       });
     }
     if (msg.method === 'Log.entryAdded' && msg.params.entry.level === 'error') {
-      consoleErrors.push('[' + msg.params.entry.source + '] ' + msg.params.entry.text);
+      const entry = msg.params.entry;
+      consoleErrors.push('[' + entry.source + '] ' + entry.text
+        + (entry.url ? ` (${entry.url})` : ''));
     }
     if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error') {
       consoleErrors.push(msg.params.args.map((a) => a.value ?? a.description).join(' '));
+    }
+    if (msg.method === 'Network.requestWillBeSent') {
+      const url = msg.params.request.url;
+      requestUrls.set(msg.params.requestId, url);
+      if (url.startsWith('http') && !url.startsWith(proxy.origin)) {
+        initialAssetErrors.push(`external request ${url}`);
+      }
+      if (url.startsWith(proxy.origin)) {
+        const pathname = new URL(url).pathname;
+        if (presentationPath(pathname)) requestedPresentation.add(pathname);
+      }
+    }
+    if (msg.method === 'Network.responseReceived') {
+      const { response } = msg.params;
+      const url = new URL(response.url);
+      if (response.url.startsWith(proxy.origin)
+          && (url.pathname === '/' || url.pathname === '/setup' || url.pathname.startsWith('/assets/'))
+          && response.status >= 400) {
+        initialAssetErrors.push(`${response.status} ${url.pathname}`);
+      } else if (response.url.startsWith(proxy.origin)
+          && (url.pathname === '/' || url.pathname === '/setup' || url.pathname.startsWith('/assets/'))) {
+        servedPresentation.add(url.pathname);
+      }
+    }
+    if (msg.method === 'Network.loadingFailed') {
+      const url = requestUrls.get(msg.params.requestId) || 'unknown request';
+      if (url.startsWith(proxy.origin)) {
+        initialAssetErrors.push(`${msg.params.errorText} ${url}`);
+      }
+    }
+    if (msg.method === 'Fetch.requestPaused') {
+      const operation = handleFetchPaused(msg.params)
+        .catch(async error => {
+          errors.push({ text: error.message, line: 0, col: 0 });
+          try {
+            await browser.send('Fetch.failRequest', {
+              requestId: msg.params.requestId,
+              errorReason: 'Failed',
+            }, S);
+          } catch (_) {}
+        })
+        .finally(() => fetchOperations.delete(operation));
+      fetchOperations.add(operation);
     }
   });
 
@@ -510,14 +1218,32 @@ async function main() {
   await browser.send('Page.enable', {}, S);
   await browser.send('DOM.enable', {}, S);
   await browser.send('Network.enable', {}, S);
-
-  // The page render-blocks on the Google Fonts stylesheet. Offline it hangs
-  // rather than failing, the parser never reaches the page's own <script>, and
-  // a check that waits a fixed interval then measures the DOM concludes that a
-  // page which never booted is fine. Block them so they fail immediately — the
-  // same monogram/system-font fallback an offline install already takes.
-  await browser.send('Network.setBlockedURLs', {
-    urls: ['*fonts.googleapis.com*', '*fonts.gstatic.com*', '*unpkg.com*'],
+  const fetchPatterns = [{ urlPattern: '*', requestStage: 'Request' }];
+  if (escapeProbe || localeArg) {
+    fetchPatterns.push({
+      urlPattern: proxy.origin + pagePath,
+      requestStage: 'Response',
+    });
+  }
+  await browser.send('Fetch.enable', { patterns: fetchPatterns }, S);
+  if (!IS_SETUP) {
+    await browser.send('Network.setExtraHTTPHeaders', {
+      headers: { Authorization: 'Bearer root:test-password-1' },
+    }, S);
+  }
+  await browser.send('Page.addScriptToEvaluateOnNewDocument', {
+    source: `
+      window.__pageErrors = [];
+      window.addEventListener('error', function (e) {
+        window.__pageErrors.push({ kind: 'error', msg: e.message,
+          line: e.lineno, col: e.colno, stack: e.error && e.error.stack });
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e.reason;
+        window.__pageErrors.push({ kind: 'unhandledrejection',
+          msg: String((r && r.message) || r), stack: r && r.stack });
+      });
+    `,
   }, S);
 
   const loaded = new Promise((resolve) => {
@@ -525,22 +1251,43 @@ async function main() {
       if (m.sessionId === S && m.method === 'Page.loadEventFired') resolve();
     });
   });
-  await browser.send('Page.navigate', { url: 'file://' + pageFile }, S);
+  await browser.send('Page.navigate', {
+    url: proxy.origin + (IS_SETUP ? '/setup' : '/'),
+  }, S);
   await Promise.race([loaded, sleep(20000)]);
 
   const state = await evaluateRaw(browser, S, 'document.readyState');
   if (state !== 'complete') {
     console.error(`FAIL — page never finished loading (readyState=${state}).`);
-    proc.kill('SIGKILL');
-    process.exit(1);
+    throw reportedFailure();
   }
   // let the first poll land and paint
   await sleep(1500);
+  await Promise.all([...fetchOperations]);
+  const requiredPresentation = IS_SETUP
+    ? ['/setup', '/assets/public/public.css', '/assets/public/setup.js']
+    : ['/', '/assets/operator/operator.css', '/assets/operator/shared.js',
+       '/assets/operator/dashboard.js', '/assets/operator/settings.js'];
+  for (const resource of requiredPresentation) {
+    if (!requestedPresentation.has(resource)) initialAssetErrors.push(`not requested ${resource}`);
+    if (!servedPresentation.has(resource)) initialAssetErrors.push(`not served ${resource}`);
+  }
+  if ((escapeProbe || localeArg) && !serverPageResponses.has(pagePath)) {
+    initialAssetErrors.push(`probe did not mutate a server response ${pagePath}`);
+  }
+  if (initialAssetErrors.length) {
+    console.error('FAIL — initial presentation asset load was incomplete or external');
+    for (const error of new Set(initialAssetErrors)) console.error('  ' + error);
+    for (const cause of new Set(errors.map(error => error.text))) {
+      console.error('  cause: ' + cause);
+    }
+    throw reportedFailure();
+  }
 
   if (process.env.DEBUG) {
     const diag = await browser.send('Runtime.evaluate', {
       expression: `JSON.stringify({
-        fetches: (window.__fetched || []).slice(0, 8),
+        fetches: ${JSON.stringify(fetched)}.slice(0, 8),
         svgAny: document.querySelectorAll('svg').length,
         svgBig: Array.from(document.querySelectorAll('svg')).filter(s => {
           const r = s.getBoundingClientRect(); return r.width > 80 && r.height > 40; }).length,
@@ -569,6 +1316,52 @@ async function main() {
     }
     return r.result.value;
   };
+
+  /* Generated metric geometry changes on every poll. Prove the CSSOM bridge
+     bounds its cache/rules without invalidating a live node during compaction. */
+  if (!IS_SETUP) {
+    const dynamicStyleFailure = await evaluate(`
+      (() => {
+        if (typeof MAX_DYNAMIC_STYLE_RULES !== 'number')
+          return 'MAX_DYNAMIC_STYLE_RULES is not defined';
+        const anchor = document.createElement('div');
+        anchor.dataset.style = 'position:absolute;width:37px;height:11px';
+        document.body.appendChild(anchor);
+        applyDynamicStyles(anchor);
+        const before = anchor.getBoundingClientRect();
+        const compactionsBefore = dynamicStyleCompactions;
+        for (let i = 0; i < MAX_DYNAMIC_STYLE_RULES * 2; i++) {
+          const node = document.createElement('div');
+          node.dataset.style = 'position:absolute;width:' + (1000 + i) + 'px';
+          document.body.appendChild(node);
+          applyDynamicStyles(node);
+          node.remove();
+        }
+        const after = anchor.getBoundingClientRect();
+        const sheet = [...document.styleSheets].find(candidate =>
+          candidate.href?.endsWith('/assets/operator/operator.css'));
+        const rules = [...sheet.cssRules].filter(rule =>
+          rule.selectorText?.startsWith('.dynamic-style-')).length;
+        const problem =
+          dynamicStyleCompactions <= compactionsBefore
+            ? 'probe did not exercise live-node compaction'
+            : dynamicStyleClasses.size > MAX_DYNAMIC_STYLE_RULES
+            ? 'dynamic style cache exceeded its bound'
+            : rules > MAX_DYNAMIC_STYLE_RULES
+              ? 'dynamic stylesheet exceeded its bound'
+              : rules !== dynamicStyleClasses.size
+                ? 'dynamic style cache and stylesheet disagree'
+              : before.width !== after.width || before.height !== after.height
+                ? 'compaction changed live-node geometry'
+                : '';
+        anchor.remove();
+        return problem;
+      })()`);
+    if (dynamicStyleFailure) {
+      console.error(`[dynamic-style-bound] FAIL — ${dynamicStyleFailure}`);
+      throw reportedFailure();
+    }
+  }
 
   /* Exercise the page's real ID/descriptor runtime. Static self-tests cover
      source-level forbidden contexts; this probe proves the helpers use native
@@ -770,8 +1563,7 @@ async function main() {
       })()`);
     if (sinkContext) {
       console.error(`[sink-context] FAIL — ${PAGE_REL}: ${sinkContext}`);
-      proc.kill('SIGKILL');
-      process.exit(1);
+      throw reportedFailure();
     }
   }
 
@@ -791,8 +1583,7 @@ async function main() {
       })()`);
     if (!switched) {
       console.error(`FAIL — could not reach ${tab} in ${PAGE_REL}; the gate would measure the wrong panels`);
-      proc.kill('SIGKILL');
-      process.exit(1);
+      throw reportedFailure();
     }
     await sleep(1200);
 
@@ -949,16 +1740,7 @@ async function main() {
     });
   }
 
-  proc.kill('SIGKILL');
-  await new Promise((r) => proc.on('exit', r));
-  // The browser's renderer children can outlive the parent and keep the
-  // profile busy. Cleanup is housekeeping: a failure here must never be
-  // reported as, or hide, a page result.
-  try {
-    fs.rmSync(tmpdir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-  } catch (e) {
-    console.warn(`note: left ${tmpdir} behind (${e.code})`);
-  }
+  await cleanupRun();
 
   /* ---------- report ------------------------------------------------------ */
 
@@ -994,7 +1776,7 @@ async function main() {
   if (predicateFailures.length) {
     console.error(`\nFAIL — ${predicateFailures.length} status-predicate disagreement(s)`);
     for (const f of predicateFailures) console.error('  ' + f);
-    process.exit(1);
+    throw reportedFailure();
   }
 
   if (doubleEscaped.length) {
@@ -1014,7 +1796,7 @@ async function main() {
       seen.add(d.el);
       console.error(`    .${d.el}  ${JSON.stringify(d.text)}`);
     }
-    process.exit(1);
+    throw reportedFailure();
   }
 
   if (errors.length || consoleErrors.length) {
@@ -1027,13 +1809,23 @@ async function main() {
       console.error(`  ${PAGE_REL}:${Math.max(1, e.line - LINE_OFFSET)}:${e.col}  ${e.text.split('\n')[0]}`);
     }
     for (const c of new Set(consoleErrors)) console.error('  console: ' + c);
-    process.exit(1);
+    throw reportedFailure();
   }
 
   console.log('render ok — no uncaught page errors');
+  } finally {
+    await cleanupRun();
+  }
 }
 
-main().catch((e) => {
-  console.error('render_check failed to run: ' + e.message);
-  process.exit(2);
-});
+if (args.includes('--cleanup-selftest')) {
+  cleanupSelftest().then(code => process.exit(code)).catch((e) => {
+    console.error('cleanup selftest failed to run: ' + e.message);
+    process.exit(2);
+  });
+} else {
+  main().catch((e) => {
+    if (!e.reported) console.error('render_check failed to run: ' + e.message);
+    process.exitCode = e.exitCode || 2;
+  });
+}

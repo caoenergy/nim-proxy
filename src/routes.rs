@@ -7,6 +7,13 @@
 pub const ROOT: &str = "/";
 pub const DASH: &str = "/dash";
 pub const METRICS: &str = "/metrics";
+pub const ASSET_PUBLIC_CSS: &str = "/assets/public/public.css";
+pub const ASSET_PUBLIC_SETUP_JS: &str = "/assets/public/setup.js";
+pub const ASSET_PUBLIC_LOGIN_JS: &str = "/assets/public/login.js";
+pub const ASSET_OPERATOR_CSS: &str = "/assets/operator/operator.css";
+pub const ASSET_OPERATOR_SHARED_JS: &str = "/assets/operator/shared.js";
+pub const ASSET_OPERATOR_DASHBOARD_JS: &str = "/assets/operator/dashboard.js";
+pub const ASSET_OPERATOR_SETTINGS_JS: &str = "/assets/operator/settings.js";
 
 pub const API_PREFIX: &str = "/api";
 pub const API_DASHBOARD: &str = "/dashboard";
@@ -60,6 +67,62 @@ pub struct RouteContract {
 
 #[cfg(test)]
 const ROUTES: &[RouteContract] = &[
+    RouteContract {
+        access: Access::Public,
+        method: "GET",
+        openapi: false,
+        path: ASSET_PUBLIC_CSS,
+        phase: Phase::Always,
+        probe_path: ASSET_PUBLIC_CSS,
+    },
+    RouteContract {
+        access: Access::Public,
+        method: "GET",
+        openapi: false,
+        path: ASSET_PUBLIC_SETUP_JS,
+        phase: Phase::Always,
+        probe_path: ASSET_PUBLIC_SETUP_JS,
+    },
+    RouteContract {
+        access: Access::Public,
+        method: "GET",
+        openapi: false,
+        path: ASSET_PUBLIC_LOGIN_JS,
+        phase: Phase::Always,
+        probe_path: ASSET_PUBLIC_LOGIN_JS,
+    },
+    RouteContract {
+        access: Access::OperatorAny,
+        method: "GET",
+        openapi: false,
+        path: ASSET_OPERATOR_CSS,
+        phase: Phase::PostSetup,
+        probe_path: ASSET_OPERATOR_CSS,
+    },
+    RouteContract {
+        access: Access::OperatorAny,
+        method: "GET",
+        openapi: false,
+        path: ASSET_OPERATOR_SHARED_JS,
+        phase: Phase::PostSetup,
+        probe_path: ASSET_OPERATOR_SHARED_JS,
+    },
+    RouteContract {
+        access: Access::OperatorAny,
+        method: "GET",
+        openapi: false,
+        path: ASSET_OPERATOR_DASHBOARD_JS,
+        phase: Phase::PostSetup,
+        probe_path: ASSET_OPERATOR_DASHBOARD_JS,
+    },
+    RouteContract {
+        access: Access::OperatorAny,
+        method: "GET",
+        openapi: false,
+        path: ASSET_OPERATOR_SETTINGS_JS,
+        phase: Phase::PostSetup,
+        probe_path: ASSET_OPERATOR_SETTINGS_JS,
+    },
     RouteContract {
         access: Access::OperatorAny,
         method: "GET",
@@ -246,11 +309,6 @@ const ROUTES: &[RouteContract] = &[
     },
 ];
 
-/// Assets do not have live routes until the presentation split. Keeping the
-/// decision explicit prevents callers from inferring that assets were missed.
-#[cfg(test)]
-const ASSET_ROUTES: &[RouteContract] = &[];
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,8 +360,15 @@ mod tests {
             serde_json::from_str(&crate::api::openapi_json()).expect("generated OpenAPI JSON");
         let paths = spec["paths"].as_object().expect("OpenAPI paths");
 
-        assert_eq!(ROUTES.len(), 23, "route-contract:inventory");
-        assert!(ASSET_ROUTES.is_empty(), "route-contract:assets");
+        assert_eq!(ROUTES.len(), 30, "route-contract:inventory");
+        assert_eq!(
+            ROUTES
+                .iter()
+                .filter(|route| route.path.starts_with("/assets/"))
+                .count(),
+            7,
+            "route-contract:assets"
+        );
         assert_registered_api_paths(&REGISTERED_API_PATHS);
         let mut method_paths = HashSet::new();
         let mut probes = HashSet::new();
@@ -326,8 +391,8 @@ mod tests {
                 .iter()
                 .filter(|route| route.phase == Phase::Always)
                 .count(),
-            4,
-            "route-contract:phase: health, both login methods, and logout are phase-independent"
+            7,
+            "route-contract:phase: health, both login methods, logout, and public assets are phase-independent"
         );
         assert_eq!(
             ROUTES
@@ -342,8 +407,8 @@ mod tests {
                 .iter()
                 .filter(|route| route.phase == Phase::PostSetup)
                 .count(),
-            16,
-            "route-contract:phase: operator and client routes"
+            20,
+            "route-contract:phase: operator, operator assets, and client routes"
         );
         assert!(
             !ROUTES

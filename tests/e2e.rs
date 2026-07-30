@@ -328,6 +328,115 @@ async fn route_contract_behavior_matrix() {
             path: "/health",
         },
         RouteBehavior {
+            access: ContractAccess::Public,
+            accept_html: false,
+            expectations: [
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+            ],
+            method: "GET",
+            name: "asset-public-css",
+            phase: ContractPhase::Always,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("text/css; charset=utf-8"),
+            success_status: 200,
+            path: "/assets/public/public.css",
+        },
+        RouteBehavior {
+            access: ContractAccess::Public,
+            accept_html: false,
+            expectations: [
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+            ],
+            method: "GET",
+            name: "asset-public-setup-js",
+            phase: ContractPhase::Always,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("text/javascript; charset=utf-8"),
+            success_status: 200,
+            path: "/assets/public/setup.js",
+        },
+        RouteBehavior {
+            access: ContractAccess::Public,
+            accept_html: false,
+            expectations: [
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+            ],
+            method: "GET",
+            name: "asset-public-login-js",
+            phase: ContractPhase::Always,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("text/javascript; charset=utf-8"),
+            success_status: 200,
+            path: "/assets/public/login.js",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAny,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 200),
+            method: "GET",
+            name: "asset-operator-css",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("text/css; charset=utf-8"),
+            success_status: 200,
+            path: "/assets/operator/operator.css",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAny,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 200),
+            method: "GET",
+            name: "asset-operator-shared-js",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("text/javascript; charset=utf-8"),
+            success_status: 200,
+            path: "/assets/operator/shared.js",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAny,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 200),
+            method: "GET",
+            name: "asset-operator-dashboard-js",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("text/javascript; charset=utf-8"),
+            success_status: 200,
+            path: "/assets/operator/dashboard.js",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAny,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 200),
+            method: "GET",
+            name: "asset-operator-settings-js",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("text/javascript; charset=utf-8"),
+            success_status: 200,
+            path: "/assets/operator/settings.js",
+        },
+        RouteBehavior {
             access: ContractAccess::OperatorAny,
             accept_html: true,
             expectations: [
@@ -673,7 +782,7 @@ async fn route_contract_behavior_matrix() {
         },
     ];
 
-    assert_eq!(rows.len(), 23, "route-contract:inventory");
+    assert_eq!(rows.len(), 30, "route-contract:inventory");
 
     let mock = start_mock().await;
     let before_setup = start_proxy_fresh().await;
@@ -2028,11 +2137,17 @@ async fn login_handles_malformed_urlencoded_without_panic() {
         .unwrap();
     // No panic / connection reset: a clean 401 login page with the error.
     assert_eq!(resp.status(), 401);
-    assert!(resp
-        .text()
+    let html = resp.text().await.unwrap();
+    assert!(html.contains(r#"data-error-code="invalid_credentials""#));
+    let login_js = client()
+        .get(proxy.url("/assets/public/login.js"))
+        .send()
         .await
         .unwrap()
-        .contains("Incorrect username or password"));
+        .text()
+        .await
+        .unwrap();
+    assert!(login_js.contains("Incorrect username or password."));
 }
 
 /// Repeated failed logins trip the throttle: a burst past the failure cap
@@ -2651,12 +2766,21 @@ async fn dashboard_and_config_are_served_to_authenticated_users() {
     assert_eq!(dash.status(), 200);
     let html = dash.text().await.unwrap();
     assert!(html.contains("NIM"));
-    assert!(html.contains("/api/dashboard/now"));
     assert!(html.contains("data-range=\"default\""));
     assert!(html.contains("data-range=\"all-retained\""));
-    assert!(!html.contains("fetch('/metrics')"));
-    assert!(!html.contains("/api/history?"));
-    assert!(!html.contains("/dash/config.json"));
+    let dashboard_js = client()
+        .get(proxy.url("/assets/operator/dashboard.js"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(dashboard_js.contains("/api/dashboard/now"));
+    assert!(!dashboard_js.contains("fetch('/metrics')"));
+    assert!(!dashboard_js.contains("/api/history?"));
+    assert!(!dashboard_js.contains("/dash/config.json"));
 
     let now: serde_json::Value = client()
         .get(proxy.url("/api/dashboard/now"))
@@ -2691,8 +2815,8 @@ async fn dashboard_history_settings_markup() {
     let proxy = start_proxy(&mock.url, &[]).await;
     let cookie = login(&proxy).await;
 
-    let html = client()
-        .get(proxy.url("/"))
+    let settings_js = client()
+        .get(proxy.url("/assets/operator/settings.js"))
         .header("cookie", cookie)
         .send()
         .await
@@ -2700,13 +2824,13 @@ async fn dashboard_history_settings_markup() {
         .text()
         .await
         .unwrap();
-    assert!(html.contains("History &amp; dashboard"));
-    assert!(html.contains("sv-default-days"));
-    assert!(html.contains("sv-retention-days"));
-    assert!(html.contains("sv-slo"));
-    assert!(html.contains("/api/settings/history"));
-    assert!(!html.contains("Pricing &amp; history"));
-    assert!(!html.contains("const SLO = 0.999"));
+    assert!(settings_js.contains("History &amp; dashboard"));
+    assert!(settings_js.contains("sv-default-days"));
+    assert!(settings_js.contains("sv-retention-days"));
+    assert!(settings_js.contains("sv-slo"));
+    assert!(settings_js.contains("/api/settings/history"));
+    assert!(!settings_js.contains("Pricing &amp; history"));
+    assert!(!settings_js.contains("const SLO = 0.999"));
 }
 
 #[tokio::test]
@@ -2715,22 +2839,32 @@ async fn dashboard_range_state_guards_markup() {
     let proxy = start_proxy(&mock.url, &[]).await;
     let cookie = login(&proxy).await;
 
-    let html = client()
-        .get(proxy.url("/"))
-        .header("cookie", cookie)
+    let shared_js = client()
+        .get(proxy.url("/assets/operator/shared.js"))
+        .header("cookie", &cookie)
         .send()
         .await
         .unwrap()
         .text()
         .await
         .unwrap();
-    assert!(html.contains("let rangeRequestGeneration = 0"));
-    assert!(html.contains("const generation = ++rangeRequestGeneration"));
-    assert!(html.contains("generation !== rangeRequestGeneration"));
-    assert!(!html.contains("mode.kind === 'fixed' && historyChanged"));
-    assert!(html.contains("let frozenHasTraffic = false"));
+    let dashboard_js = client()
+        .get(proxy.url("/assets/operator/dashboard.js"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let scripts = shared_js + &dashboard_js;
+    assert!(scripts.contains("let rangeRequestGeneration = 0"));
+    assert!(scripts.contains("const generation = ++rangeRequestGeneration"));
+    assert!(scripts.contains("generation !== rangeRequestGeneration"));
+    assert!(!scripts.contains("mode.kind === 'fixed' && historyChanged"));
+    assert!(scripts.contains("let frozenHasTraffic = false"));
     assert!(
-        html.contains("if (mode.kind !== 'following' || !rangeData || !samples.length) return;")
+        scripts.contains("if (mode.kind !== 'following' || !rangeData || !samples.length) return;")
     );
 }
 
@@ -2740,22 +2874,32 @@ async fn dashboard_pause_traffic_is_derived_from_rendered_samples() {
     let proxy = start_proxy(&mock.url, &[]).await;
     let cookie = login(&proxy).await;
 
-    let html = client()
-        .get(proxy.url("/"))
-        .header("cookie", cookie)
+    let shared_js = client()
+        .get(proxy.url("/assets/operator/shared.js"))
+        .header("cookie", &cookie)
         .send()
         .await
         .unwrap()
         .text()
         .await
         .unwrap();
-    assert!(html.contains("function hasSelectedRequestTraffic(selectedSamples)"));
-    assert!(html.contains("row => row.name === 'nimproxy_requests_total' && +row.value > 0"));
-    assert!(html.contains("frozenHasTraffic = hasSelectedRequestTraffic(samples);"));
-    assert!(html.contains(
+    let dashboard_js = client()
+        .get(proxy.url("/assets/operator/dashboard.js"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let scripts = shared_js + &dashboard_js;
+    assert!(scripts.contains("function hasSelectedRequestTraffic(selectedSamples)"));
+    assert!(scripts.contains("row => row.name === 'nimproxy_requests_total' && +row.value > 0"));
+    assert!(scripts.contains("frozenHasTraffic = hasSelectedRequestTraffic(samples);"));
+    assert!(scripts.contains(
         "const hasTraffic = mode.paused ? frozenHasTraffic : hasSelectedRequestTraffic(samples);"
     ));
-    assert!(!html.contains("const acceptedTail = nowData?.tail"));
+    assert!(!scripts.contains("const acceptedTail = nowData?.tail"));
 }
 
 #[tokio::test]
@@ -3618,12 +3762,204 @@ async fn dashboard_sends_security_headers() {
         csp.contains("connect-src 'self'"),
         "blocks cross-origin exfil"
     );
-    assert!(
-        csp.contains("font-src https://fonts.gstatic.com"),
-        "dashboard webfonts are allowed, and only from Google's font host"
+    assert_eq!(
+        csp,
+        "default-src 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; \
+         connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
     );
+    assert!(!csp.contains("unsafe-inline"));
+    assert!(!csp.contains("http:"));
+    assert!(!csp.contains("https:"));
     assert_eq!(h["x-content-type-options"], "nosniff");
     assert_eq!(h["x-frame-options"], "DENY");
+}
+
+#[derive(Clone, Copy, Debug)]
+enum PresentationActor {
+    BeforeSetup,
+    Anonymous,
+    Authenticated,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PresentationRoute {
+    content_type: Option<&'static str>,
+    path: &'static str,
+    statuses: [u16; 3],
+}
+
+#[tokio::test]
+async fn presentation_assets_are_gated() {
+    const CSP: &str = "default-src 'none'; img-src 'self' data:; style-src 'self'; \
+        script-src 'self'; connect-src 'self'; frame-ancestors 'none'; \
+        base-uri 'none'; form-action 'self'";
+    const PAGE_ROUTES: &[PresentationRoute] = &[
+        PresentationRoute {
+            content_type: Some("text/html; charset=utf-8"),
+            path: "/",
+            statuses: [302, 302, 200],
+        },
+        PresentationRoute {
+            content_type: Some("text/html; charset=utf-8"),
+            path: "/dash",
+            statuses: [302, 302, 200],
+        },
+        PresentationRoute {
+            content_type: Some("text/html; charset=utf-8"),
+            path: "/login",
+            statuses: [302, 200, 302],
+        },
+        PresentationRoute {
+            content_type: Some("text/html; charset=utf-8"),
+            path: "/setup",
+            statuses: [200, 404, 404],
+        },
+    ];
+    const PUBLIC_ASSETS: &[PresentationRoute] = &[
+        PresentationRoute {
+            content_type: Some("text/css; charset=utf-8"),
+            path: "/assets/public/public.css",
+            statuses: [200, 200, 200],
+        },
+        PresentationRoute {
+            content_type: Some("text/javascript; charset=utf-8"),
+            path: "/assets/public/setup.js",
+            statuses: [200, 200, 200],
+        },
+        PresentationRoute {
+            content_type: Some("text/javascript; charset=utf-8"),
+            path: "/assets/public/login.js",
+            statuses: [200, 200, 200],
+        },
+    ];
+    const OPERATOR_ASSETS: &[PresentationRoute] = &[
+        PresentationRoute {
+            content_type: Some("text/css; charset=utf-8"),
+            path: "/assets/operator/operator.css",
+            statuses: [503, 401, 200],
+        },
+        PresentationRoute {
+            content_type: Some("text/javascript; charset=utf-8"),
+            path: "/assets/operator/shared.js",
+            statuses: [503, 401, 200],
+        },
+        PresentationRoute {
+            content_type: Some("text/javascript; charset=utf-8"),
+            path: "/assets/operator/dashboard.js",
+            statuses: [503, 401, 200],
+        },
+        PresentationRoute {
+            content_type: Some("text/javascript; charset=utf-8"),
+            path: "/assets/operator/settings.js",
+            statuses: [503, 401, 200],
+        },
+    ];
+
+    let before_setup = start_proxy_fresh().await;
+    let mock = start_mock().await;
+    let configured = start_proxy_with(
+        &mock.url,
+        StoreOpts {
+            clients: vec![(
+                "presentation-private-client".into(),
+                "presentation-private-secret".into(),
+            )],
+            nim_keys: vec![("presentation-private-nim-key".into(), 40)],
+            ..Default::default()
+        },
+        &[],
+    )
+    .await;
+    let cookie = login(&configured).await;
+    let actors = [
+        (PresentationActor::BeforeSetup, &before_setup, None),
+        (PresentationActor::Anonymous, &configured, None),
+        (
+            PresentationActor::Authenticated,
+            &configured,
+            Some(cookie.as_str()),
+        ),
+    ];
+    let mut public_bodies: std::collections::HashMap<&str, Vec<u8>> =
+        std::collections::HashMap::new();
+
+    for route in PAGE_ROUTES
+        .iter()
+        .chain(PUBLIC_ASSETS)
+        .chain(OPERATOR_ASSETS)
+    {
+        for (actor_index, (actor, proxy, cookie)) in actors.iter().enumerate() {
+            let mut request = no_redirect_client().get(proxy.url(route.path));
+            if PAGE_ROUTES.iter().any(|page| page.path == route.path) {
+                request = request.header("accept", "text/html");
+            }
+            if let Some(cookie) = cookie {
+                request = request.header("cookie", *cookie);
+            }
+            let response = request.send().await.unwrap();
+            assert_eq!(
+                response.status().as_u16(),
+                route.statuses[actor_index],
+                "presentation-assets:status: GET {} actor={actor:?}",
+                route.path
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get("cache-control")
+                    .and_then(|value| value.to_str().ok()),
+                Some("no-store"),
+                "presentation-assets:no-store: GET {} actor={actor:?}",
+                route.path
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get("content-security-policy")
+                    .and_then(|value| value.to_str().ok()),
+                Some(CSP),
+                "presentation-assets:csp: GET {} actor={actor:?}",
+                route.path
+            );
+            if response.status().is_success() {
+                assert_eq!(
+                    response
+                        .headers()
+                        .get(CONTENT_TYPE)
+                        .and_then(|value| value.to_str().ok()),
+                    route.content_type,
+                    "presentation-assets:content-type: GET {} actor={actor:?}",
+                    route.path
+                );
+            }
+            let body = response.bytes().await.unwrap().to_vec();
+            if PUBLIC_ASSETS.iter().any(|public| public.path == route.path) {
+                if let Some(first) = public_bodies.get(route.path) {
+                    assert_eq!(
+                        &body, first,
+                        "presentation-assets:public-byte-isolation: GET {} actor={actor:?}",
+                        route.path
+                    );
+                } else {
+                    public_bodies.insert(route.path, body.clone());
+                }
+                let text = String::from_utf8_lossy(&body);
+                for forbidden in [
+                    "settings.",
+                    "presentation-private-client",
+                    "presentation-private-secret",
+                    "presentation-private-nim-key",
+                    TEST_PASSWORD,
+                ] {
+                    assert!(
+                        !text.contains(forbidden),
+                        "presentation-assets:public-byte-isolation: GET {} contains {forbidden:?}",
+                        route.path
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[tokio::test]

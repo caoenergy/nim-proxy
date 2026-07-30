@@ -14,7 +14,7 @@ Two independent gates. Since v0.6.0 both are driven by the
 [posture decision](../decisions/auth-posture-and-dashboard-password.md) and its
 v0.6.0 amendment).
 
-## Setup phase (`src/settings.rs`, `src/setup.html`)
+## Setup phase (`src/settings.rs`, `src/web/setup.html`)
 
 `setup_required` is an `AtomicBool`, true iff the store has no superuser (a
 fresh install, or a lockout-recovery volume edit that emptied `users`). While

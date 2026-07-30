@@ -54,11 +54,14 @@ jobs:
           UPDATE_OPENAPI=1 cargo test --test openapi
           git diff --exit-code -- openapi.json \
             || { echo "::error::openapi.json is stale — run 'UPDATE_OPENAPI=1 cargo test --test openapi' and commit it"; exit 1; }
-      - name: Embedded page JS syntax
+      - name: Embedded presentation source boundaries and JS syntax
         # cargo test asserts on served HTML text and never parses the
-        # JavaScript, so it passes on a page that cannot run. This is the only
-        # gate that catches that.
+        # JavaScript. These checks also keep executable/style source external
+        # to HTML and reject every external-origin dependency.
         run: |
+          node scripts/render_check.js --asset-selftest
+          node scripts/render_check.js --assets-only
+          node scripts/render_check.js --served-page-selftest
           node scripts/render_check.js --syntax-selftest
           node scripts/render_check.js --syntax-only
       - name: Formatter output is unchanged
@@ -86,9 +89,10 @@ jobs:
         # testing the strings that changed.
         run: python3 scripts/gen_pseudolocale.py --check
       - name: Dashboard renders and survives being driven
-        # `node --check` above proves the page parses; this proves it runs.
-        # It renders the page against captured API payloads, walks every tab
-        # and hovers every chart, and fails on any uncaught page error. The
+        # `node --check` above proves the scripts parse; this starts the real
+        # binary and requests its served page/assets, replays captured API
+        # payloads through CDP, walks every tab, and hovers every chart. Any
+        # missing/external initial asset or uncaught page error fails. The
         # bug that motivated it threw on hover and made a healthy proxy report
         # "Disconnected" — green on every other check in this job.
         # --escape-probe additionally catches a render helper escaping a
@@ -102,6 +106,7 @@ jobs:
           node scripts/render_check.js --escape-probe
           node scripts/render_check.js --page setup
           node scripts/render_check.js --page setup --escape-probe
+          node scripts/render_check.js --cleanup-selftest
 
   coverage:
     name: coverage
