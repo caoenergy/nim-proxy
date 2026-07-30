@@ -6,6 +6,7 @@ mod governor;
 mod history;
 mod pool;
 mod proxy;
+mod routes;
 mod settings;
 
 pub use api::openapi_json;

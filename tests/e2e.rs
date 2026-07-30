@@ -7,6 +7,7 @@
 mod support;
 
 use std::os::unix::fs::PermissionsExt;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use reqwest::header::CONTENT_TYPE;
@@ -49,6 +50,878 @@ async fn assert_exact_api_error(
         format!(r#"{{"error":{{"code":"{code}","message":"{message}","type":"proxy_error"}}}}"#)
             .as_bytes()
     );
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ContractActor {
+    BeforeSetup,
+    Anonymous,
+    User,
+    Admin,
+    Superuser,
+}
+
+impl ContractActor {
+    const ALL: [Self; 5] = [
+        Self::BeforeSetup,
+        Self::Anonymous,
+        Self::User,
+        Self::Admin,
+        Self::Superuser,
+    ];
+
+    fn index(self) -> usize {
+        match self {
+            Self::BeforeSetup => 0,
+            Self::Anonymous => 1,
+            Self::User => 2,
+            Self::Admin => 3,
+            Self::Superuser => 4,
+        }
+    }
+
+    fn username(self) -> &'static str {
+        match self {
+            Self::User => "matrix-user",
+            Self::Admin => "matrix-admin",
+            Self::BeforeSetup | Self::Anonymous | Self::Superuser => support::TEST_USER,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ContractAccess {
+    Client,
+    Public,
+    OperatorAny,
+    OperatorAdmin,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ContractPhase {
+    Always,
+    PreSetup,
+    PostSetup,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ContractRequest {
+    None,
+    Json,
+    Form,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ContractSideEffect {
+    None,
+    SessionCookie,
+    DurableConfig,
+    DurableConfigAndSession,
+    Upstream,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ContractExpectation {
+    status: u16,
+    error: Option<&'static str>,
+}
+
+const fn contract_expectation(status: u16, error: Option<&'static str>) -> ContractExpectation {
+    ContractExpectation { status, error }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RouteBehavior {
+    access: ContractAccess,
+    accept_html: bool,
+    expectations: [ContractExpectation; 5],
+    method: &'static str,
+    name: &'static str,
+    phase: ContractPhase,
+    request: ContractRequest,
+    side_effect: ContractSideEffect,
+    success_content_type: Option<&'static str>,
+    success_status: u16,
+    path: &'static str,
+}
+
+fn configured_contract_expectations(
+    success_status: u16,
+    ordinary_user_status: u16,
+) -> [ContractExpectation; 5] {
+    [
+        contract_expectation(503, Some("setup_required")),
+        contract_expectation(401, Some("unauthorized")),
+        contract_expectation(
+            ordinary_user_status,
+            (ordinary_user_status == 403).then_some("forbidden"),
+        ),
+        contract_expectation(success_status, None),
+        contract_expectation(success_status, None),
+    ]
+}
+
+fn contract_config_bytes(proxy: &support::Proxy) -> Option<Vec<u8>> {
+    std::fs::read(proxy.data_dir.join("config.json")).ok()
+}
+
+fn contract_upstream_calls(mock: &support::MockNim) -> usize {
+    mock.state.hit_count() + mock.state.models_hits.load(Ordering::SeqCst)
+}
+
+fn contract_body(
+    row: &RouteBehavior,
+    actor: ContractActor,
+    mock: &support::MockNim,
+) -> Option<String> {
+    let suffix = match actor {
+        ContractActor::BeforeSetup => "before",
+        ContractActor::Anonymous => "anonymous",
+        ContractActor::User => "user",
+        ContractActor::Admin => "admin",
+        ContractActor::Superuser => "superuser",
+    };
+    let value = match row.name {
+        "api-settings-nim-keys" => {
+            serde_json::json!({"add": {"key": format!("matrix-nim-{suffix}"), "rpm": 41}})
+        }
+        "api-settings-clients" => {
+            serde_json::json!({"add": {"name": format!("matrix-client-{suffix}")}})
+        }
+        "api-settings-limits" => serde_json::json!({
+            "heartbeat_secs": 1,
+            "max_inflight": 513,
+            "max_wait_secs": 31,
+            "models_ttl_secs": 300,
+            "request_timeout_secs": 300,
+            "stream_idle_secs": 300,
+            "strict_passthrough": false
+        }),
+        "api-settings-history" => serde_json::json!({
+            "days": 60,
+            "default_window_days": 30,
+            "slo_target_percent": 99.8
+        }),
+        "api-settings-governor" => serde_json::json!({"enabled": false}),
+        "api-settings-users" => serde_json::json!({
+            "add": {
+                "password": "matrix-password-1",
+                "role": "user",
+                "username": format!("created-{suffix}")
+            }
+        }),
+        "api-settings-validate-key" => serde_json::json!({"key": "probe-key"}),
+        "api-settings-upstream" => {
+            serde_json::json!({"base_url": format!("{}/matrix-{suffix}", mock.url)})
+        }
+        "api-settings-account" => serde_json::json!({
+            "current_password": TEST_PASSWORD,
+            "new_password": format!("matrix-new-password-{suffix}")
+        }),
+        "v1-wildcard" => serde_json::json!({
+            "messages": [{"content": format!("route contract {suffix}"), "role": "user"}],
+            "model": "mock/model-a",
+            "stream": false
+        }),
+        "login-post" => {
+            return Some(format!(
+                "username={}&password={}",
+                actor.username(),
+                TEST_PASSWORD
+            ));
+        }
+        "setup-post" => serde_json::json!({
+            "base_url": mock.url,
+            "nim_keys": [{"key": "matrix-setup-key", "rpm": 40}],
+            "password": "matrix-setup-password",
+            "username": "matrix-root"
+        }),
+        "setup-validate-key" => {
+            serde_json::json!({"base_url": mock.url, "key": "probe-key"})
+        }
+        _ => return None,
+    };
+    Some(serde_json::to_string(&value).unwrap())
+}
+
+async fn send_contract_request(
+    row: &RouteBehavior,
+    actor: ContractActor,
+    proxy: &support::Proxy,
+    cookie: Option<&str>,
+    mock: &support::MockNim,
+) -> reqwest::Response {
+    let mut request = match row.method {
+        "GET" => client().get(proxy.url(row.path)),
+        "POST" => client().post(proxy.url(row.path)),
+        other => panic!("route-contract:request: unsupported method {other}"),
+    };
+    if row.accept_html {
+        request = request.header("accept", "text/html");
+    }
+    if let Some(cookie) = cookie {
+        request = request.header("cookie", cookie);
+    }
+    if let Some(body) = contract_body(row, actor, mock) {
+        request = match row.request {
+            ContractRequest::Json => request.header(CONTENT_TYPE, "application/json"),
+            ContractRequest::Form => {
+                request.header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+            }
+            ContractRequest::None => {
+                panic!(
+                    "route-contract:request: {} unexpectedly has a body",
+                    row.name
+                )
+            }
+        }
+        .body(body);
+    }
+    request.send().await.unwrap()
+}
+
+#[tokio::test]
+async fn route_contract_behavior_matrix() {
+    let rows = vec![
+        RouteBehavior {
+            access: ContractAccess::Public,
+            accept_html: false,
+            // Intentionally wrong for the committed red proof. /health is
+            // phase-independent and really returns 200 before setup.
+            expectations: [
+                contract_expectation(503, Some("setup_required")),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+            ],
+            method: "GET",
+            name: "health",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("text/plain; charset=utf-8"),
+            success_status: 200,
+            path: "/health",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAny,
+            accept_html: true,
+            expectations: [
+                contract_expectation(302, None),
+                contract_expectation(302, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+            ],
+            method: "GET",
+            name: "root-page",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("text/html; charset=utf-8"),
+            success_status: 200,
+            path: "/",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAny,
+            accept_html: true,
+            expectations: [
+                contract_expectation(302, None),
+                contract_expectation(302, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+            ],
+            method: "GET",
+            name: "dash-page",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("text/html; charset=utf-8"),
+            success_status: 200,
+            path: "/dash",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAny,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 200),
+            method: "GET",
+            name: "metrics",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("text/plain; charset=utf-8"),
+            success_status: 200,
+            path: "/metrics",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAny,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 200),
+            method: "GET",
+            name: "api-dashboard",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/api/dashboard",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAny,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 200),
+            method: "GET",
+            name: "api-dashboard-now",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/api/dashboard/now",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAny,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 200),
+            method: "GET",
+            name: "api-config",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/api/config",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAny,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 200),
+            method: "POST",
+            name: "api-settings-nim-keys",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::Json,
+            side_effect: ContractSideEffect::DurableConfig,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/api/settings/nim-keys",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAny,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 200),
+            method: "POST",
+            name: "api-settings-clients",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::Json,
+            side_effect: ContractSideEffect::DurableConfig,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/api/settings/clients",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAdmin,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 403),
+            method: "POST",
+            name: "api-settings-limits",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::Json,
+            side_effect: ContractSideEffect::DurableConfig,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/api/settings/limits",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAdmin,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 403),
+            method: "POST",
+            name: "api-settings-history",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::Json,
+            side_effect: ContractSideEffect::DurableConfig,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/api/settings/history",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAdmin,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 403),
+            method: "POST",
+            name: "api-settings-governor",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::Json,
+            side_effect: ContractSideEffect::DurableConfig,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/api/settings/governor",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAdmin,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 403),
+            method: "POST",
+            name: "api-settings-users",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::Json,
+            side_effect: ContractSideEffect::DurableConfig,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/api/settings/users",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAny,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 200),
+            method: "POST",
+            name: "api-settings-validate-key",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::Json,
+            side_effect: ContractSideEffect::Upstream,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/api/settings/validate-key",
+        },
+        RouteBehavior {
+            access: ContractAccess::Client,
+            accept_html: false,
+            expectations: [
+                contract_expectation(503, Some("setup_required")),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+            ],
+            method: "POST",
+            name: "v1-wildcard",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::Json,
+            side_effect: ContractSideEffect::Upstream,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/v1/chat/completions",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAdmin,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 403),
+            method: "POST",
+            name: "api-settings-upstream",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::Json,
+            side_effect: ContractSideEffect::DurableConfig,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/api/settings/upstream",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAny,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 200),
+            method: "POST",
+            name: "api-settings-account",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::Json,
+            side_effect: ContractSideEffect::DurableConfigAndSession,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/api/settings/account",
+        },
+        RouteBehavior {
+            access: ContractAccess::Public,
+            accept_html: true,
+            expectations: [
+                contract_expectation(302, None),
+                contract_expectation(200, None),
+                contract_expectation(302, None),
+                contract_expectation(302, None),
+                contract_expectation(302, None),
+            ],
+            method: "GET",
+            name: "login-get",
+            phase: ContractPhase::Always,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("text/html; charset=utf-8"),
+            success_status: 200,
+            path: "/login",
+        },
+        RouteBehavior {
+            access: ContractAccess::Public,
+            accept_html: true,
+            expectations: [
+                contract_expectation(302, None),
+                contract_expectation(303, None),
+                contract_expectation(303, None),
+                contract_expectation(303, None),
+                contract_expectation(303, None),
+            ],
+            method: "POST",
+            name: "login-post",
+            phase: ContractPhase::Always,
+            request: ContractRequest::Form,
+            side_effect: ContractSideEffect::SessionCookie,
+            success_content_type: None,
+            success_status: 303,
+            path: "/login",
+        },
+        RouteBehavior {
+            access: ContractAccess::Public,
+            accept_html: true,
+            expectations: [
+                contract_expectation(303, None),
+                contract_expectation(303, None),
+                contract_expectation(303, None),
+                contract_expectation(303, None),
+                contract_expectation(303, None),
+            ],
+            method: "POST",
+            name: "logout",
+            phase: ContractPhase::Always,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::SessionCookie,
+            success_content_type: None,
+            success_status: 303,
+            path: "/logout",
+        },
+        RouteBehavior {
+            access: ContractAccess::Public,
+            accept_html: true,
+            expectations: [
+                contract_expectation(200, None),
+                contract_expectation(404, None),
+                contract_expectation(404, None),
+                contract_expectation(404, None),
+                contract_expectation(404, None),
+            ],
+            method: "GET",
+            name: "setup-get",
+            phase: ContractPhase::PreSetup,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("text/html; charset=utf-8"),
+            success_status: 200,
+            path: "/setup",
+        },
+        RouteBehavior {
+            access: ContractAccess::Public,
+            accept_html: false,
+            expectations: [
+                contract_expectation(200, None),
+                contract_expectation(409, Some("setup_complete")),
+                contract_expectation(409, Some("setup_complete")),
+                contract_expectation(409, Some("setup_complete")),
+                contract_expectation(409, Some("setup_complete")),
+            ],
+            method: "POST",
+            name: "setup-validate-key",
+            phase: ContractPhase::PreSetup,
+            request: ContractRequest::Json,
+            side_effect: ContractSideEffect::Upstream,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/setup/validate-key",
+        },
+        // Keep the successful claim last: it intentionally closes the
+        // before-setup fixture for every subsequent request.
+        RouteBehavior {
+            access: ContractAccess::Public,
+            accept_html: false,
+            expectations: [
+                contract_expectation(200, None),
+                contract_expectation(409, Some("setup_complete")),
+                contract_expectation(409, Some("setup_complete")),
+                contract_expectation(409, Some("setup_complete")),
+                contract_expectation(409, Some("setup_complete")),
+            ],
+            method: "POST",
+            name: "setup-post",
+            phase: ContractPhase::PreSetup,
+            request: ContractRequest::Json,
+            side_effect: ContractSideEffect::DurableConfigAndSession,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/setup",
+        },
+    ];
+
+    assert_eq!(rows.len(), 23, "route-contract:inventory");
+
+    let mock = start_mock().await;
+    let before_setup = start_proxy_fresh().await;
+    let configured = start_proxy_with(
+        &mock.url,
+        StoreOpts {
+            extra_users: vec![
+                ("matrix-user".into(), "user".into()),
+                ("matrix-admin".into(), "admin".into()),
+            ],
+            ..Default::default()
+        },
+        &[],
+    )
+    .await;
+    let user_cookie = login_as(&configured, "matrix-user").await;
+    let admin_cookie = login_as(&configured, "matrix-admin").await;
+    let superuser_cookie = login(&configured).await;
+
+    for row in &rows {
+        for actor in ContractActor::ALL {
+            let (proxy, cookie) = match actor {
+                ContractActor::BeforeSetup => (&before_setup, None),
+                ContractActor::Anonymous => (&configured, None),
+                ContractActor::User => (&configured, Some(user_cookie.as_str())),
+                ContractActor::Admin => (&configured, Some(admin_cookie.as_str())),
+                ContractActor::Superuser => (&configured, Some(superuser_cookie.as_str())),
+            };
+            let expected = row.expectations[actor.index()];
+            let config_before = contract_config_bytes(proxy);
+            let upstream_before = contract_upstream_calls(&mock);
+            let response = send_contract_request(row, actor, proxy, cookie, &mock).await;
+            let actual_status = response.status().as_u16();
+            assert_eq!(
+                actual_status, expected.status,
+                "route-contract:phase/auth: {} {} actor={actor:?} access={:?} phase={:?}",
+                row.method, row.path, row.access, row.phase
+            );
+
+            let succeeded = actual_status == row.success_status;
+            if succeeded {
+                if let Some(content_type) = row.success_content_type {
+                    assert_eq!(
+                        response
+                            .headers()
+                            .get(CONTENT_TYPE)
+                            .and_then(|value| value.to_str().ok()),
+                        Some(content_type),
+                        "route-contract:success-content-type: {} {} actor={actor:?}",
+                        row.method,
+                        row.path
+                    );
+                }
+            }
+
+            let has_session_cookie = response.headers().contains_key("set-cookie");
+            let body = response.bytes().await.unwrap();
+            if let Some(error) = expected.error {
+                let value: serde_json::Value = serde_json::from_slice(&body).unwrap_or_else(|e| {
+                    panic!(
+                        "route-contract:error: {} {} actor={actor:?} was not JSON: {e}",
+                        row.method, row.path
+                    )
+                });
+                assert_eq!(
+                    value["error"]["code"], error,
+                    "route-contract:error: {} {} actor={actor:?}",
+                    row.method, row.path
+                );
+            }
+
+            let config_after = contract_config_bytes(proxy);
+            let upstream_after = contract_upstream_calls(&mock);
+            match row.side_effect {
+                ContractSideEffect::None => {
+                    assert_eq!(
+                        config_after, config_before,
+                        "route-contract:durable-bytes: {} {} actor={actor:?}",
+                        row.method, row.path
+                    );
+                    assert_eq!(
+                        upstream_after, upstream_before,
+                        "route-contract:side-effect: {} {} actor={actor:?}",
+                        row.method, row.path
+                    );
+                }
+                ContractSideEffect::SessionCookie => {
+                    assert_eq!(
+                        config_after, config_before,
+                        "route-contract:durable-bytes: {} {} actor={actor:?}",
+                        row.method, row.path
+                    );
+                    assert_eq!(
+                        has_session_cookie, succeeded,
+                        "route-contract:session: {} {} actor={actor:?}",
+                        row.method, row.path
+                    );
+                }
+                ContractSideEffect::DurableConfig => {
+                    if succeeded {
+                        assert_ne!(
+                            config_after, config_before,
+                            "route-contract:durable-bytes: {} {} actor={actor:?}",
+                            row.method, row.path
+                        );
+                    } else {
+                        assert_eq!(
+                            config_after, config_before,
+                            "route-contract:durable-bytes: rejected {} {} actor={actor:?}",
+                            row.method, row.path
+                        );
+                    }
+                }
+                ContractSideEffect::DurableConfigAndSession => {
+                    if succeeded {
+                        assert_ne!(
+                            config_after, config_before,
+                            "route-contract:durable-bytes: {} {} actor={actor:?}",
+                            row.method, row.path
+                        );
+                    } else {
+                        assert_eq!(
+                            config_after, config_before,
+                            "route-contract:durable-bytes: rejected {} {} actor={actor:?}",
+                            row.method, row.path
+                        );
+                    }
+                    assert_eq!(
+                        has_session_cookie, succeeded,
+                        "route-contract:session: {} {} actor={actor:?}",
+                        row.method, row.path
+                    );
+                }
+                ContractSideEffect::Upstream => {
+                    assert_eq!(
+                        upstream_after > upstream_before,
+                        succeeded,
+                        "route-contract:side-effect: {} {} actor={actor:?}",
+                        row.method,
+                        row.path
+                    );
+                    assert_eq!(
+                        config_after, config_before,
+                        "route-contract:durable-bytes: {} {} actor={actor:?}",
+                        row.method, row.path
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ContractOwnership {
+    Own,
+    Other,
+}
+
+#[derive(Debug)]
+struct OwnershipBehavior {
+    body: serde_json::Value,
+    durable_change: bool,
+    ownership: ContractOwnership,
+    path: &'static str,
+    status: u16,
+}
+
+#[tokio::test]
+async fn route_contract_ownership_matrix() {
+    let mock = start_mock().await;
+    let proxy = start_proxy_with(
+        &mock.url,
+        StoreOpts {
+            clients: vec![("root-client".into(), "root-secret".into())],
+            extra_users: vec![("matrix-user".into(), "user".into())],
+            ..Default::default()
+        },
+        &[],
+    )
+    .await;
+    let root_cookie = login(&proxy).await;
+    let user_cookie = login_as(&proxy, "matrix-user").await;
+
+    let root_nim_fingerprint = api_config(&proxy, &root_cookie).await["nim_keys"][0]["fingerprint"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (status, body) = post_json(
+        &proxy,
+        &user_cookie,
+        "/api/settings/nim-keys",
+        serde_json::json!({"add": {"key": "matrix-user-nim", "rpm": 40}}),
+    )
+    .await;
+    assert_eq!(status, 200, "ownership fixture add failed: {body}");
+    let user_nim_fingerprint = api_config(&proxy, &user_cookie).await["nim_keys"][0]["fingerprint"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (status, body) = post_json(
+        &proxy,
+        &user_cookie,
+        "/api/settings/clients",
+        serde_json::json!({"add": {"name": "user-client"}}),
+    )
+    .await;
+    assert_eq!(status, 200, "ownership fixture add failed: {body}");
+
+    let rows = vec![
+        OwnershipBehavior {
+            body: serde_json::json!({
+                "set": {"fingerprint": user_nim_fingerprint, "rpm": 42}
+            }),
+            durable_change: true,
+            ownership: ContractOwnership::Own,
+            path: "/api/settings/nim-keys",
+            status: 200,
+        },
+        OwnershipBehavior {
+            body: serde_json::json!({
+                "set": {"fingerprint": root_nim_fingerprint, "rpm": 42}
+            }),
+            durable_change: false,
+            ownership: ContractOwnership::Other,
+            path: "/api/settings/nim-keys",
+            status: 403,
+        },
+        OwnershipBehavior {
+            body: serde_json::json!({"remove": "user-client"}),
+            durable_change: true,
+            ownership: ContractOwnership::Own,
+            path: "/api/settings/clients",
+            status: 200,
+        },
+        OwnershipBehavior {
+            body: serde_json::json!({"remove": "root-client"}),
+            durable_change: false,
+            ownership: ContractOwnership::Other,
+            path: "/api/settings/clients",
+            status: 403,
+        },
+    ];
+
+    for row in rows {
+        let before = contract_config_bytes(&proxy);
+        let (status, body) = post_json(&proxy, &user_cookie, row.path, row.body).await;
+        assert_eq!(
+            status.as_u16(),
+            row.status,
+            "route-contract:ownership: {:?} {}: {body}",
+            row.ownership,
+            row.path
+        );
+        let after = contract_config_bytes(&proxy);
+        if row.durable_change {
+            assert_ne!(
+                after, before,
+                "route-contract:durable-bytes: {:?} {}",
+                row.ownership, row.path
+            );
+        } else {
+            assert_eq!(
+                after, before,
+                "route-contract:durable-bytes: {:?} {}",
+                row.ownership, row.path
+            );
+            assert_eq!(
+                body["error"]["code"], "forbidden",
+                "route-contract:ownership: {:?} {}",
+                row.ownership, row.path
+            );
+        }
+    }
 }
 
 /// Send only headers for an over-limit body. `Expect: 100-continue` keeps the

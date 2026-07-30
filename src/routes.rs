@@ -1,0 +1,328 @@
+//! Fixed route paths and test-only descriptive trust-boundary metadata.
+//!
+//! The constants below are consumed by the live router in `lib.rs`. The
+//! contract inventory is deliberately test-only: it describes those live
+//! registrations and must never become a second handler registry.
+
+pub const ROOT: &str = "/";
+pub const DASH: &str = "/dash";
+pub const METRICS: &str = "/metrics";
+
+pub const API_PREFIX: &str = "/api";
+pub const API_DASHBOARD: &str = "/dashboard";
+pub const API_DASHBOARD_NOW: &str = "/dashboard/now";
+pub const API_CONFIG: &str = "/config";
+pub const API_SETTINGS_NIM_KEYS: &str = "/settings/nim-keys";
+pub const API_SETTINGS_CLIENTS: &str = "/settings/clients";
+pub const API_SETTINGS_UPSTREAM: &str = "/settings/upstream";
+pub const API_SETTINGS_LIMITS: &str = "/settings/limits";
+pub const API_SETTINGS_HISTORY: &str = "/settings/history";
+pub const API_SETTINGS_GOVERNOR: &str = "/settings/governor";
+pub const API_SETTINGS_USERS: &str = "/settings/users";
+pub const API_SETTINGS_ACCOUNT: &str = "/settings/account";
+pub const API_SETTINGS_VALIDATE_KEY: &str = "/settings/validate-key";
+
+pub const HEALTH: &str = "/health";
+pub const LOGIN: &str = "/login";
+pub const LOGOUT: &str = "/logout";
+pub const SETUP: &str = "/setup";
+pub const SETUP_VALIDATE_KEY: &str = "/setup/validate-key";
+pub const V1_WILDCARD: &str = "/v1/{*path}";
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Access {
+    Client,
+    Public,
+    OperatorAny,
+    OperatorAdmin,
+    OperatorSuperuser,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Phase {
+    Always,
+    PreSetup,
+    PostSetup,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+pub struct RouteContract {
+    pub access: Access,
+    pub method: &'static str,
+    pub openapi: bool,
+    pub path: &'static str,
+    pub phase: Phase,
+    pub probe_path: &'static str,
+}
+
+#[cfg(test)]
+const ROUTES: &[RouteContract] = &[
+    RouteContract {
+        access: Access::OperatorAny,
+        method: "GET",
+        openapi: false,
+        path: ROOT,
+        phase: Phase::PostSetup,
+        probe_path: ROOT,
+    },
+    RouteContract {
+        access: Access::OperatorAny,
+        method: "GET",
+        openapi: false,
+        path: DASH,
+        phase: Phase::PostSetup,
+        probe_path: DASH,
+    },
+    RouteContract {
+        access: Access::OperatorAny,
+        method: "GET",
+        openapi: false,
+        path: METRICS,
+        phase: Phase::PostSetup,
+        probe_path: METRICS,
+    },
+    RouteContract {
+        access: Access::OperatorAny,
+        method: "GET",
+        openapi: true,
+        path: "/api/dashboard",
+        phase: Phase::PostSetup,
+        probe_path: "/api/dashboard",
+    },
+    RouteContract {
+        access: Access::OperatorAny,
+        method: "GET",
+        openapi: true,
+        path: "/api/dashboard/now",
+        phase: Phase::PostSetup,
+        probe_path: "/api/dashboard/now",
+    },
+    RouteContract {
+        access: Access::OperatorAny,
+        method: "GET",
+        openapi: true,
+        path: "/api/config",
+        phase: Phase::PostSetup,
+        probe_path: "/api/config",
+    },
+    RouteContract {
+        access: Access::OperatorAny,
+        method: "POST",
+        openapi: true,
+        path: "/api/settings/nim-keys",
+        phase: Phase::PostSetup,
+        probe_path: "/api/settings/nim-keys",
+    },
+    RouteContract {
+        access: Access::OperatorAny,
+        method: "POST",
+        openapi: true,
+        path: "/api/settings/clients",
+        phase: Phase::PostSetup,
+        probe_path: "/api/settings/clients",
+    },
+    RouteContract {
+        access: Access::OperatorAdmin,
+        method: "POST",
+        openapi: true,
+        path: "/api/settings/limits",
+        phase: Phase::PostSetup,
+        probe_path: "/api/settings/limits",
+    },
+    RouteContract {
+        access: Access::OperatorAdmin,
+        method: "POST",
+        openapi: true,
+        path: "/api/settings/history",
+        phase: Phase::PostSetup,
+        probe_path: "/api/settings/history",
+    },
+    RouteContract {
+        access: Access::OperatorAdmin,
+        method: "POST",
+        openapi: true,
+        path: "/api/settings/governor",
+        phase: Phase::PostSetup,
+        probe_path: "/api/settings/governor",
+    },
+    RouteContract {
+        access: Access::OperatorAdmin,
+        method: "POST",
+        openapi: true,
+        path: "/api/settings/users",
+        phase: Phase::PostSetup,
+        probe_path: "/api/settings/users",
+    },
+    RouteContract {
+        access: Access::OperatorAny,
+        method: "POST",
+        openapi: true,
+        path: "/api/settings/validate-key",
+        phase: Phase::PostSetup,
+        probe_path: "/api/settings/validate-key",
+    },
+    RouteContract {
+        access: Access::OperatorAdmin,
+        method: "POST",
+        openapi: true,
+        path: "/api/settings/upstream",
+        phase: Phase::PostSetup,
+        probe_path: "/api/settings/upstream",
+    },
+    RouteContract {
+        access: Access::OperatorAny,
+        method: "POST",
+        openapi: true,
+        path: "/api/settings/account",
+        phase: Phase::PostSetup,
+        probe_path: "/api/settings/account",
+    },
+    // Intentionally wrong for the committed red proof: /health is reachable
+    // in both phases, so the E2E matrix must report route-contract:phase.
+    RouteContract {
+        access: Access::Public,
+        method: "GET",
+        openapi: false,
+        path: HEALTH,
+        phase: Phase::PostSetup,
+        probe_path: HEALTH,
+    },
+    RouteContract {
+        access: Access::Public,
+        method: "GET",
+        openapi: false,
+        path: LOGIN,
+        phase: Phase::Always,
+        probe_path: LOGIN,
+    },
+    RouteContract {
+        access: Access::Public,
+        method: "POST",
+        openapi: false,
+        path: LOGIN,
+        phase: Phase::Always,
+        probe_path: LOGIN,
+    },
+    RouteContract {
+        access: Access::Public,
+        method: "POST",
+        openapi: false,
+        path: LOGOUT,
+        phase: Phase::Always,
+        probe_path: LOGOUT,
+    },
+    RouteContract {
+        access: Access::Public,
+        method: "GET",
+        openapi: false,
+        path: SETUP,
+        phase: Phase::PreSetup,
+        probe_path: SETUP,
+    },
+    RouteContract {
+        access: Access::Public,
+        method: "POST",
+        openapi: true,
+        path: SETUP,
+        phase: Phase::PreSetup,
+        probe_path: SETUP,
+    },
+    RouteContract {
+        access: Access::Public,
+        method: "POST",
+        openapi: true,
+        path: SETUP_VALIDATE_KEY,
+        phase: Phase::PreSetup,
+        probe_path: SETUP_VALIDATE_KEY,
+    },
+    RouteContract {
+        access: Access::Client,
+        method: "ANY",
+        openapi: false,
+        path: V1_WILDCARD,
+        phase: Phase::PostSetup,
+        probe_path: "/v1/models",
+    },
+];
+
+/// Assets do not have live routes until the presentation split. Keeping the
+/// decision explicit prevents callers from inferring that assets were missed.
+#[cfg(test)]
+const ASSET_ROUTES: &[RouteContract] = &[];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inventory_agrees_with_generated_openapi() {
+        let spec: serde_json::Value =
+            serde_json::from_str(&crate::api::openapi_json()).expect("generated OpenAPI JSON");
+        let paths = spec["paths"].as_object().expect("OpenAPI paths");
+
+        assert_eq!(ROUTES.len(), 23, "route-contract:inventory");
+        assert!(ASSET_ROUTES.is_empty(), "route-contract:assets");
+        assert!(
+            !ROUTES
+                .iter()
+                .any(|route| route.access == Access::OperatorSuperuser),
+            "route-contract:auth: superuser is an invariant, not extra endpoint power"
+        );
+
+        for route in ROUTES.iter().filter(|route| route.openapi) {
+            let method = route.method.to_ascii_lowercase();
+            let operation = paths
+                .get(route.path)
+                .and_then(|item| item.get(&method))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "route-contract:openapi: missing {} {}",
+                        route.method, route.path
+                    )
+                });
+            match route.access {
+                Access::Public => assert_eq!(
+                    operation["security"].as_array().map(Vec::len),
+                    Some(0),
+                    "route-contract:openapi: public {} {} must waive security",
+                    route.method,
+                    route.path
+                ),
+                Access::OperatorAny | Access::OperatorAdmin | Access::OperatorSuperuser => {
+                    assert!(
+                        operation.get("security").is_none(),
+                        "route-contract:openapi: operator {} {} must inherit security",
+                        route.method,
+                        route.path
+                    );
+                }
+                Access::Client => {
+                    panic!("route-contract:openapi: /v1 is upstream-owned and must stay omitted")
+                }
+            }
+        }
+
+        for (path, item) in paths {
+            for method in item.as_object().expect("OpenAPI path item").keys() {
+                assert!(
+                    ROUTES.iter().any(|route| {
+                        route.openapi
+                            && route.path == path
+                            && route.method.eq_ignore_ascii_case(method)
+                    }),
+                    "route-contract:openapi: undocumented inventory decision for {method} {path}"
+                );
+            }
+        }
+
+        assert!(
+            ROUTES
+                .iter()
+                .all(|route| { !route.path.contains('{') || !route.probe_path.contains('{') }),
+            "route-contract:probe: parameterized routes need fixture-backed probe paths"
+        );
+    }
+}
