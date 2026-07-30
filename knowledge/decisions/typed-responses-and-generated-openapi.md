@@ -71,14 +71,34 @@ for a `user`, so the type says what the security posture already required.
   undocumented would not make them less reachable. They sit outside the
   `route_layer` because no user exists yet, so they carry an explicit empty
   `security: []` — the document-level requirement (session cookie *or* header
-  credentials) applies to everything else. Both 404 the moment a superuser
-  exists, so the window is exactly one claim wide.
+  credentials) applies to everything else. Once a superuser exists, the page
+  `GET /setup` is a bare 404 while either setup POST is a typed 409
+  `setup_complete` conflict, so the claim window is exactly one claim wide.
 - **Out of scope, deliberately:** the OpenAI-compatible `/v1` passthrough (that
   contract is the upstream's, not ours), the HTML page routes, the
   form-encoded `/login`/`/logout` browser flow, plain-text `/health`, and the
   Prometheus exposition at `/metrics`. The spec describes the *dashboard API*,
   not every path the router answers.
 - **No served UI**, per option 2.
+
+### JSON rejection boundary
+
+The protected `/api/*` router and the two setup **POST** routes use the same
+typed rejection boundary. `ApiJson<T>` delegates parsing and the configured
+`DefaultBodyLimit` to Axum, then translates syntax/data failures to
+`invalid_json` (preserving Axum's existing 400 syntax and 422 data statuses), missing or unsuitable JSON media types to
+`unsupported_media_type`, and a limit hit to `body_too_large`. `ApiQuery<T>`
+translates dashboard-query decoding failures to `invalid_query`. The nested
+control-plane router supplies `not_found` and `method_not_allowed` fallbacks,
+so these framework-level rejections serialize as `ApiError` too.
+
+This boundary is intentionally narrow: setup **GET** retains its HTML/bare-404
+contract, and login/form, health, metrics, and `/v1` retain their existing
+contracts. After a claim, setup POSTs check that phase before inspecting JSON
+headers or buffering the body and answer the typed `409 setup_complete`
+conflict; the page GET remains a bare 404. The generated spec documents each
+non-success dashboard/setup response with the `ApiError` schema, and its test
+rejects an untyped non-2xx response.
 
 ### Field order is the wire order
 
@@ -135,3 +155,6 @@ every `/setup` operation explicitly waiving it.
 - The spec is a file, not a page. Operators who want a browsable UI can point
   any offline viewer at `openapi.json`; nothing is served, so the CSP and the
   scratch image are untouched.
+- Malformed JSON, wrong media type, request-size, query, route, method, and
+  post-claim setup failures now have stable codes and one raw-byte E2E matrix.
+  Every row also asserts that `config.json` is byte-identical after rejection.

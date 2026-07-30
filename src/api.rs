@@ -21,6 +21,11 @@
 //!
 //! See `knowledge/decisions/typed-responses-and-generated-openapi.md`.
 
+use axum::extract::rejection::JsonRejection;
+use axum::extract::{FromRequest, FromRequestParts, Request};
+use axum::http::{request::Parts, StatusCode};
+use axum::response::{IntoResponse, Response};
+use serde::de::DeserializeOwned;
 use serde::Serialize;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi, ToSchema};
@@ -61,6 +66,95 @@ impl ApiError {
             },
         }
     }
+}
+
+/// A JSON extractor whose failures use the dashboard API's stable error
+/// envelope instead of Axum's framework-default text responses.
+pub struct ApiJson<T>(pub T);
+
+impl<T, S> FromRequest<S> for ApiJson<T>
+where
+    T: DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        match axum::Json::<T>::from_request(req, state).await {
+            Ok(axum::Json(value)) => Ok(Self(value)),
+            Err(JsonRejection::MissingJsonContentType(_)) => Err(api_error_response(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "unsupported_media_type",
+                "Content-Type must be application/json",
+            )),
+            Err(JsonRejection::BytesRejection(rejection)) => {
+                let (status, code, message) = if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE
+                {
+                    (
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "body_too_large",
+                        "request body is too large",
+                    )
+                } else {
+                    (StatusCode::BAD_REQUEST, "invalid_json", "invalid JSON")
+                };
+                Err(api_error_response(status, code, message))
+            }
+            Err(JsonRejection::JsonDataError(_)) => Err(api_error_response(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_json",
+                "invalid JSON",
+            )),
+            Err(_) => Err(api_error_response(
+                StatusCode::BAD_REQUEST,
+                "invalid_json",
+                "invalid JSON",
+            )),
+        }
+    }
+}
+
+/// A query extractor whose failures use the dashboard API's stable error
+/// envelope instead of Axum's framework-default text responses.
+pub struct ApiQuery<T>(pub T);
+
+impl<T, S> FromRequestParts<S> for ApiQuery<T>
+where
+    T: DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        match axum::extract::Query::<T>::from_request_parts(parts, state).await {
+            Ok(axum::extract::Query(value)) => Ok(Self(value)),
+            Err(_) => Err(api_error_response(
+                StatusCode::BAD_REQUEST,
+                "invalid_query",
+                "invalid query",
+            )),
+        }
+    }
+}
+
+fn api_error_response(status: StatusCode, code: &str, message: &str) -> Response {
+    (status, axum::Json(ApiError::new(code, message))).into_response()
+}
+
+/// The protected `/api/*` fallback. It is deliberately not installed on page,
+/// health, metrics, login/form, setup GET, or `/v1` routes.
+pub async fn api_not_found() -> Response {
+    api_error_response(StatusCode::NOT_FOUND, "not_found", "not found")
+}
+
+/// The protected `/api/*` method fallback. It has the same narrow scope as
+/// [`api_not_found`].
+pub async fn api_method_not_allowed() -> Response {
+    api_error_response(
+        StatusCode::METHOD_NOT_ALLOWED,
+        "method_not_allowed",
+        "method not allowed",
+    )
 }
 
 /// A settings write that applied. Success carries no data: the dashboard
@@ -712,6 +806,15 @@ mod tests {
             ))
             .unwrap(),
             r#"{"error":{"code":"forbidden","message":"server settings require an admin","type":"proxy_error"}}"#
+        );
+    }
+
+    #[test]
+    fn api_error_wire_order_is_exact() {
+        let body = serde_json::to_string(&ApiError::new("invalid_json", "invalid JSON")).unwrap();
+        assert_eq!(
+            body,
+            r#"{"error":{"code":"invalid_json","message":"invalid JSON","type":"proxy_error"}}"#
         );
     }
 

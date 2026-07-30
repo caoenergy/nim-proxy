@@ -83,6 +83,21 @@ fn spec_is_usable() {
         }
     }
 
+    for (path, item) in paths {
+        for (method, op) in item.as_object().expect("path item") {
+            for (status, response) in op["responses"].as_object().expect("responses") {
+                if status.starts_with('2') {
+                    continue;
+                }
+                assert_eq!(
+                    response["content"]["application/json"]["schema"]["$ref"],
+                    "#/components/schemas/ApiError",
+                    "{method} {path} {status}: every JSON API rejection uses ApiError"
+                );
+            }
+        }
+    }
+
     // The document-level requirement the /api/* routes inherit.
     let global = spec["security"].as_array().expect("document security");
     assert_eq!(global.len(), 2, "session cookie or header credentials");

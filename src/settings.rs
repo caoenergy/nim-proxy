@@ -6,15 +6,15 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use axum::extract::State;
+use axum::extract::{FromRequest, Request, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use utoipa::ToSchema;
 
 use crate::api::{
-    ApiError, ClientKeyRow, ClientsResponse, ConfigResponse, HistorySettings, MintedClientKey,
-    NimKeyRow, OkResponse, PoolSummary, ServerSettings, SetupResponse, UserRow,
+    ApiError, ApiJson, ClientKeyRow, ClientsResponse, ConfigResponse, HistorySettings,
+    MintedClientKey, NimKeyRow, OkResponse, PoolSummary, ServerSettings, SetupResponse, UserRow,
     ValidateKeyResponse,
 };
 use crate::config::{self, NimKey, Role, StoredConfig, User};
@@ -54,6 +54,14 @@ fn json_error(status: StatusCode, code: &str, message: impl Into<String>) -> Res
 
 fn not_found() -> Response {
     StatusCode::NOT_FOUND.into_response()
+}
+
+fn setup_complete() -> Response {
+    json_error(
+        StatusCode::CONFLICT,
+        "setup_complete",
+        "setup is already complete",
+    )
 }
 
 /// `GET /setup` — the first-run wizard (404 once setup is complete).
@@ -106,18 +114,19 @@ pub struct SetupKey {
         (status = 200, description = "Claimed. Sets the session cookie; `client_key` carries \
             the minted secret, which is never retrievable again.", body = SetupResponse),
         (status = 400, description = "Weak password or a config the store rejects", body = ApiError),
-        (status = 404, description = "Setup is already complete"),
-        (status = 409, description = "Another caller claimed the proxy first", body = ApiError),
+        (status = 409, description = "Setup is already complete or another caller claimed the \
+            proxy first", body = ApiError),
     ),
 )]
-pub async fn setup_submit(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    axum::Json(req): axum::Json<SetupReq>,
-) -> Response {
+pub async fn setup_submit(State(state): State<Arc<AppState>>, req: Request) -> Response {
     if !state.setup_required.load(Ordering::SeqCst) {
-        return not_found();
+        return setup_complete();
     }
+    let headers = req.headers().clone();
+    let ApiJson(req) = match ApiJson::<SetupReq>::from_request(req, &state).await {
+        Ok(req) => req,
+        Err(response) => return response,
+    };
     if req.password.len() < 10 {
         return json_error(
             StatusCode::BAD_REQUEST,
@@ -135,11 +144,7 @@ pub async fn setup_submit(
         let mut guard = state.store.lock().unwrap();
         if guard.superuser().is_some() {
             // Two claimers raced; the store lock made the first win whole.
-            return json_error(
-                StatusCode::CONFLICT,
-                "already_configured",
-                "setup was just completed by someone else",
-            );
+            return setup_complete();
         }
         let mut cand = guard.clone();
         cand.users = vec![User {
@@ -227,18 +232,19 @@ pub struct ValidateKeyReq {
         (status = 200, description = "Probe finished; `ok` says whether the key worked",
             body = ValidateKeyResponse),
         (status = 400, description = "`base_url` is not an allowed upstream", body = ApiError),
-        (status = 404, description = "Setup is already complete"),
+        (status = 409, description = "Setup is already complete", body = ApiError),
         (status = 429, description = "Probe throttle (shared with the login throttle)",
             body = ApiError),
     ),
 )]
-pub async fn setup_validate_key(
-    State(state): State<Arc<AppState>>,
-    axum::Json(req): axum::Json<ValidateKeyReq>,
-) -> Response {
+pub async fn setup_validate_key(State(state): State<Arc<AppState>>, req: Request) -> Response {
     if !state.setup_required.load(Ordering::SeqCst) {
-        return not_found();
+        return setup_complete();
     }
+    let ApiJson(req) = match ApiJson::<ValidateKeyReq>::from_request(req, &state).await {
+        Ok(req) => req,
+        Err(response) => return response,
+    };
     if state.admin.is_throttled() {
         return json_error(
             StatusCode::TOO_MANY_REQUESTS,
@@ -521,7 +527,7 @@ pub struct SetNimKey {
 pub async fn nim_keys(
     State(state): State<Arc<AppState>>,
     Extension(Identity(username)): Extension<Identity>,
-    axum::Json(req): axum::Json<NimKeysReq>,
+    ApiJson(req): ApiJson<NimKeysReq>,
 ) -> Response {
     let mut guard = state.store.lock().unwrap();
     let Some(role) = role_of(&guard, &username) else {
@@ -614,7 +620,7 @@ pub struct AddClient {
 pub async fn clients(
     State(state): State<Arc<AppState>>,
     Extension(Identity(username)): Extension<Identity>,
-    axum::Json(req): axum::Json<ClientsReq>,
+    ApiJson(req): ApiJson<ClientsReq>,
 ) -> Response {
     let mut guard = state.store.lock().unwrap();
     let Some(role) = role_of(&guard, &username) else {
@@ -684,13 +690,13 @@ macro_rules! admin_section {
                     body = ApiError),
                 (status = 403, description = "Server settings require an admin", body = ApiError),
                 (status = 422, description = "A field is missing or the wrong type — a partial \
-                    body is never a silent reset"),
+                    body is never a silent reset", body = ApiError),
             ),
         )]
         pub async fn $fn_name(
             State(state): State<Arc<AppState>>,
             Extension(Identity(username)): Extension<Identity>,
-            axum::Json(req): axum::Json<$req>,
+            ApiJson(req): ApiJson<$req>,
         ) -> Response {
             let mut guard = state.store.lock().unwrap();
             match role_of(&guard, &username) {
@@ -734,7 +740,7 @@ pub struct UpstreamReq {
 pub async fn upstream(
     State(state): State<Arc<AppState>>,
     Extension(Identity(username)): Extension<Identity>,
-    axum::Json(req): axum::Json<UpstreamReq>,
+    ApiJson(req): ApiJson<UpstreamReq>,
 ) -> Response {
     let result = {
         let mut guard = state.store.lock().unwrap();
@@ -908,7 +914,7 @@ fn parse_role(s: &str) -> Option<Role> {
 pub async fn users(
     State(state): State<Arc<AppState>>,
     Extension(Identity(username)): Extension<Identity>,
-    axum::Json(req): axum::Json<UsersReq>,
+    ApiJson(req): ApiJson<UsersReq>,
 ) -> Response {
     // Hash outside the store lock (PBKDF2 is deliberately slow).
     let new_hash = match (&req.add, &req.reset_password) {
@@ -1070,7 +1076,7 @@ pub async fn account(
     State(state): State<Arc<AppState>>,
     Extension(Identity(username)): Extension<Identity>,
     headers: HeaderMap,
-    axum::Json(req): axum::Json<AccountReq>,
+    ApiJson(req): ApiJson<AccountReq>,
 ) -> Response {
     if req.new_password.len() < 10 {
         return json_error(
@@ -1164,7 +1170,7 @@ pub async fn account(
 )]
 pub async fn validate_key(
     State(state): State<Arc<AppState>>,
-    axum::Json(req): axum::Json<ValidateKeyReq>,
+    ApiJson(req): ApiJson<ValidateKeyReq>,
 ) -> Response {
     let base = state.store.lock().unwrap().upstream.base_url.clone();
     let base = base.trim().trim_end_matches('/').to_owned();

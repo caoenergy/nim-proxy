@@ -205,7 +205,7 @@ struct DashboardQuery {
 )]
 async fn api_dashboard(
     State(state): State<Arc<AppState>>,
-    axum::extract::Query(query): axum::extract::Query<DashboardQuery>,
+    api::ApiQuery(query): api::ApiQuery<DashboardQuery>,
 ) -> Response {
     let stored = state.store.lock().unwrap();
     let config_revision = state
@@ -536,26 +536,35 @@ pub async fn run() {
     // middleware requires an authenticated user (session cookie, or
     // user:password header credentials for scrapers); pre-setup it routes
     // everything to the wizard.
+    let control_plane = Router::new()
+        .route("/dashboard", get(api_dashboard))
+        .route("/dashboard/now", get(api_dashboard_now))
+        .route("/config", get(settings::api_config))
+        .route("/settings/nim-keys", post(settings::nim_keys))
+        .route("/settings/clients", post(settings::clients))
+        .route("/settings/upstream", post(settings::upstream))
+        .route("/settings/limits", post(settings::limits))
+        .route("/settings/history", post(settings::history))
+        .route("/settings/governor", post(settings::governor_cfg))
+        .route("/settings/users", post(settings::users))
+        .route("/settings/account", post(settings::account))
+        .route("/settings/validate-key", post(settings::validate_key))
+        .fallback(api::api_not_found)
+        .method_not_allowed_fallback(api::api_method_not_allowed)
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_session,
+        ));
+
     let protected = Router::new()
         .route("/", get(dash))
         .route("/dash", get(dash))
-        .route("/api/dashboard", get(api_dashboard))
-        .route("/api/dashboard/now", get(api_dashboard_now))
-        .route("/api/config", get(settings::api_config))
-        .route("/api/settings/nim-keys", post(settings::nim_keys))
-        .route("/api/settings/clients", post(settings::clients))
-        .route("/api/settings/upstream", post(settings::upstream))
-        .route("/api/settings/limits", post(settings::limits))
-        .route("/api/settings/history", post(settings::history))
-        .route("/api/settings/governor", post(settings::governor_cfg))
-        .route("/api/settings/users", post(settings::users))
-        .route("/api/settings/account", post(settings::account))
-        .route("/api/settings/validate-key", post(settings::validate_key))
         .route("/metrics", get(metrics_text))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_session,
-        ));
+        ))
+        .nest("/api", control_plane);
 
     // Public surface: health probe, login flow, the first-run wizard (404
     // once setup completes), and the API (its own key gate + setup gate).

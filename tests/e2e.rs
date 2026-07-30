@@ -9,6 +9,9 @@ mod support;
 use std::os::unix::fs::PermissionsExt;
 use std::time::{Duration, Instant};
 
+use reqwest::header::CONTENT_TYPE;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
 use support::{
     chat_body, complete_setup, expect_refuses_to_start, login, login_as, metrics, read_sse,
     restart, scratch_data_dir, start_mock, start_proxy, start_proxy_fresh, start_proxy_in,
@@ -25,6 +28,65 @@ fn no_redirect_client() -> reqwest::Client {
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap()
+}
+
+async fn assert_exact_api_error(
+    response: reqwest::Response,
+    status: reqwest::StatusCode,
+    code: &str,
+    message: &str,
+) {
+    assert_eq!(response.status(), status);
+    assert_eq!(
+        response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|content_type| content_type.to_str().ok()),
+        Some("application/json")
+    );
+    assert_eq!(
+        response.bytes().await.unwrap().as_ref(),
+        format!(r#"{{"error":{{"code":"{code}","message":"{message}","type":"proxy_error"}}}}"#)
+            .as_bytes()
+    );
+}
+
+/// Send only headers for an over-limit body. `Expect: 100-continue` keeps the
+/// client from streaming 64 MiB into a setup route that must reject its closed
+/// phase before body buffering; the request limit still sees the declared size.
+async fn assert_closed_setup_rejects_oversized_body(proxy: &support::Proxy, path: &str) {
+    const MAX_RESPONSE_BYTES: u64 = 4 * 1024;
+
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", proxy.port))
+        .await
+        .unwrap();
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n",
+        64 * 1024 * 1024 + 1,
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+
+    let mut response = Vec::new();
+    let mut bounded = stream.take(MAX_RESPONSE_BYTES + 1);
+    tokio::time::timeout(Duration::from_secs(2), bounded.read_to_end(&mut response))
+        .await
+        .expect("closed setup route should respond without the oversized body")
+        .unwrap();
+    assert!(
+        response.len() <= MAX_RESPONSE_BYTES as usize,
+        "closed setup response exceeded {MAX_RESPONSE_BYTES} bytes"
+    );
+    let response = String::from_utf8(response).unwrap();
+    let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+    assert!(headers.starts_with("HTTP/1.1 409"), "{headers}");
+    assert!(
+        headers.contains("content-type: application/json"),
+        "{headers}"
+    );
+    assert_eq!(
+        body,
+        r#"{"error":{"code":"setup_complete","message":"setup is already complete","type":"proxy_error"}}"#
+    );
 }
 
 /// A keyed-`/v1` fixture: one client key (name, secret), otherwise defaults.
@@ -1828,7 +1890,11 @@ async fn setup_wizard_claims_the_proxy() {
         .send()
         .await
         .unwrap();
-    assert_eq!(post_setup.status(), 404, "POST /setup 404 after claim");
+    assert_eq!(
+        post_setup.status(),
+        409,
+        "POST /setup conflicts after claim"
+    );
     let post_validate = client()
         .post(proxy.url("/setup/validate-key"))
         .json(&serde_json::json!({"key": "k"}))
@@ -1837,8 +1903,8 @@ async fn setup_wizard_claims_the_proxy() {
         .unwrap();
     assert_eq!(
         post_validate.status(),
-        404,
-        "POST /setup/validate-key 404 after claim"
+        409,
+        "POST /setup/validate-key conflicts after claim"
     );
 
     // The /v1 setup gate has lifted: it no longer answers 503 setup_required.
@@ -1853,6 +1919,363 @@ async fn setup_wizard_claims_the_proxy() {
     assert_eq!(r.status(), 401, "keyed /v1 with no client key fails closed");
     let v: serde_json::Value = r.json().await.unwrap();
     assert_eq!(v["error"]["code"], "unauthorized");
+}
+
+/// Every rejection from the JSON control plane keeps the same typed envelope
+/// and leaves the durable config store untouched. Removing the narrow
+/// extractors or `/api` fallbacks makes one or more rows answer Axum's plain
+/// text defaults instead.
+#[tokio::test]
+async fn control_plane_rejections_are_typed() {
+    struct RejectionCase {
+        method: reqwest::Method,
+        path: &'static str,
+        content_type: Option<&'static str>,
+        body: &'static str,
+        status: reqwest::StatusCode,
+        code: &'static str,
+        message: &'static str,
+        oversized: bool,
+    }
+
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let cookie = login(&proxy).await;
+    let before = std::fs::read(proxy.data_dir.join("config.json")).unwrap();
+    let cases = [
+        RejectionCase {
+            method: reqwest::Method::POST,
+            path: "/api/settings/upstream",
+            content_type: Some("application/json"),
+            body: "{",
+            status: reqwest::StatusCode::BAD_REQUEST,
+            code: "invalid_json",
+            message: "invalid JSON",
+            oversized: false,
+        },
+        RejectionCase {
+            method: reqwest::Method::POST,
+            path: "/api/settings/upstream",
+            content_type: None,
+            body: r#"{"base_url":"http://example.invalid"}"#,
+            status: reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            code: "unsupported_media_type",
+            message: "Content-Type must be application/json",
+            oversized: false,
+        },
+        RejectionCase {
+            method: reqwest::Method::POST,
+            path: "/api/settings/upstream",
+            content_type: Some("text/plain"),
+            body: r#"{"base_url":"http://example.invalid"}"#,
+            status: reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            code: "unsupported_media_type",
+            message: "Content-Type must be application/json",
+            oversized: false,
+        },
+        RejectionCase {
+            method: reqwest::Method::POST,
+            path: "/api/settings/upstream",
+            content_type: Some("application/json"),
+            body: "",
+            status: reqwest::StatusCode::PAYLOAD_TOO_LARGE,
+            code: "body_too_large",
+            message: "request body is too large",
+            oversized: true,
+        },
+        RejectionCase {
+            method: reqwest::Method::GET,
+            path: "/api/dashboard?from=not-a-timestamp",
+            content_type: None,
+            body: "",
+            status: reqwest::StatusCode::BAD_REQUEST,
+            code: "invalid_query",
+            message: "invalid query",
+            oversized: false,
+        },
+        RejectionCase {
+            method: reqwest::Method::GET,
+            path: "/api/not-a-route",
+            content_type: None,
+            body: "",
+            status: reqwest::StatusCode::NOT_FOUND,
+            code: "not_found",
+            message: "not found",
+            oversized: false,
+        },
+        RejectionCase {
+            method: reqwest::Method::PUT,
+            path: "/api/dashboard",
+            content_type: None,
+            body: "",
+            status: reqwest::StatusCode::METHOD_NOT_ALLOWED,
+            code: "method_not_allowed",
+            message: "method not allowed",
+            oversized: false,
+        },
+        RejectionCase {
+            method: reqwest::Method::POST,
+            path: "/setup",
+            content_type: Some("application/json"),
+            body: r#"{"username":"another","password":"long-enough-password"}"#,
+            status: reqwest::StatusCode::CONFLICT,
+            code: "setup_complete",
+            message: "setup is already complete",
+            oversized: false,
+        },
+        RejectionCase {
+            method: reqwest::Method::POST,
+            path: "/setup/validate-key",
+            content_type: Some("application/json"),
+            body: r#"{"key":"another"}"#,
+            status: reqwest::StatusCode::CONFLICT,
+            code: "setup_complete",
+            message: "setup is already complete",
+            oversized: false,
+        },
+    ];
+
+    let mut failures = Vec::new();
+    for case in cases {
+        let body = if case.oversized {
+            "x".repeat(64 * 1024 * 1024 + 1)
+        } else {
+            case.body.to_owned()
+        };
+        let mut request = client()
+            .request(case.method.clone(), proxy.url(case.path))
+            .body(body);
+        if case.path.starts_with("/api/") {
+            request = request.header("cookie", &cookie);
+        }
+        if let Some(content_type) = case.content_type {
+            request = request.header("content-type", content_type);
+        }
+
+        let response = request.send().await.unwrap();
+        let mut errors = Vec::new();
+        if response.status() != case.status {
+            errors.push(format!("status {:?}", response.status()));
+        }
+        match response.headers().get(CONTENT_TYPE) {
+            Some(content_type) if content_type == "application/json" => {}
+            Some(content_type) => errors.push(format!("content-type {content_type:?}")),
+            None => errors.push("content-type missing".to_owned()),
+        }
+        let body = response.bytes().await.unwrap();
+        let expected = format!(
+            r#"{{"error":{{"code":"{}","message":"{}","type":"proxy_error"}}}}"#,
+            case.code, case.message
+        );
+        if body.as_ref() != expected.as_bytes() {
+            errors.push(format!("body {:?}", String::from_utf8_lossy(&body)));
+        }
+        if std::fs::read(proxy.data_dir.join("config.json")).unwrap() != before {
+            errors.push("config.json changed".to_owned());
+        }
+        if !errors.is_empty() {
+            failures.push(format!(
+                "{} {}: {}",
+                case.method,
+                case.path,
+                errors.join(", ")
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "rejection failures:\n{}",
+        failures.join("\n")
+    );
+}
+
+/// The raw-request setup handlers phase-check first, but while setup remains
+/// open their manual `ApiJson` call must preserve the typed extractor errors.
+#[tokio::test]
+async fn open_setup_posts_keep_typed_extractor_rejections() {
+    struct OpenCase {
+        content_type: Option<&'static str>,
+        body: &'static str,
+        status: reqwest::StatusCode,
+        code: &'static str,
+        message: &'static str,
+        oversized: bool,
+    }
+
+    let proxy = start_proxy_fresh().await;
+    let before = std::fs::read(proxy.data_dir.join("config.json")).ok();
+    let cases = [
+        OpenCase {
+            content_type: Some("application/json"),
+            body: "{",
+            status: reqwest::StatusCode::BAD_REQUEST,
+            code: "invalid_json",
+            message: "invalid JSON",
+            oversized: false,
+        },
+        OpenCase {
+            content_type: None,
+            body: r#"{"key":"k"}"#,
+            status: reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            code: "unsupported_media_type",
+            message: "Content-Type must be application/json",
+            oversized: false,
+        },
+        OpenCase {
+            content_type: Some("text/plain"),
+            body: r#"{"key":"k"}"#,
+            status: reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            code: "unsupported_media_type",
+            message: "Content-Type must be application/json",
+            oversized: false,
+        },
+        OpenCase {
+            content_type: Some("application/json"),
+            body: "",
+            status: reqwest::StatusCode::PAYLOAD_TOO_LARGE,
+            code: "body_too_large",
+            message: "request body is too large",
+            oversized: true,
+        },
+    ];
+
+    for path in ["/setup", "/setup/validate-key"] {
+        for case in &cases {
+            let body = if case.oversized {
+                "x".repeat(64 * 1024 * 1024 + 1)
+            } else {
+                case.body.to_owned()
+            };
+            let mut request = client().post(proxy.url(path)).body(body);
+            if let Some(content_type) = case.content_type {
+                request = request.header(CONTENT_TYPE, content_type);
+            }
+            assert_exact_api_error(
+                request.send().await.unwrap(),
+                case.status,
+                case.code,
+                case.message,
+            )
+            .await;
+            assert_eq!(
+                std::fs::read(proxy.data_dir.join("config.json")).ok(),
+                before
+            );
+        }
+    }
+}
+
+/// An unknown `/api/*` path is still an operator-surface request: it must not
+/// disclose its typed fallback before the setup/session gate has run.
+#[tokio::test]
+async fn unknown_control_plane_paths_are_gated_before_fallback() {
+    let fresh = start_proxy_fresh().await;
+    let before_fresh = std::fs::read(fresh.data_dir.join("config.json")).ok();
+    assert_exact_api_error(
+        client()
+            .get(fresh.url("/api/not-a-route"))
+            .send()
+            .await
+            .unwrap(),
+        reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        "setup_required",
+        "first-time setup has not been completed; open the dashboard to create the superuser",
+    )
+    .await;
+    assert_eq!(
+        std::fs::read(fresh.data_dir.join("config.json")).ok(),
+        before_fresh
+    );
+
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let before = std::fs::read(proxy.data_dir.join("config.json")).unwrap();
+    assert_exact_api_error(
+        client()
+            .get(proxy.url("/api/not-a-route"))
+            .send()
+            .await
+            .unwrap(),
+        reqwest::StatusCode::UNAUTHORIZED,
+        "unauthorized",
+        "authentication required (session cookie, or Authorization: Bearer <username>:<password>)",
+    )
+    .await;
+    assert_eq!(
+        std::fs::read(proxy.data_dir.join("config.json")).unwrap(),
+        before
+    );
+
+    let cookie = login(&proxy).await;
+    assert_exact_api_error(
+        client()
+            .get(proxy.url("/api/not-a-route"))
+            .header("cookie", cookie)
+            .send()
+            .await
+            .unwrap(),
+        reqwest::StatusCode::NOT_FOUND,
+        "not_found",
+        "not found",
+    )
+    .await;
+    assert_eq!(
+        std::fs::read(proxy.data_dir.join("config.json")).unwrap(),
+        before
+    );
+}
+
+/// Once claimed, setup POSTs reject before they inspect headers or buffer a
+/// body, so the closed phase always has one stable conflict result.
+#[tokio::test]
+async fn closed_setup_posts_win_before_body_rejections() {
+    struct ClosedCase {
+        content_type: Option<&'static str>,
+        body: &'static str,
+    }
+
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let before = std::fs::read(proxy.data_dir.join("config.json")).unwrap();
+    let cases = [
+        ClosedCase {
+            content_type: Some("application/json"),
+            body: "{",
+        },
+        ClosedCase {
+            content_type: None,
+            body: r#"{"key":"k"}"#,
+        },
+        ClosedCase {
+            content_type: Some("text/plain"),
+            body: r#"{"key":"k"}"#,
+        },
+    ];
+
+    for path in ["/setup", "/setup/validate-key"] {
+        for case in &cases {
+            let mut request = client().post(proxy.url(path)).body(case.body);
+            if let Some(content_type) = case.content_type {
+                request = request.header("content-type", content_type);
+            }
+            assert_exact_api_error(
+                request.send().await.unwrap(),
+                reqwest::StatusCode::CONFLICT,
+                "setup_complete",
+                "setup is already complete",
+            )
+            .await;
+            assert_eq!(
+                std::fs::read(proxy.data_dir.join("config.json")).unwrap(),
+                before
+            );
+        }
+        assert_closed_setup_rejects_oversized_body(&proxy, path).await;
+        assert_eq!(
+            std::fs::read(proxy.data_dir.join("config.json")).unwrap(),
+            before
+        );
+    }
 }
 
 /// The claim persists: after a restart on the same data dir, the created user
@@ -3159,13 +3582,25 @@ async fn setup_double_claim_is_rejected_with_409() {
         client().post(proxy.url("/setup")).json(&body).send(),
         client().post(proxy.url("/setup")).json(&body).send(),
     );
-    let mut statuses = [a.unwrap().status().as_u16(), b.unwrap().status().as_u16()];
-    statuses.sort_unstable();
-    assert_eq!(
-        statuses,
-        [200, 409],
-        "exactly one claim wins, the other 409s"
-    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    let (success, conflict) = if a.status() == reqwest::StatusCode::OK {
+        (a, b)
+    } else {
+        (b, a)
+    };
+    assert_eq!(success.status(), reqwest::StatusCode::OK);
+    assert_exact_api_error(
+        conflict,
+        reqwest::StatusCode::CONFLICT,
+        "setup_complete",
+        "setup is already complete",
+    )
+    .await;
+    let stored: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(proxy.data_dir.join("config.json")).unwrap())
+            .unwrap();
+    assert_eq!(stored["users"].as_array().unwrap().len(), 1);
+    assert_eq!(stored["users"][0]["username"], "admin");
 }
 
 /// A lockout-recovery store (users hand-emptied) keeps orphan-owned client

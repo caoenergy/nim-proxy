@@ -6,6 +6,47 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-30] lint — bound raw setup-rejection proof and cover open extraction
+
+The raw `Expect: 100-continue` setup body-limit proof now caps its response
+read at 4 KiB plus a sentinel byte while retaining its two-second completion
+bound. The test also now covers the manual setup extraction path while setup
+is open, including malformed/media/body-limit rejections and no config-store
+creation. The all-row JSON rejection collector records an absent Content-Type
+as a row failure rather than panicking. See [test strategy](testing/test-strategy.md).
+
+## [2026-07-30] lint — complete the typed control-plane rejection gate
+
+Independent review found and the task proof now closes three boundary holes:
+the whole nested `/api` router, including its not-found fallback, is inside the
+session/setup gate; closed setup POSTs perform their phase check before JSON
+extraction or body buffering; and both the normal and racing claim-loser paths
+share `409 setup_complete`. The architecture and typed-response decision now
+also distinguish bare setup GET 404 from typed setup POST conflict.
+
+The new real-binary E2E proof holds an over-limit setup request at
+`Expect: 100-continue`, asserting the 409 response before 64 MiB can be sent;
+it also covers malformed and media-type request variants, fallback gating, and
+the persisted race outcome. See [test strategy](testing/test-strategy.md) and
+[typed responses](decisions/typed-responses-and-generated-openapi.md).
+
+## [2026-07-30] decision — typed JSON control-plane rejections
+
+The JSON control-plane and setup POST boundary now translates Axum extractor,
+body-limit, route, and method failures into the stable `ApiError` envelope.
+Recorded in [typed-responses-and-generated-openapi](decisions/typed-responses-and-generated-openapi.md).
+
+- `ApiJson` owns syntax/data, media-type, and body-limit normalization;
+  `ApiQuery` owns query normalization; the nested `/api/*` router owns only
+  its not-found and method fallbacks. Login/form, setup GET, health, metrics,
+  and `/v1` remain outside the boundary.
+- Post-claim setup POSTs now conflict with `409 setup_complete`; setup GET
+  remains a bare 404. The generated OpenAPI responses use `ApiError` for every
+  documented non-2xx API response.
+- The committed E2E table checks raw response bytes and unchanged
+  `config.json` bytes for every rejection row, rather than normalizing the
+  response through `serde_json::Value`.
+
 ## [2026-07-30] lint — enforce the agent-guide memory contract in CI
 
 PR CI now runs `python3 scripts/check_agent_guide.py --selftest`, which rejects
