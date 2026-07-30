@@ -584,6 +584,903 @@ fn keys_of<T: Serialize>(value: &T) -> Vec<String> {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    use std::fs;
+    use std::path::Path;
+
+    fn metric_for(metric: &str, model: &str, value: f64) -> MetricValue {
+        MetricValue {
+            labels: BTreeMap::from([
+                ("client".into(), "fixture-client".into()),
+                ("model".into(), model.into()),
+                ("path".into(), "/v1/chat/completions".into()),
+                ("status".into(), "200".into()),
+            ]),
+            metric: metric.into(),
+            value,
+        }
+    }
+
+    fn metric(metric: &str, value: f64) -> MetricValue {
+        metric_for(metric, "fixture/alpha", value)
+    }
+
+    fn active_requests(value: f64) -> MetricValue {
+        MetricValue {
+            labels: BTreeMap::new(),
+            metric: "nimproxy_active_requests".into(),
+            value,
+        }
+    }
+
+    fn dashboard_ui_fixture(kind: &str) -> DashboardResponse {
+        let empty = kind == "empty";
+        let partial = kind == "partial";
+        let extreme = kind == "extreme";
+        let long = kind == "long";
+        let values = if empty {
+            Vec::new()
+        } else if long {
+            let client = format!("client-fixture-{}", "c".repeat(49));
+            let publisher = format!("publisher-fixture-{}", "p".repeat(20));
+            let model = format!("{publisher}/model-{}", "m".repeat(19));
+            assert_eq!(client.len(), 64);
+            assert_eq!(model.len(), 64);
+            vec![MetricValue {
+                labels: BTreeMap::from([
+                    ("client".into(), client),
+                    ("model".into(), model),
+                    ("path".into(), "/v1/chat/completions".into()),
+                    ("status".into(), "200".into()),
+                ]),
+                metric: "nimproxy_requests_total".into(),
+                value: 3.0,
+            }]
+        } else {
+            let value = if extreme { f64::MAX / 4.0 } else { 3.0 };
+            vec![
+                metric_for("nimproxy_requests_total", "fixture/alpha", value),
+                metric_for("nimproxy_requests_total", "fixture/zeta", value),
+            ]
+        };
+        let available_from = if partial {
+            1_699_913_600
+        } else {
+            1_697_411_600
+        };
+        let effective_from = available_from;
+        DashboardResponse {
+            config_revision: 7,
+            diagnostics: HistoryDiagnostics {
+                legacy_resets_inferred: usize::from(partial),
+                normalized_series: usize::from(!empty),
+                skipped_metric_lines: usize::from(partial),
+                skipped_records: usize::from(partial),
+                valid_samples: usize::from(!empty),
+            },
+            history_revision: 11,
+            latest: (!empty)
+                .then(|| active_requests(if extreme { f64::MAX / 4.0 } else { 2.0 }))
+                .into_iter()
+                .collect(),
+            points: (!empty)
+                .then(|| RollupPoint {
+                    capacity: Some(crate::history::CapacityRollup {
+                        average_rpm: 80.0,
+                        latest_rpms: vec![40, 40],
+                    }),
+                    duration_seconds: 1_700_003_600 - effective_from,
+                    from: effective_from,
+                    to: 1_700_003_600,
+                    values: values.clone(),
+                })
+                .into_iter()
+                .collect(),
+            totals: values,
+            window: DashboardWindow {
+                available_from: (!empty).then_some(available_from),
+                available_to: (!empty).then_some(1_700_003_600),
+                default_window_days: 30,
+                effective_from: (!empty).then_some(effective_from),
+                effective_to: (!empty).then_some(1_700_003_600),
+                following_now: false,
+                requested_from: 1_697_411_600,
+                requested_to: 1_700_003_600,
+                retention_days: 30,
+            },
+        }
+    }
+
+    fn dashboard_window_ui_fixture(requested_from: u64, requested_to: u64) -> DashboardResponse {
+        let mut response = dashboard_ui_fixture("healthy");
+        response.window.effective_from = Some(requested_from);
+        response.window.effective_to = Some(requested_to);
+        response.window.requested_from = requested_from;
+        response.window.requested_to = requested_to;
+        response.points[0].from = requested_from;
+        response.points[0].to = requested_to;
+        response.points[0].duration_seconds = requested_to - requested_from;
+        response
+    }
+
+    fn server_ui_fixture() -> ServerSettings {
+        ServerSettings {
+            base_url: "https://integrate.api.nvidia.com".into(),
+            dashboard: DashboardCfg::default(),
+            default_locale: "en-US".into(),
+            governor: GovernorCfg {
+                enabled: true,
+                overrides: BTreeMap::from([("fixture/model".into(), 8)]),
+            },
+            history: HistorySettings {
+                available_from: Some(1_700_000_000),
+                compaction_pending: true,
+                days: 30,
+                file_bytes: 12_345,
+            },
+            limits: Limits::default(),
+        }
+    }
+
+    fn config_ui_fixture(role: Role, scenario: &str) -> ConfigResponse {
+        let username = match role {
+            Role::Superuser => "fixture-superuser",
+            Role::Admin => "fixture-admin",
+            Role::User => "fixture-user",
+        };
+        // Build the full state first, mutate it, then derive the same
+        // aggregates/filtering that api_config derives from StoredConfig.
+        let mut response = ConfigResponse {
+            client_keys: vec![ClientKeyRow {
+                last4: "abcd".into(),
+                name: "fixture-client".into(),
+                owner: "fixture-user".into(),
+            }],
+            locale: Some("en-US".into()),
+            mode: Mode::Keyed,
+            nim_keys: vec![
+                NimKeyRow {
+                    cooldown_ms: Some(0),
+                    enabled: true,
+                    fingerprint: "f17e0001".into(),
+                    guarded: false,
+                    in_window: Some(1),
+                    lane: Some(0),
+                    last4: "wxyz".into(),
+                    owner: "fixture-user".into(),
+                    rpm: 40,
+                },
+                NimKeyRow {
+                    cooldown_ms: Some(0),
+                    enabled: true,
+                    fingerprint: "5a000001".into(),
+                    guarded: false,
+                    in_window: Some(0),
+                    lane: Some(1),
+                    last4: "root".into(),
+                    owner: "fixture-superuser".into(),
+                    rpm: 40,
+                },
+            ],
+            pool: PoolSummary {
+                capacity_rpm: 0,
+                enabled: 0,
+            },
+            role,
+            server: Some(server_ui_fixture()),
+            username: username.into(),
+            users: Some({
+                let mut users = vec![UserRow {
+                    client_keys: 0,
+                    nim_keys: 0,
+                    role: Role::Superuser,
+                    username: "fixture-superuser".into(),
+                }];
+                if role == Role::Admin {
+                    users.push(UserRow {
+                        client_keys: 0,
+                        nim_keys: 0,
+                        role: Role::Admin,
+                        username: "fixture-admin".into(),
+                    });
+                }
+                users.push(UserRow {
+                    client_keys: 0,
+                    nim_keys: 0,
+                    role: Role::User,
+                    username: "fixture-user".into(),
+                });
+                users
+            }),
+        };
+        match scenario {
+            "base"
+            | "access-refreshed"
+            | "auth-keyed-after"
+            | "governor-enabled-before"
+            | "history-before"
+            | "limits-before"
+            | "users-role-before"
+            | "users-delete-before" => {}
+            "access-before" => response.nim_keys[0].in_window = Some(0),
+            "nim-create-before" => {
+                response.nim_keys.remove(0);
+            }
+            "nim-created-after" => {
+                response.nim_keys[0].owner = username.into();
+                response.nim_keys.swap(0, 1);
+            }
+            "nim-rpm-after" => {
+                response.nim_keys[0].rpm = 41;
+            }
+            "nim-disabled-after" => {
+                let key = &mut response.nim_keys[0];
+                key.cooldown_ms = None;
+                key.enabled = false;
+                key.in_window = None;
+                key.lane = None;
+            }
+            "nim-deleted-after" => {
+                response.nim_keys.remove(0);
+            }
+            "client-deleted-after" => response.client_keys.clear(),
+            "client-create-before" => response.client_keys.clear(),
+            "client-created-after" => {
+                response.client_keys[0].owner = username.into();
+            }
+            "auth-open-before" => response.mode = Mode::Open,
+            "override-create-before" | "override-deleted-after" => {
+                response
+                    .server
+                    .as_mut()
+                    .expect("ui-fixture: admin scenario has server")
+                    .governor
+                    .overrides
+                    .clear();
+            }
+            "limits-after" => {
+                let server = response
+                    .server
+                    .as_mut()
+                    .expect("ui-fixture: admin scenario has server");
+                server.base_url = "https://fixture.invalid/v1".into();
+                server.limits.heartbeat_secs = 10;
+                server.limits.max_inflight = 512;
+                server.limits.max_wait_secs = 900;
+                server.limits.models_ttl_secs = 600;
+                server.limits.request_timeout_secs = 300;
+                server.limits.stream_idle_secs = 300;
+                server.limits.strict_passthrough = false;
+            }
+            "history-after" => {
+                let server = response
+                    .server
+                    .as_mut()
+                    .expect("ui-fixture: admin scenario has server");
+                server.dashboard.default_window_days = 7;
+                server.dashboard.slo_target_percent = 99.9;
+                server.history.days = 30;
+            }
+            "governor-disabled-after" => {
+                response
+                    .server
+                    .as_mut()
+                    .expect("ui-fixture: admin scenario has server")
+                    .governor
+                    .enabled = false;
+            }
+            "override-created-after" | "override-delete-before" => {}
+            "users-create-before" | "users-deleted-after" => {
+                response.nim_keys.retain(|key| key.owner != "fixture-user");
+                response
+                    .client_keys
+                    .retain(|key| key.owner != "fixture-user");
+                response
+                    .users
+                    .as_mut()
+                    .expect("ui-fixture: admin scenario has users")
+                    .retain(|user| user.username != "fixture-user");
+            }
+            "users-created-after" => {
+                response.nim_keys.retain(|key| key.owner != "fixture-user");
+                response
+                    .client_keys
+                    .retain(|key| key.owner != "fixture-user");
+            }
+            "users-role-admin-after" => {
+                response
+                    .users
+                    .as_mut()
+                    .expect("ui-fixture: admin scenario has users")
+                    .iter_mut()
+                    .find(|user| user.username == "fixture-user")
+                    .expect("ui-fixture: fixture user exists")
+                    .role = Role::Admin;
+            }
+            "long-values" => {
+                let client = format!("client-fixture-{}", "c".repeat(49));
+                let long_username = format!("user-fixture-{}", "u".repeat(19));
+                assert_eq!(client.len(), 64);
+                assert_eq!(long_username.len(), 32);
+                response.client_keys[0].name = client;
+                response.client_keys[0].owner = long_username.clone();
+                response.nim_keys[0].owner = long_username.clone();
+                response
+                    .users
+                    .as_mut()
+                    .expect("admin long scenario")
+                    .iter_mut()
+                    .find(|user| user.username == "fixture-user")
+                    .expect("ui-fixture: fixture user exists")
+                    .username = long_username;
+            }
+            other => panic!("ui-fixture: unknown config scenario {other}"),
+        }
+
+        let users = response
+            .users
+            .as_mut()
+            .expect("ui-fixture: full state has users");
+        for user in users.iter_mut() {
+            user.nim_keys = response
+                .nim_keys
+                .iter()
+                .filter(|key| key.owner == user.username)
+                .count();
+            user.client_keys = response
+                .client_keys
+                .iter()
+                .filter(|key| key.owner == user.username)
+                .count();
+        }
+        let mut next_lane = 0;
+        for key in &mut response.nim_keys {
+            if key.enabled {
+                key.lane = Some(next_lane);
+                key.cooldown_ms.get_or_insert(0);
+                key.in_window.get_or_insert(0);
+                next_lane += 1;
+            } else {
+                key.lane = None;
+                key.cooldown_ms = None;
+                key.in_window = None;
+            }
+        }
+        response.pool.enabled = response.nim_keys.iter().filter(|key| key.enabled).count();
+        response.pool.capacity_rpm = response
+            .nim_keys
+            .iter()
+            .filter(|key| key.enabled)
+            .map(|key| key.rpm)
+            .sum();
+        for key in &mut response.nim_keys {
+            key.guarded = false;
+        }
+        let superuser_enabled: Vec<usize> = response
+            .nim_keys
+            .iter()
+            .enumerate()
+            .filter(|(_, key)| key.enabled && key.owner == "fixture-superuser")
+            .map(|(index, _)| index)
+            .collect();
+        if let [index] = superuser_enabled.as_slice() {
+            response.nim_keys[*index].guarded = true;
+        }
+        assert_eq!(response.pool.enabled, next_lane);
+        assert_eq!(
+            response.pool.capacity_rpm,
+            response
+                .nim_keys
+                .iter()
+                .filter(|key| key.enabled)
+                .map(|key| key.rpm)
+                .sum::<usize>()
+        );
+        assert!(response.nim_keys.iter().all(|key| {
+            key.fingerprint.len() == 8
+                && key
+                    .fingerprint
+                    .chars()
+                    .all(|character| character.is_ascii_hexdigit())
+        }));
+        assert_eq!(
+            response.nim_keys.iter().filter(|key| key.guarded).count(),
+            usize::from(superuser_enabled.len() == 1)
+        );
+        response.role = users
+            .iter()
+            .find(|user| user.username == response.username)
+            .expect("ui-fixture: authenticated user exists")
+            .role;
+        if !response.role.is_admin() {
+            response
+                .nim_keys
+                .retain(|key| key.owner == response.username);
+            response
+                .client_keys
+                .retain(|key| key.owner == response.username);
+            response.server = None;
+            response.users = None;
+        }
+        response
+    }
+
+    fn dashboard_now_ui_fixture(changed: bool) -> DashboardNowResponse {
+        DashboardNowResponse {
+            auth: true,
+            available_from: Some(1_697_411_600),
+            available_to: Some(1_700_003_600),
+            capacity_rpm: 80,
+            config_revision: 7,
+            default_window_days: 30,
+            history_revision: 11,
+            lanes: 2,
+            metrics: vec![
+                active_requests(0.0),
+                metric("nimproxy_requests_total", if changed { 5.0 } else { 3.0 }),
+            ],
+            retention_days: 30,
+            rpms: vec![40, 40],
+            sampled_at: if changed {
+                1_700_007_200
+            } else {
+                1_700_003_600
+            },
+            slo_target_percent: 99.9,
+            started: 1_700_000_000,
+            tail: Tail {
+                base_history_revision: 11,
+                from: Some(1_700_003_600),
+                to: if changed {
+                    1_700_007_200
+                } else {
+                    1_700_003_600
+                },
+                totals: changed
+                    .then(|| metric("nimproxy_requests_total", 2.0))
+                    .into_iter()
+                    .collect(),
+            },
+            version: "0.6.6".into(),
+        }
+    }
+
+    fn dashboard_now_empty_ui_fixture() -> DashboardNowResponse {
+        let mut response = dashboard_now_ui_fixture(false);
+        response.available_from = None;
+        response.available_to = None;
+        response.metrics = vec![active_requests(0.0)];
+        response.tail.from = None;
+        response.tail.totals.clear();
+        response
+    }
+
+    fn assert_dashboard_pair(label: &str, range: &DashboardResponse, now: &DashboardNowResponse) {
+        assert_eq!(
+            range.history_revision, now.history_revision,
+            "ui-fixture:{label}: history revision must come from one HistoryInner"
+        );
+        assert_eq!(
+            range.window.available_from, now.available_from,
+            "ui-fixture:{label}: available_from is a global indexed bound"
+        );
+        assert_eq!(
+            range.window.available_to, now.available_to,
+            "ui-fixture:{label}: available_to excludes the unindexed tail"
+        );
+        assert_eq!(
+            now.tail.base_history_revision, now.history_revision,
+            "ui-fixture:{label}: tail must extend the paired indexed revision"
+        );
+        assert!(
+            !range.window.following_now,
+            "ui-fixture:{label}: every fixture request supplies an explicit to bound"
+        );
+    }
+
+    fn dashboard_now_one_key_ui_fixture() -> DashboardNowResponse {
+        let mut response = dashboard_now_ui_fixture(false);
+        response.capacity_rpm = 40;
+        response.lanes = 1;
+        response.rpms = vec![40];
+        response
+    }
+
+    fn dashboard_now_open_auth_ui_fixture() -> DashboardNowResponse {
+        let mut response = dashboard_now_ui_fixture(false);
+        response.auth = false;
+        response
+    }
+
+    fn dashboard_now_partial_ui_fixture() -> DashboardNowResponse {
+        let mut response = dashboard_now_ui_fixture(false);
+        response.available_from = Some(1_699_913_600);
+        response
+    }
+
+    #[test]
+    fn ui_fixtures() {
+        let stored = StoredConfig::default();
+        let initial_now = dashboard_now_ui_fixture(false);
+        let changed_now = dashboard_now_ui_fixture(true);
+        let empty_now = dashboard_now_empty_ui_fixture();
+        let partial_now = dashboard_now_partial_ui_fixture();
+        for (label, range, now) in [
+            (
+                "healthy-initial",
+                dashboard_ui_fixture("healthy"),
+                &initial_now,
+            ),
+            (
+                "healthy-changed-tail",
+                dashboard_ui_fixture("healthy"),
+                &changed_now,
+            ),
+            ("empty", dashboard_ui_fixture("empty"), &empty_now),
+            ("partial", dashboard_ui_fixture("partial"), &partial_now),
+            ("extreme", dashboard_ui_fixture("extreme"), &initial_now),
+            ("long", dashboard_ui_fixture("long"), &initial_now),
+            (
+                "one-hour",
+                dashboard_window_ui_fixture(1_700_000_000, 1_700_003_600),
+                &initial_now,
+            ),
+            (
+                "custom",
+                dashboard_window_ui_fixture(1_700_000_100, 1_700_000_200),
+                &initial_now,
+            ),
+        ] {
+            assert_dashboard_pair(label, &range, now);
+        }
+        let partial_range = dashboard_ui_fixture("partial");
+        assert!(
+            partial_range.window.requested_from
+                < partial_range
+                    .window
+                    .available_from
+                    .expect("ui-fixture: partial has indexed data")
+        );
+        assert_eq!(
+            partial_range.window.available_from, partial_range.window.effective_from,
+            "ui-fixture:partial: a query before global retention starts at available_from"
+        );
+        let scenarios = BTreeMap::from([
+            (
+                "access-before".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "access-before")).unwrap(),
+            ),
+            (
+                "access-refreshed".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "access-refreshed"))
+                    .unwrap(),
+            ),
+            (
+                "auth-keyed-after".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "auth-keyed-after"))
+                    .unwrap(),
+            ),
+            (
+                "auth-open-before".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "auth-open-before"))
+                    .unwrap(),
+            ),
+            (
+                "client-create-before".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "client-create-before"))
+                    .unwrap(),
+            ),
+            (
+                "client-created-after".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "client-created-after"))
+                    .unwrap(),
+            ),
+            (
+                "client-deleted-after".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "client-deleted-after"))
+                    .unwrap(),
+            ),
+            (
+                "dashboard-custom-window".to_owned(),
+                serde_json::to_value(dashboard_window_ui_fixture(1_700_000_100, 1_700_000_200))
+                    .unwrap(),
+            ),
+            (
+                "dashboard-now-empty".to_owned(),
+                serde_json::to_value(dashboard_now_empty_ui_fixture()).unwrap(),
+            ),
+            (
+                "dashboard-now-one-key".to_owned(),
+                serde_json::to_value(dashboard_now_one_key_ui_fixture()).unwrap(),
+            ),
+            (
+                "dashboard-now-open-auth".to_owned(),
+                serde_json::to_value(dashboard_now_open_auth_ui_fixture()).unwrap(),
+            ),
+            (
+                "dashboard-now-partial".to_owned(),
+                serde_json::to_value(dashboard_now_partial_ui_fixture()).unwrap(),
+            ),
+            (
+                "dashboard-one-hour-window".to_owned(),
+                serde_json::to_value(dashboard_window_ui_fixture(1_700_000_000, 1_700_003_600))
+                    .unwrap(),
+            ),
+            (
+                "governor-disabled-after".to_owned(),
+                serde_json::to_value(config_ui_fixture(
+                    Role::Superuser,
+                    "governor-disabled-after",
+                ))
+                .unwrap(),
+            ),
+            (
+                "governor-enabled-before".to_owned(),
+                serde_json::to_value(config_ui_fixture(
+                    Role::Superuser,
+                    "governor-enabled-before",
+                ))
+                .unwrap(),
+            ),
+            (
+                "history-after".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "history-after")).unwrap(),
+            ),
+            (
+                "history-before".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "history-before")).unwrap(),
+            ),
+            (
+                "limits-after".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "limits-after")).unwrap(),
+            ),
+            (
+                "limits-before".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "limits-before")).unwrap(),
+            ),
+            (
+                "long-values".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "long-values")).unwrap(),
+            ),
+            (
+                "nim-create-before".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "nim-create-before"))
+                    .unwrap(),
+            ),
+            (
+                "nim-created-after".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "nim-created-after"))
+                    .unwrap(),
+            ),
+            (
+                "nim-deleted-after".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "nim-deleted-after"))
+                    .unwrap(),
+            ),
+            (
+                "nim-disabled-after".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "nim-disabled-after"))
+                    .unwrap(),
+            ),
+            (
+                "nim-rpm-after".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "nim-rpm-after")).unwrap(),
+            ),
+            (
+                "override-create-before".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "override-create-before"))
+                    .unwrap(),
+            ),
+            (
+                "override-created-after".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "override-created-after"))
+                    .unwrap(),
+            ),
+            (
+                "override-delete-before".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "override-delete-before"))
+                    .unwrap(),
+            ),
+            (
+                "override-deleted-after".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "override-deleted-after"))
+                    .unwrap(),
+            ),
+            (
+                "setup-error".to_owned(),
+                serde_json::to_value(ApiError::new("invalid_setup", "setup fixture rejected"))
+                    .unwrap(),
+            ),
+            (
+                "users-create-before".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "users-create-before"))
+                    .unwrap(),
+            ),
+            (
+                "users-created-after".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "users-created-after"))
+                    .unwrap(),
+            ),
+            (
+                "users-deleted-after".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "users-deleted-after"))
+                    .unwrap(),
+            ),
+            (
+                "users-delete-before".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "users-delete-before"))
+                    .unwrap(),
+            ),
+            (
+                "users-role-admin-after".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "users-role-admin-after"))
+                    .unwrap(),
+            ),
+            (
+                "users-role-before".to_owned(),
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "users-role-before"))
+                    .unwrap(),
+            ),
+        ]);
+        let fixtures: Vec<(&str, serde_json::Value)> = vec![
+            (
+                "api-error.json",
+                serde_json::to_value(ApiError::new("invalid_history", "invalid history fixture"))
+                    .unwrap(),
+            ),
+            (
+                "api-error-locale.json",
+                serde_json::to_value(ApiError::new("invalid_locale", "locale fixture rejected"))
+                    .unwrap(),
+            ),
+            (
+                "clients-secret-absent.json",
+                serde_json::to_value(ClientsResponse {
+                    ok: true,
+                    secret: None,
+                })
+                .unwrap(),
+            ),
+            (
+                "clients-secret-present.json",
+                serde_json::to_value(ClientsResponse {
+                    ok: true,
+                    secret: Some("npk_fixture_secret".into()),
+                })
+                .unwrap(),
+            ),
+            (
+                "config-admin.json",
+                serde_json::to_value(config_ui_fixture(Role::Admin, "base")).unwrap(),
+            ),
+            (
+                "config-superuser.json",
+                serde_json::to_value(config_ui_fixture(Role::Superuser, "base")).unwrap(),
+            ),
+            (
+                "config-user.json",
+                serde_json::to_value(config_ui_fixture(Role::User, "base")).unwrap(),
+            ),
+            (
+                "dashboard-empty.json",
+                serde_json::to_value(dashboard_ui_fixture("empty")).unwrap(),
+            ),
+            (
+                "dashboard-extreme.json",
+                serde_json::to_value(dashboard_ui_fixture("extreme")).unwrap(),
+            ),
+            (
+                "dashboard-healthy.json",
+                serde_json::to_value(dashboard_ui_fixture("healthy")).unwrap(),
+            ),
+            (
+                "dashboard-long.json",
+                serde_json::to_value(dashboard_ui_fixture("long")).unwrap(),
+            ),
+            (
+                "dashboard-now-changed.json",
+                serde_json::to_value(dashboard_now_ui_fixture(true)).unwrap(),
+            ),
+            (
+                "dashboard-now-initial.json",
+                serde_json::to_value(dashboard_now_ui_fixture(false)).unwrap(),
+            ),
+            (
+                "dashboard-partial.json",
+                serde_json::to_value(dashboard_ui_fixture("partial")).unwrap(),
+            ),
+            (
+                "locale-bootstrap.json",
+                serde_json::to_value(LocaleBootstrap::from_config(&stored, &["en-US"])).unwrap(),
+            ),
+            ("ok.json", serde_json::to_value(OkResponse::new()).unwrap()),
+            (
+                "scenarios.json",
+                serde_json::to_value(scenarios).expect("ui-fixture: scenario manifest serializes"),
+            ),
+            (
+                "setup-minted-client-key.json",
+                serde_json::to_value(SetupResponse {
+                    client_key: Some(MintedClientKey {
+                        name: "default".into(),
+                        secret: "npk_fixture_secret".into(),
+                    }),
+                    ok: true,
+                })
+                .unwrap(),
+            ),
+            (
+                "setup-no-client-key.json",
+                serde_json::to_value(SetupResponse {
+                    client_key: None,
+                    ok: true,
+                })
+                .unwrap(),
+            ),
+            (
+                "validate-failure.json",
+                serde_json::to_value(ValidateKeyResponse {
+                    error: Some("validation fixture rejected".into()),
+                    models: None,
+                    ok: false,
+                })
+                .unwrap(),
+            ),
+            (
+                "validate-success.json",
+                serde_json::to_value(ValidateKeyResponse {
+                    error: None,
+                    models: Some(3),
+                    ok: true,
+                })
+                .unwrap(),
+            ),
+        ];
+        let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ui");
+        let healthy = fixtures
+            .iter()
+            .find(|(name, _)| *name == "dashboard-healthy.json")
+            .expect("ui-fixture: healthy dashboard variant is inventoried");
+        let mut healthy_json = serde_json::to_string_pretty(&healthy.1)
+            .expect("ui-fixture: dashboard response serializes");
+        healthy_json.push('\n');
+        assert_eq!(
+            fs::read_to_string(fixture_dir.join("dashboard-response.json"))
+                .expect("ui-fixture: deliberately stale dashboard response is readable"),
+            healthy_json,
+            "ui-fixture:dashboard-response-drift: committed fixture must be generated from DashboardResponse"
+        );
+        let mut actual_names: Vec<String> = fs::read_dir(&fixture_dir)
+            .expect("ui-fixture: fixture directory exists")
+            .map(|entry| {
+                entry
+                    .expect("ui-fixture: fixture directory entry is readable")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        actual_names.sort();
+        let mut expected_names: Vec<String> = fixtures
+            .iter()
+            .map(|(name, _)| (*name).to_owned())
+            .collect();
+        expected_names.sort();
+        assert_eq!(
+            actual_names, expected_names,
+            "ui-fixture:inventory-drift: committed Rust-owned fixture inventory must be exact"
+        );
+        for (name, value) in fixtures {
+            let mut generated =
+                serde_json::to_string_pretty(&value).expect("ui-fixture: typed value serializes");
+            generated.push('\n');
+            let committed = fs::read_to_string(fixture_dir.join(name))
+                .expect("ui-fixture: committed fixture is readable");
+            assert_eq!(
+                committed, generated,
+                "ui-fixture:{name}-drift: committed fixture must match its Rust response type"
+            );
+        }
+    }
 
     /// Declaration order is the wire order, and it must stay ASCII-sorted:
     /// that is what the `serde_json::Map` (a `BTreeMap`) behind the old
