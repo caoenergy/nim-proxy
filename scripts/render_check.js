@@ -596,8 +596,9 @@ function loadFixtures() {
   for (const f of need) {
     const p = path.join(FIXTURES, f);
     if (!fs.existsSync(p)) {
-      console.error(`missing fixture ${path.relative(ROOT, p)} — see ${path.relative(ROOT, path.join(FIXTURES, 'README.md'))}`);
-      process.exit(2);
+      const error = new Error(`missing fixture ${path.relative(ROOT, p)} — see ${path.relative(ROOT, path.join(FIXTURES, 'README.md'))}`);
+      error.exitCode = 2;
+      throw error;
     }
   }
   return Object.fromEntries(
@@ -611,8 +612,9 @@ function probeCatalogHtml(serverHtml) {
     const catalogFile = `${CATALOG_PREFIX}${localeArg}.json`;
     const cp = path.join(ROOT, 'locales', catalogFile);
     if (!fs.existsSync(cp)) {
-      console.error(`missing locale ${path.relative(ROOT, cp)}`);
-      process.exit(2);
+      const error = new Error(`missing locale ${path.relative(ROOT, cp)}`);
+      error.exitCode = 2;
+      throw error;
     }
     const cat = fs.readFileSync(cp, 'utf8').trim();
     html = html.replace(
@@ -837,18 +839,125 @@ function frozenTokens() {
   return JSON.parse(out);
 }
 
+function waitForProcessExit(proc, timeoutMs) {
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve(true);
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = value => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      proc.removeListener('exit', onExit);
+      resolve(value);
+    };
+    const onExit = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    proc.once('exit', onExit);
+    if (proc.exitCode !== null || proc.signalCode !== null) finish(true);
+  });
+}
+
+function browserGroupAlive(pid) {
+  if (!pid || process.platform === 'win32') return false;
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    return error.code !== 'ESRCH';
+  }
+}
+
+async function waitForBrowserGroupExit(pid, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (browserGroupAlive(pid) && Date.now() < deadline) await sleep(25);
+  return !browserGroupAlive(pid);
+}
+
+async function shutdownRun(browser, browserProc, proxyProc, tmpdir) {
+  const failures = [];
+  if (browser) {
+    try {
+      await Promise.race([
+        browser.send('Browser.close'),
+        sleep(2000).then(() => { throw new Error('Browser.close timed out'); }),
+      ]);
+    } catch (_) {
+      // The socket commonly closes before CDP can acknowledge Browser.close.
+      // Process and group exit below are the authoritative result.
+    }
+  }
+
+  const browserExited = await waitForProcessExit(browserProc, 2000);
+  let browserTreeExited = process.platform === 'win32'
+    ? browserExited
+    : await waitForBrowserGroupExit(browserProc?.pid, browserExited ? 250 : 0);
+  if (!browserExited || !browserTreeExited) {
+    try {
+      if (process.platform === 'win32') browserProc?.kill('SIGKILL');
+      else if (browserProc?.pid) process.kill(-browserProc.pid, 'SIGKILL');
+    } catch (error) {
+      if (error.code !== 'ESRCH') failures.push(`browser termination: ${error.message}`);
+    }
+    const forcedParentExit = await waitForProcessExit(browserProc, 2000);
+    browserTreeExited = process.platform === 'win32'
+      ? forcedParentExit
+      : await waitForBrowserGroupExit(browserProc?.pid, 2000);
+    if (!forcedParentExit || !browserTreeExited) {
+      failures.push('browser process tree did not exit');
+    }
+  }
+  try { browser?.ws.close(); } catch (_) {}
+
+  if (proxyProc && proxyProc.exitCode === null && proxyProc.signalCode === null) {
+    proxyProc.kill('SIGTERM');
+    if (!await waitForProcessExit(proxyProc, 2000)) {
+      proxyProc.kill('SIGKILL');
+      if (!await waitForProcessExit(proxyProc, 2000)) failures.push('proxy process did not exit');
+    }
+  }
+
+  if (tmpdir) {
+    try {
+      fs.rmSync(tmpdir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    } catch (error) {
+      failures.push(`remove ${tmpdir}: ${error.code || error.message}`);
+    }
+    if (fs.existsSync(tmpdir)) failures.push(`run directory still exists: ${tmpdir}`);
+  }
+  if (failures.length) throw new Error(`render cleanup failed: ${failures.join('; ')}`);
+}
+
+function reportedFailure() {
+  const error = new Error('render proof failed');
+  error.reported = true;
+  error.exitCode = 1;
+  return error;
+}
+
 async function main() {
   const chrome = findChrome();
   if (!chrome) {
-    console.error('no chromium found. Set CHROME=/path/to/chrome.');
-    process.exit(2);
+    const error = new Error('no chromium found. Set CHROME=/path/to/chrome.');
+    error.exitCode = 2;
+    throw error;
   }
 
-  const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'nimproxy-render-'));
   const fixtures = loadFixtures();
-  const proxy = await startProxy(tmpdir);
+  const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'nimproxy-render-'));
+  let proxy = null;
+  let browserProc = null;
+  let browser = null;
+  let cleanupPromise = null;
+  const cleanupRun = () => {
+    if (!cleanupPromise) {
+      cleanupPromise = shutdownRun(browser, browserProc, proxy?.proc, tmpdir);
+    }
+    return cleanupPromise;
+  };
+  try {
+    proxy = await startProxy(tmpdir);
 
-  const browserProc = spawn(chrome, [
+    browserProc = spawn(chrome, [
     '--headless=new',
     '--disable-gpu',
     '--no-sandbox',
@@ -857,7 +966,10 @@ async function main() {
     '--remote-debugging-port=0',
     `--user-data-dir=${path.join(tmpdir, 'profile')}`,
     'about:blank',
-  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    ], {
+      detached: process.platform !== 'win32',
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
 
   const wsUrl = await new Promise((resolve, reject) => {
     let buf = '';
@@ -873,7 +985,7 @@ async function main() {
     browserProc.on('exit', (c) => reject(new Error('browser exited early: ' + c)));
   });
 
-  const browser = await CDP.connect(wsUrl);
+  browser = await CDP.connect(wsUrl);
   const { targetId } = await browser.send('Target.createTarget', { url: 'about:blank' });
   const { sessionId } = await browser.send('Target.attachToTarget', { targetId, flatten: true });
   const S = sessionId;
@@ -997,7 +1109,15 @@ async function main() {
     }
     if (msg.method === 'Fetch.requestPaused') {
       const operation = handleFetchPaused(msg.params)
-        .catch(error => errors.push({ text: error.message, line: 0, col: 0 }))
+        .catch(async error => {
+          errors.push({ text: error.message, line: 0, col: 0 });
+          try {
+            await browser.send('Fetch.failRequest', {
+              requestId: msg.params.requestId,
+              errorReason: 'Failed',
+            }, S);
+          } catch (_) {}
+        })
         .finally(() => fetchOperations.delete(operation));
       fetchOperations.add(operation);
     }
@@ -1049,9 +1169,7 @@ async function main() {
   const state = await evaluateRaw(browser, S, 'document.readyState');
   if (state !== 'complete') {
     console.error(`FAIL — page never finished loading (readyState=${state}).`);
-    browserProc.kill('SIGKILL');
-    proxy.proc.kill('SIGKILL');
-    process.exit(1);
+    throw reportedFailure();
   }
   // let the first poll land and paint
   await sleep(1500);
@@ -1070,9 +1188,7 @@ async function main() {
   if (initialAssetErrors.length) {
     console.error('FAIL — initial presentation asset load was incomplete or external');
     for (const error of new Set(initialAssetErrors)) console.error('  ' + error);
-    browserProc.kill('SIGKILL');
-    proxy.proc.kill('SIGKILL');
-    process.exit(1);
+    throw reportedFailure();
   }
 
   if (process.env.DEBUG) {
@@ -1150,9 +1266,7 @@ async function main() {
       })()`);
     if (dynamicStyleFailure) {
       console.error(`[dynamic-style-bound] FAIL — ${dynamicStyleFailure}`);
-      browserProc.kill('SIGKILL');
-      proxy.proc.kill('SIGKILL');
-      process.exit(1);
+      throw reportedFailure();
     }
   }
 
@@ -1356,9 +1470,7 @@ async function main() {
       })()`);
     if (sinkContext) {
       console.error(`[sink-context] FAIL — ${PAGE_REL}: ${sinkContext}`);
-      browserProc.kill('SIGKILL');
-      proxy.proc.kill('SIGKILL');
-      process.exit(1);
+      throw reportedFailure();
     }
   }
 
@@ -1378,9 +1490,7 @@ async function main() {
       })()`);
     if (!switched) {
       console.error(`FAIL — could not reach ${tab} in ${PAGE_REL}; the gate would measure the wrong panels`);
-      browserProc.kill('SIGKILL');
-      proxy.proc.kill('SIGKILL');
-      process.exit(1);
+      throw reportedFailure();
     }
     await sleep(1200);
 
@@ -1537,20 +1647,7 @@ async function main() {
     });
   }
 
-  browserProc.kill('SIGKILL');
-  proxy.proc.kill('SIGKILL');
-  await Promise.all([
-    new Promise((r) => browserProc.on('exit', r)),
-    new Promise((r) => proxy.proc.on('exit', r)),
-  ]);
-  // The browser's renderer children can outlive the parent and keep the
-  // profile busy. Cleanup is housekeeping: a failure here must never be
-  // reported as, or hide, a page result.
-  try {
-    fs.rmSync(tmpdir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-  } catch (e) {
-    console.warn(`note: left ${tmpdir} behind (${e.code})`);
-  }
+  await cleanupRun();
 
   /* ---------- report ------------------------------------------------------ */
 
@@ -1586,7 +1683,7 @@ async function main() {
   if (predicateFailures.length) {
     console.error(`\nFAIL — ${predicateFailures.length} status-predicate disagreement(s)`);
     for (const f of predicateFailures) console.error('  ' + f);
-    process.exit(1);
+    throw reportedFailure();
   }
 
   if (doubleEscaped.length) {
@@ -1606,7 +1703,7 @@ async function main() {
       seen.add(d.el);
       console.error(`    .${d.el}  ${JSON.stringify(d.text)}`);
     }
-    process.exit(1);
+    throw reportedFailure();
   }
 
   if (errors.length || consoleErrors.length) {
@@ -1619,10 +1716,13 @@ async function main() {
       console.error(`  ${PAGE_REL}:${Math.max(1, e.line - LINE_OFFSET)}:${e.col}  ${e.text.split('\n')[0]}`);
     }
     for (const c of new Set(consoleErrors)) console.error('  console: ' + c);
-    process.exit(1);
+    throw reportedFailure();
   }
 
   console.log('render ok — no uncaught page errors');
+  } finally {
+    await cleanupRun();
+  }
 }
 
 if (args.includes('--cleanup-selftest')) {
@@ -1632,7 +1732,7 @@ if (args.includes('--cleanup-selftest')) {
   });
 } else {
   main().catch((e) => {
-    console.error('render_check failed to run: ' + e.message);
-    process.exit(2);
+    if (!e.reported) console.error('render_check failed to run: ' + e.message);
+    process.exitCode = e.exitCode || 2;
   });
 }

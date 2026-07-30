@@ -134,6 +134,11 @@ faked.
   Browser proof creates more than twice that many distinct metric-like values,
   requires a real compaction, verifies cache/rule agreement, and checks a live
   node's geometry before and after the rewrite.
+- A green page result also requires a clean browser teardown. The gate closes
+  Chromium through CDP, waits a bounded interval, escalates to its isolated
+  process group when descendants survive, stops the proxy, and verifies the
+  run directory was removed. `--cleanup-selftest` forces a descendant to keep
+  writing the profile so parent-only termination or note-only cleanup fails.
 - `--escape-probe` gives the contextual-sink rule in
   [message-catalog-and-escaping](message-catalog-and-escaping.md) an
   enforcement mechanism instead of a paragraph. The probe requires inert

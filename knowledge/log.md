@@ -6,6 +6,17 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-30] fix — make render-gate cleanup part of the result
+
+The served-browser gate no longer kills only Chromium's launcher parent or
+downgrades a surviving profile directory to a note. It closes through CDP,
+uses bounded process-group escalation for surviving descendants, stops the
+proxy, verifies removal of the run directory, and fails if cleanup is
+incomplete. A deterministic cleanup self-test forces a descendant profile
+writer so this lifecycle cannot be masked by a green page result. See the
+[render-gate decision](decisions/render-gate.md) and
+[test strategy](testing/test-strategy.md).
+
 ## [2026-07-30] component — split and gate embedded presentation assets
 
 Added the [embedded presentation layer](architecture/presentation-layer.md):

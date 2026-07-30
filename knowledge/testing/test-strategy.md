@@ -44,12 +44,17 @@ that proof.
   `node scripts/render_check.js`,
   `node scripts/render_check.js --escape-probe`,
   `node scripts/render_check.js --page setup`, and
-  `node scripts/render_check.js --page setup --escape-probe`.
+  `node scripts/render_check.js --page setup --escape-probe`. Run
+  `node scripts/render_check.js --cleanup-selftest` when changing the browser
+  lifecycle; it forces a real descendant to continue writing the profile and
+  requires bounded tree shutdown plus verified directory removal.
   Behavior mode builds and starts the current binary, loads the real routed
   page/CSS/JS bytes, rejects an initial missing/error/external resource,
   fulfills captured API responses through CDP, and proves the bounded
   dynamic-style rule cache compacts without changing live geometry. Hostile
   catalog modes mutate only the catalog in the verified real server response.
+  Every behavior mode treats browser/proxy shutdown and run-directory removal
+  as part of the result; cleanup failure is a failing check.
   The escape probe enforces the id/descriptor context-owned-sink contract:
   lexical resolver isolation, descriptor coercion refusal and one HTML
   resolver, the exact four-attribute

@@ -79,6 +79,14 @@ captured production page after modifying only its inert catalog body for the
 negative run; application HTML outside that body, scripts, and styles remain
 production-served bytes.
 
+Every browser result owns its process lifecycle. Shutdown first asks Chromium
+to close through CDP, then uses a bounded process-group kill only if the
+browser tree does not exit. The proxy is stopped, the run directory is removed
+and verified absent, and cleanup failure fails the command rather than being
+downgraded beneath a green page result. `--cleanup-selftest` uses real
+processes and a continuing profile writer to force the fallback path and prove
+no `nimproxy-render-*` directory survives.
+
 See [dashboard](dashboard.md), [HTTP trust boundaries](http-trust-boundary-map.md),
 [render gate](../decisions/render-gate.md), and
 [test strategy](../testing/test-strategy.md).

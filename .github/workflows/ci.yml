@@ -106,6 +106,7 @@ jobs:
           node scripts/render_check.js --escape-probe
           node scripts/render_check.js --page setup
           node scripts/render_check.js --page setup --escape-probe
+          node scripts/render_check.js --cleanup-selftest
 
   coverage:
     name: coverage
