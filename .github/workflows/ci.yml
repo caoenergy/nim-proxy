@@ -30,6 +30,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Agent guide contract
+        run: |
+          python3 scripts/check_agent_guide.py --selftest
+          python3 scripts/check_agent_guide.py
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master (toolchain via input)
         with:
           toolchain: stable
@@ -55,16 +59,8 @@ jobs:
         # JavaScript, so it passes on a page that cannot run. This is the only
         # gate that catches that.
         run: |
-          for page in dashboard setup; do
-            python3 - "$page" <<'PY' > "$RUNNER_TEMP/$page.js"
-          import re, sys, pathlib
-          html = pathlib.Path(f"src/{sys.argv[1]}.html").read_text()
-          m = re.search(r"<script>\n(.*)</script>", html, re.S)
-          assert m, f"no <script> block found in src/{sys.argv[1]}.html"
-          print(m.group(1))
-          PY
-            node --check "$RUNNER_TEMP/$page.js"
-          done
+          node scripts/render_check.js --syntax-selftest
+          node scripts/render_check.js --syntax-only
       - name: Formatter output is unchanged
         # Pins number/duration/date/percent output against a golden fixture.
         # TZ and locale are fixed because these formatters read the catalog
