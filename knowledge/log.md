@@ -6,6 +6,23 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-30] decision — typed JSON control-plane rejections
+
+The JSON control-plane and setup POST boundary now translates Axum extractor,
+body-limit, route, and method failures into the stable `ApiError` envelope.
+Recorded in [typed-responses-and-generated-openapi](decisions/typed-responses-and-generated-openapi.md).
+
+- `ApiJson` owns syntax/data, media-type, and body-limit normalization;
+  `ApiQuery` owns query normalization; the nested `/api/*` router owns only
+  its not-found and method fallbacks. Login/form, setup GET, health, metrics,
+  and `/v1` remain outside the boundary.
+- Post-claim setup POSTs now conflict with `409 setup_complete`; setup GET
+  remains a bare 404. The generated OpenAPI responses use `ApiError` for every
+  documented non-2xx API response.
+- The committed E2E table checks raw response bytes and unchanged
+  `config.json` bytes for every rejection row, rather than normalizing the
+  response through `serde_json::Value`.
+
 ## [2026-07-30] lint — enforce the agent-guide memory contract in CI
 
 PR CI now runs `python3 scripts/check_agent_guide.py --selftest`, which rejects

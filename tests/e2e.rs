@@ -1828,7 +1828,11 @@ async fn setup_wizard_claims_the_proxy() {
         .send()
         .await
         .unwrap();
-    assert_eq!(post_setup.status(), 404, "POST /setup 404 after claim");
+    assert_eq!(
+        post_setup.status(),
+        409,
+        "POST /setup conflicts after claim"
+    );
     let post_validate = client()
         .post(proxy.url("/setup/validate-key"))
         .json(&serde_json::json!({"key": "k"}))
@@ -1837,8 +1841,8 @@ async fn setup_wizard_claims_the_proxy() {
         .unwrap();
     assert_eq!(
         post_validate.status(),
-        404,
-        "POST /setup/validate-key 404 after claim"
+        409,
+        "POST /setup/validate-key conflicts after claim"
     );
 
     // The /v1 setup gate has lifted: it no longer answers 503 setup_required.
@@ -1986,7 +1990,13 @@ async fn control_plane_rejections_are_typed() {
         }
 
         let response = request.send().await.unwrap();
-        assert_eq!(response.status(), case.status, "{} {}", case.method, case.path);
+        assert_eq!(
+            response.status(),
+            case.status,
+            "{} {}",
+            case.method,
+            case.path
+        );
         assert_eq!(
             response.headers()["content-type"],
             "application/json",

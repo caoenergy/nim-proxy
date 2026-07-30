@@ -340,7 +340,14 @@
             }
           },
           "422": {
-            "description": "A field is missing or the wrong type — a partial body is never a silent reset"
+            "description": "A field is missing or the wrong type — a partial body is never a silent reset",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }
@@ -404,7 +411,14 @@
             }
           },
           "422": {
-            "description": "A field is missing or the wrong type — a partial body is never a silent reset"
+            "description": "A field is missing or the wrong type — a partial body is never a silent reset",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }
@@ -468,7 +482,14 @@
             }
           },
           "422": {
-            "description": "A field is missing or the wrong type — a partial body is never a silent reset"
+            "description": "A field is missing or the wrong type — a partial body is never a silent reset",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }
@@ -735,11 +756,8 @@
               }
             }
           },
-          "404": {
-            "description": "Setup is already complete"
-          },
           "409": {
-            "description": "Another caller claimed the proxy first",
+            "description": "Setup is already complete or another caller claimed the proxy first",
             "content": {
               "application/json": {
                 "schema": {
@@ -790,8 +808,15 @@
               }
             }
           },
-          "404": {
-            "description": "Setup is already complete"
+          "409": {
+            "description": "Setup is already complete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           },
           "429": {
             "description": "Probe throttle (shared with the login throttle)",

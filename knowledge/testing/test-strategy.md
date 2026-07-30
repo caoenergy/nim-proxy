@@ -105,6 +105,12 @@ Two tests exist purely so the JSON contract cannot move by accident (see
   asserts the document is consumable — 14 operations, each tagged with a
   documented 200, `/api/*` inheriting the auth requirement and `/setup`
   explicitly waiving it.
+- `control_plane_rejections_are_typed` sends raw requests through the real
+  binary for malformed JSON, JSON media-type failures, body-size rejection,
+  invalid dashboard query, unknown/method-mismatched `/api/*`, and post-claim
+  setup POSTs. It asserts status, `application/json`, exact `ApiError` bytes,
+  and unchanged `config.json` bytes. Run it with `cargo test --test e2e
+  control_plane_rejections_are_typed -- --exact`.
 
 ## 3. Load — `scripts/loadtest.py` vs `scripts/mock_nim.py --enforce`
 
