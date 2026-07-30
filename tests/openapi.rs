@@ -64,7 +64,14 @@ fn spec_is_usable() {
     assert_eq!(spec["info"]["version"], env!("CARGO_PKG_VERSION"));
 
     let paths = spec["paths"].as_object().expect("paths");
-    assert_eq!(paths.len(), 14, "12 /api/* routes + the 2 setup routes");
+    assert_eq!(paths.len(), 15, "13 /api/* routes + the 2 setup routes");
+    assert_eq!(
+        paths["/api/locale-bootstrap"]["get"]["security"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "GET /api/locale-bootstrap is intentionally public"
+    );
     for omitted in [
         "/",
         "/dash",
@@ -94,7 +101,13 @@ fn spec_is_usable() {
             // The setup routes sit outside the session guard and say so with
             // an explicit empty `security` list; /api/* routes carry none of
             // their own and so inherit the document-level requirement.
-            if path.starts_with("/api/") {
+            if path == "/api/locale-bootstrap" {
+                assert_eq!(
+                    op["security"].as_array().map(Vec::len),
+                    Some(0),
+                    "{label}: locale bootstrap is public by design"
+                );
+            } else if path.starts_with("/api/") {
                 assert!(
                     op.get("security").is_none(),
                     "{label}: an /api/* route must inherit the document security requirement"
@@ -135,6 +148,7 @@ fn spec_is_usable() {
         "ApiError",
         "ConfigResponse",
         "DashboardResponse",
+        "LocaleBootstrap",
         "OkResponse",
     ] {
         assert!(schemas.contains_key(name), "{name} is missing");
@@ -147,6 +161,30 @@ fn spec_is_usable() {
     assert_eq!(security["session_cookie"]["name"], "nimproxy_session");
     assert_eq!(security["basic_auth"]["type"], "http");
     assert_eq!(security["basic_auth"]["scheme"], "basic");
+}
+
+#[test]
+fn locale_bootstrap_schema_is_typed() {
+    let spec: serde_json::Value =
+        serde_json::from_str(&nim_proxy::openapi_json()).expect("the spec is JSON");
+    assert_eq!(
+        spec["paths"]["/api/locale-bootstrap"]["get"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
+        "#/components/schemas/LocaleBootstrap",
+        "locale bootstrap success must reference its Rust response type"
+    );
+    let schema = &spec["components"]["schemas"]["LocaleBootstrap"];
+    assert_eq!(schema["type"], "object");
+    assert_eq!(
+        schema["required"],
+        serde_json::json!(["installed_locales", "server_default"])
+    );
+    assert_eq!(schema["properties"]["installed_locales"]["type"], "array");
+    assert_eq!(
+        schema["properties"]["installed_locales"]["items"]["type"],
+        "string"
+    );
+    assert_eq!(schema["properties"]["server_default"]["type"], "string");
 }
 
 #[test]

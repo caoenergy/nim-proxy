@@ -355,6 +355,45 @@ function servedPageSelftest() {
 
 if (args.includes('--served-page-selftest')) process.exit(servedPageSelftest());
 
+function catalogStartupSelftest() {
+  const failures = [];
+  const runSource = String(main);
+  const pausedSource = String(handleCatalogResponseForStartupProbe);
+  const responseSource = String(responseBody);
+  const required = [
+    ['catalog-response-stage', pausedSource.includes('responseBody(')
+      && responseSource.includes("'Fetch.getResponseBody'")],
+    ['catalog-delay', pausedSource.includes('catalogHeldState')],
+    ['bootstrap-before-catalog', runSource.includes('bootstrap-before-catalog')],
+    ['catalog-before-reveal', runSource.includes('catalog-before-reveal')],
+    ['catalog-before-api', runSource.includes('catalog-before-api')],
+    ['emergency-only', runSource.includes('emergency-only')],
+    ['no-response-body-disclosure', runSource.includes('no-response-body-disclosure')],
+  ];
+  for (const [name, observed] of required) {
+    if (!observed) failures.push(`${name}: startup proof is missing`);
+  }
+  for (const page of ['dashboard', 'setup', 'login']) {
+    const html = fs.readFileSync(path.join(ROOT, 'src', 'web', `${page}.html`), 'utf8');
+    if (/id=["']i18n-catalog["']/.test(html)) {
+      failures.push(`${page}-inline-catalog: inline catalog survives`);
+    }
+    if (!/<body\b[^>]*\bhidden(?:\s|=|>)/i.test(html)) {
+      failures.push(`${page}-hidden-first-paint: body is not hidden`);
+    }
+  }
+  if (failures.length) {
+    for (const failure of failures) console.error(`[catalog-startup] ${failure}`);
+    return 1;
+  }
+  console.log('catalog startup selftest ok — all pages and response-stage probes are wired');
+  return 0;
+}
+
+if (args.includes('--catalog-startup-selftest')) {
+  process.exit(catalogStartupSelftest());
+}
+
 function renderTempdirs() {
   return new Set(fs.readdirSync(os.tmpdir())
     .filter(name => name.startsWith('nimproxy-render-'))
@@ -550,11 +589,13 @@ const pageArg = (() => {
   const i = args.indexOf('--page');
   return i >= 0 ? args[i + 1] : 'dashboard';
 })();
-if (!['dashboard', 'setup'].includes(pageArg)) {
-  console.error(`unknown --page ${pageArg} (expected: dashboard, setup)`);
+if (!['dashboard', 'setup', 'login'].includes(pageArg)) {
+  console.error(`unknown --page ${pageArg} (expected: dashboard, setup, login)`);
   process.exit(2);
 }
 const IS_SETUP = pageArg === 'setup';
+const IS_LOGIN = pageArg === 'login';
+const IS_DASHBOARD = pageArg === 'dashboard';
 const PAGE_REL = path.join('src', 'web', `${pageArg}.html`);
 const CATALOG_PREFIX = IS_SETUP ? 'setup-' : '';
 const localeArg = (() => {
@@ -565,6 +606,20 @@ const localeArg = (() => {
 // allowed attributes render literally, while fixed-markup HTML builders
 // perform their one context-appropriate escape at the sink.
 const escapeProbe = args.includes('--escape-probe');
+const startupProbe = (() => {
+  const i = args.indexOf('--startup-probe');
+  return i >= 0 ? args[i + 1] : null;
+})();
+const STARTUP_PROBES = new Set([
+  'delayed-catalog',
+  'bootstrap-failure',
+  'catalog-failure',
+  'malformed-catalog',
+]);
+if (startupProbe && !STARTUP_PROBES.has(startupProbe)) {
+  console.error(`unknown --startup-probe ${startupProbe}`);
+  process.exit(2);
+}
 // Appended to every catalog value under --escape-probe. See the mutation below.
 const PROBE_MARKER = 'Ampersand';
 // The `"` is not decoration. An unescaped value interpolated into a quoted
@@ -663,7 +718,9 @@ async function evaluateRaw(browser, sessionId, expression) {
 /* ---------- production server and captured API responses ------------------ */
 
 function loadFixtures() {
-  const need = IS_SETUP ? [] : ['config.json', 'dashboard.json', 'dashboard-now.json'];
+  const need = IS_DASHBOARD
+    ? ['config.json', 'dashboard.json', 'dashboard-now.json']
+    : [];
   for (const f of need) {
     const p = path.join(FIXTURES, f);
     if (!fs.existsSync(p)) {
@@ -715,6 +772,76 @@ function probeCatalogHtml(serverHtml) {
     throw new Error('probe changed server HTML outside the catalog body');
   }
   return html;
+}
+
+async function responseBody(browser, sessionId, requestId) {
+  const response = await browser.send(
+    'Fetch.getResponseBody',
+    { requestId },
+    sessionId,
+  );
+  return response.base64Encoded
+    ? Buffer.from(response.body, 'base64').toString('utf8')
+    : response.body;
+}
+
+async function fulfillPausedResponse(browser, sessionId, params, body, statusCode) {
+  const headers = (params.responseHeaders || []).filter(header =>
+    !['content-length', 'content-encoding', 'transfer-encoding']
+      .includes(header.name.toLowerCase()));
+  await browser.send('Fetch.fulfillRequest', {
+    requestId: params.requestId,
+    responseCode: statusCode ?? params.responseStatusCode,
+    responseHeaders: headers,
+    body: Buffer.from(body).toString('base64'),
+  }, sessionId);
+}
+
+async function handleCatalogResponseForStartupProbe({
+  browser,
+  sessionId,
+  params,
+  pathname,
+  catalogPath,
+  startupState,
+}) {
+  const originalBody = await responseBody(browser, sessionId, params.requestId);
+  let body = originalBody;
+  let statusCode = params.responseStatusCode;
+  if (pathname === '/api/locale-bootstrap'
+      && startupProbe === 'bootstrap-failure') {
+    statusCode = 503;
+    body = startupState.secret;
+    startupState.failureReleasedAt = Date.now();
+  }
+  if (pathname === catalogPath && startupProbe === 'delayed-catalog') {
+    await sleep(400);
+    startupState.catalogHeldState = await evaluateRaw(browser, sessionId, `JSON.stringify({
+      hidden: !document.body || document.body.hidden,
+      text: document.body ? document.body.innerText.trim() : '',
+    })`).then(JSON.parse);
+    const catalog = JSON.parse(body);
+    const probeId = IS_DASHBOARD
+      ? 'dashboard.nav.tab.overview'
+      : IS_SETUP
+        ? 'setup.wizard.continue'
+        : 'login.submit';
+    startupState.readyText = `${catalog.messages[probeId]} · catalog response`;
+    catalog.messages[probeId] = startupState.readyText;
+    body = JSON.stringify(catalog);
+  }
+  if (pathname === catalogPath && startupProbe === 'catalog-failure') {
+    statusCode = 503;
+    body = startupState.secret;
+    startupState.failureReleasedAt = Date.now();
+  }
+  if (pathname === catalogPath && startupProbe === 'malformed-catalog') {
+    body = '{"locale":"en-US","messages":[]}';
+    startupState.disclosureMarkers.add(body);
+    startupState.failureReleasedAt = Date.now();
+  }
+  if (pathname === catalogPath) startupState.catalogReleasedAt = Date.now();
+  await fulfillPausedResponse(browser, sessionId, params, body, statusCode);
 }
 
 function configuredStore() {
@@ -1082,6 +1209,7 @@ async function main() {
 
   const errors = [];
   const consoleErrors = [];
+  const consoleMessages = [];
   const requestUrls = new Map();
   const initialAssetErrors = [];
   const requestedPresentation = new Set();
@@ -1089,9 +1217,24 @@ async function main() {
   const serverPageResponses = new Set();
   const fetchOperations = new Set();
   const fetched = [];
-  const pagePath = IS_SETUP ? '/setup' : '/';
+  const requestTimeline = [];
+  const startupState = {
+    catalogHeldState: null,
+    catalogReleasedAt: null,
+    failureReleasedAt: null,
+    pageSourceProblems: [],
+    readyText: null,
+    secret: 'CATALOG_RESPONSE_BODY_MUST_NOT_BE_DISCLOSED',
+    disclosureMarkers: new Set(),
+  };
+  startupState.disclosureMarkers.add(startupState.secret);
+  const pagePath = IS_SETUP ? '/setup' : IS_LOGIN ? '/login' : '/';
+  const catalogPath = IS_DASHBOARD
+    ? '/assets/operator/locales/en-US.json'
+    : '/assets/public/locales/en-US.json';
   const presentationPath = value =>
-    value === '/' || value === '/setup' || value.startsWith('/assets/');
+    value === '/' || value === '/setup' || value === '/login'
+      || value.startsWith('/assets/');
   const headerValue = (headers, name) =>
     (headers || []).find(header => header.name.toLowerCase() === name)?.value;
   async function handleFetchPaused(params) {
@@ -1099,8 +1242,22 @@ async function main() {
     const url = new URL(request.url);
     if (params.responseStatusCode !== undefined) {
       const headers = params.responseHeaders || [];
+      if (startupProbe
+          && ['/api/locale-bootstrap', catalogPath].includes(url.pathname)) {
+        await handleCatalogResponseForStartupProbe({
+          browser,
+          sessionId: S,
+          params,
+          pathname: url.pathname,
+          catalogPath,
+          startupState,
+        });
+        return;
+      }
       if (url.pathname !== pagePath || request.method !== 'GET') {
-        throw new Error(`unexpected response-stage interception: ${request.method} ${url.pathname}`);
+        throw new Error(
+          `unexpected response-stage interception: ${request.method} ${url.pathname}`,
+        );
       }
       if (params.responseStatusCode !== 200) {
         throw new Error(`server page response was ${params.responseStatusCode} ${url.pathname}`);
@@ -1110,26 +1267,27 @@ async function main() {
           || headerValue(headers, 'content-security-policy') !== PRESENTATION_CSP) {
         throw new Error(`server page response headers violated the presentation contract: ${url.pathname}`);
       }
-      const response = await browser.send(
-        'Fetch.getResponseBody',
-        { requestId: params.requestId },
-        S,
-      );
-      const serverHtml = response.base64Encoded
-        ? Buffer.from(response.body, 'base64').toString('utf8')
-        : response.body;
-      const body = probeCatalogHtml(serverHtml);
+      const serverHtml = await responseBody(browser, S, params.requestId);
+      let body = serverHtml;
+      if (startupProbe) {
+        if (/id=["']i18n-catalog["']/.test(serverHtml)) {
+          startupState.pageSourceProblems.push('inline catalog survives');
+        }
+        if (!/<body\b[^>]*\bhidden(?:\s|=|>)/i.test(serverHtml)) {
+          startupState.pageSourceProblems.push('body is not hidden in served HTML');
+        }
+      } else {
+        body = probeCatalogHtml(serverHtml);
+      }
       serverPageResponses.add(url.pathname);
-      await browser.send('Fetch.fulfillRequest', {
-        requestId: params.requestId,
-        responseCode: params.responseStatusCode,
-        responseHeaders: headers.filter(header =>
-          !['content-length', 'content-encoding', 'transfer-encoding']
-            .includes(header.name.toLowerCase())),
-        body: Buffer.from(body).toString('base64'),
-      }, S);
+      await fulfillPausedResponse(browser, S, params, body);
       return;
     }
+    requestTimeline.push({
+      at: Date.now(),
+      method: request.method,
+      path: url.pathname,
+    });
     let body = null;
     if (url.pathname === '/api/config') body = fixtures['config.json'];
     else if (url.pathname === '/api/dashboard/now') body = fixtures['dashboard-now.json'];
@@ -1160,13 +1318,19 @@ async function main() {
         col: d.columnNumber,
       });
     }
-    if (msg.method === 'Log.entryAdded' && msg.params.entry.level === 'error') {
+    if (msg.method === 'Log.entryAdded') {
       const entry = msg.params.entry;
-      consoleErrors.push('[' + entry.source + '] ' + entry.text
-        + (entry.url ? ` (${entry.url})` : ''));
+      const rendered = '[' + entry.source + '] ' + entry.text
+        + (entry.url ? ` (${entry.url})` : '');
+      consoleMessages.push(rendered);
+      if (entry.level === 'error') consoleErrors.push(rendered);
     }
-    if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error') {
-      consoleErrors.push(msg.params.args.map((a) => a.value ?? a.description).join(' '));
+    if (msg.method === 'Runtime.consoleAPICalled') {
+      const rendered = msg.params.args
+        .map((a) => a.value ?? a.description)
+        .join(' ');
+      consoleMessages.push(rendered);
+      if (msg.params.type === 'error') consoleErrors.push(rendered);
     }
     if (msg.method === 'Network.requestWillBeSent') {
       const url = msg.params.request.url;
@@ -1183,11 +1347,11 @@ async function main() {
       const { response } = msg.params;
       const url = new URL(response.url);
       if (response.url.startsWith(proxy.origin)
-          && (url.pathname === '/' || url.pathname === '/setup' || url.pathname.startsWith('/assets/'))
+          && presentationPath(url.pathname)
           && response.status >= 400) {
         initialAssetErrors.push(`${response.status} ${url.pathname}`);
       } else if (response.url.startsWith(proxy.origin)
-          && (url.pathname === '/' || url.pathname === '/setup' || url.pathname.startsWith('/assets/'))) {
+          && presentationPath(url.pathname)) {
         servedPresentation.add(url.pathname);
       }
     }
@@ -1219,14 +1383,22 @@ async function main() {
   await browser.send('DOM.enable', {}, S);
   await browser.send('Network.enable', {}, S);
   const fetchPatterns = [{ urlPattern: '*', requestStage: 'Request' }];
-  if (escapeProbe || localeArg) {
+  if (escapeProbe || localeArg || startupProbe) {
     fetchPatterns.push({
       urlPattern: proxy.origin + pagePath,
       requestStage: 'Response',
     });
   }
+  if (startupProbe) {
+    for (const responsePath of ['/api/locale-bootstrap', catalogPath]) {
+      fetchPatterns.push({
+        urlPattern: proxy.origin + responsePath,
+        requestStage: 'Response',
+      });
+    }
+  }
   await browser.send('Fetch.enable', { patterns: fetchPatterns }, S);
-  if (!IS_SETUP) {
+  if (IS_DASHBOARD) {
     await browser.send('Network.setExtraHTTPHeaders', {
       headers: { Authorization: 'Bearer root:test-password-1' },
     }, S);
@@ -1252,7 +1424,7 @@ async function main() {
     });
   });
   await browser.send('Page.navigate', {
-    url: proxy.origin + (IS_SETUP ? '/setup' : '/'),
+    url: proxy.origin + pagePath,
   }, S);
   await Promise.race([loaded, sleep(20000)]);
 
@@ -1264,10 +1436,171 @@ async function main() {
   // let the first poll land and paint
   await sleep(1500);
   await Promise.all([...fetchOperations]);
+  if (startupProbe) {
+    const startupFailures = [...startupState.pageSourceProblems];
+    const bootstrapIndex = requestTimeline.findIndex(row =>
+      row.path === '/api/locale-bootstrap');
+    const catalogIndex = requestTimeline.findIndex(row =>
+      row.path === catalogPath);
+    if (bootstrapIndex < 0) {
+      startupFailures.push(
+        'bootstrap-before-catalog: bootstrap was not requested',
+      );
+    } else if (startupProbe === 'bootstrap-failure') {
+      if (catalogIndex >= 0) {
+        startupFailures.push(
+          'bootstrap-before-catalog: catalog was requested after bootstrap failed',
+        );
+      }
+    } else if (catalogIndex < 0 || bootstrapIndex >= catalogIndex) {
+      startupFailures.push(
+        'bootstrap-before-catalog: catalog was not requested after bootstrap',
+      );
+    }
+    if (startupProbe === 'delayed-catalog') {
+      if (!startupState.catalogHeldState?.hidden) {
+        startupFailures.push(
+          'catalog-before-reveal: body was visible while the catalog response was held',
+        );
+      }
+      if (startupState.catalogHeldState?.text) {
+        startupFailures.push(
+          'catalog-before-reveal: stale English was visible while the catalog response was held',
+        );
+      }
+    }
+    const appRequests = requestTimeline.filter(row =>
+      row.path.startsWith('/api/') && row.path !== '/api/locale-bootstrap');
+    const beforeCatalog = appRequests.filter(row =>
+      !startupState.catalogReleasedAt || row.at < startupState.catalogReleasedAt);
+    if (beforeCatalog.length) {
+      startupFailures.push(
+        `catalog-before-api: ${beforeCatalog.map(row => row.path).join(', ')} requested before the catalog resolved`,
+      );
+    }
+
+    const emergencyExpected = startupProbe !== 'delayed-catalog';
+    const deadline = Date.now() + 3000;
+    let visible = null;
+    do {
+      visible = await evaluateRaw(browser, S, `JSON.stringify({
+        hidden: !document.body || document.body.hidden,
+        text: document.body ? document.body.innerText.trim() : '',
+      })`).then(JSON.parse);
+      if ((!emergencyExpected && !visible.hidden)
+          || (emergencyExpected && visible.text)) break;
+      await sleep(50);
+    } while (Date.now() < deadline);
+
+    if (emergencyExpected) {
+      if (visible.hidden
+          || visible.text !== 'NIM Proxy interface failed to load.') {
+        startupFailures.push(
+          `emergency-only: got hidden=${visible.hidden} text=${JSON.stringify(visible.text)}`,
+        );
+      }
+      await sleep(IS_DASHBOARD ? 3500 : 500);
+      const failureAt = startupState.failureReleasedAt || 0;
+      const afterFailure = requestTimeline.filter(row =>
+        row.at > failureAt
+        && row.path.startsWith('/api/')
+        && row.path !== '/api/locale-bootstrap');
+      if (afterFailure.length) {
+        startupFailures.push(
+          `catalog-before-api: requests continued after startup failure: ${afterFailure.map(row => row.path).join(', ')}`,
+        );
+      }
+    } else {
+      const readyExpression = IS_DASHBOARD
+        ? `Boolean(
+            !document.body.hidden
+            && document.getElementById('o-traffic')?.textContent.trim()
+            && document.getElementById('pagetitle')?.textContent.trim()
+              === ${JSON.stringify(startupState.readyText)}
+          )`
+        : IS_SETUP
+          ? `Boolean(
+              !document.body.hidden
+              && document.getElementById('wiz')
+              && document.getElementById('to2')?.textContent.trim()
+                === ${JSON.stringify(startupState.readyText)}
+            )`
+          : `Boolean(
+              !document.body.hidden
+              && document.querySelector('.login-card')
+              && document.querySelector('input[name="username"]')?.placeholder === 'Username'
+              && document.querySelector('button[type="submit"]')?.textContent.trim()
+                === ${JSON.stringify(startupState.readyText)}
+            )`;
+      let ready = false;
+      const readyDeadline = Date.now() + 3000;
+      do {
+        ready = await evaluateRaw(browser, S, readyExpression);
+        if (ready) break;
+        await sleep(50);
+      } while (Date.now() < readyDeadline);
+      if (!ready) {
+        startupFailures.push(
+          'catalog-before-reveal: catalog resolved but the page did not reach its ready state',
+        );
+      }
+      const afterCatalog = appRequests.filter(row =>
+        row.at >= startupState.catalogReleasedAt);
+      if (IS_DASHBOARD && !afterCatalog.some(row =>
+        row.path === '/api/dashboard' || row.path === '/api/dashboard/now')) {
+        startupFailures.push(
+          'catalog-before-api: dashboard did not start its API work after catalog resolution',
+        );
+      }
+      if (!IS_DASHBOARD && appRequests.length) {
+        startupFailures.push(
+          `catalog-before-api: ${pageArg} made unexpected application API requests`,
+        );
+      }
+      if (IS_LOGIN && requestTimeline.some(row =>
+        row.path.startsWith('/assets/operator/'))) {
+        startupFailures.push(
+          'login-boundary: anonymous login requested an operator asset',
+        );
+      }
+    }
+
+    const staleEnglish = IS_DASHBOARD
+      ? 'Capacity & reliability'
+      : IS_SETUP
+        ? 'First-time setup'
+        : 'Sign in to the dashboard';
+    const disclosed = [...consoleMessages, ...errors.map(error => error.text)]
+      .some(value => [...startupState.disclosureMarkers, staleEnglish]
+        .some(marker => String(value).includes(marker)));
+    if (disclosed) {
+      startupFailures.push(
+        'no-response-body-disclosure: response data or stale English reached console diagnostics',
+      );
+    }
+    const unexpectedConsoleErrors = consoleErrors.filter(message =>
+      !/Failed to load resource: the server responded with a status of 503/.test(message));
+    if (errors.length || unexpectedConsoleErrors.length) {
+      startupFailures.push(
+        `startup-errors: ${errors.length} page error(s), ${unexpectedConsoleErrors.length} unexpected console error(s)`,
+      );
+    }
+    if (startupFailures.length) {
+      console.error(
+        `FAIL — catalog startup ${startupProbe} on ${pageArg} violated ${startupFailures.length} contract(s)`,
+      );
+      for (const failure of startupFailures) console.error(`  ${failure}`);
+      throw reportedFailure();
+    }
+    console.log(`catalog startup ${startupProbe} ok — ${pageArg}`);
+    return;
+  }
   const requiredPresentation = IS_SETUP
     ? ['/setup', '/assets/public/public.css', '/assets/public/setup.js']
-    : ['/', '/assets/operator/operator.css', '/assets/operator/shared.js',
-       '/assets/operator/dashboard.js', '/assets/operator/settings.js'];
+    : IS_LOGIN
+      ? ['/login', '/assets/public/public.css', '/assets/public/login.js']
+      : ['/', '/assets/operator/operator.css', '/assets/operator/shared.js',
+         '/assets/operator/dashboard.js', '/assets/operator/settings.js'];
   for (const resource of requiredPresentation) {
     if (!requestedPresentation.has(resource)) initialAssetErrors.push(`not requested ${resource}`);
     if (!servedPresentation.has(resource)) initialAssetErrors.push(`not served ${resource}`);

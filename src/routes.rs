@@ -10,12 +10,15 @@ pub const METRICS: &str = "/metrics";
 pub const ASSET_PUBLIC_CSS: &str = "/assets/public/public.css";
 pub const ASSET_PUBLIC_SETUP_JS: &str = "/assets/public/setup.js";
 pub const ASSET_PUBLIC_LOGIN_JS: &str = "/assets/public/login.js";
+pub const ASSET_PUBLIC_LOCALE: &str = "/assets/public/locales/{locale}.json";
 pub const ASSET_OPERATOR_CSS: &str = "/assets/operator/operator.css";
 pub const ASSET_OPERATOR_SHARED_JS: &str = "/assets/operator/shared.js";
 pub const ASSET_OPERATOR_DASHBOARD_JS: &str = "/assets/operator/dashboard.js";
 pub const ASSET_OPERATOR_SETTINGS_JS: &str = "/assets/operator/settings.js";
+pub const ASSET_OPERATOR_LOCALE: &str = "/assets/operator/locales/{locale}.json";
 
 pub const API_PREFIX: &str = "/api";
+pub const API_LOCALE_BOOTSTRAP: &str = "/locale-bootstrap";
 pub const API_DASHBOARD: &str = "/dashboard";
 pub const API_DASHBOARD_NOW: &str = "/dashboard/now";
 pub const API_CONFIG: &str = "/config";
@@ -92,6 +95,14 @@ const ROUTES: &[RouteContract] = &[
         probe_path: ASSET_PUBLIC_LOGIN_JS,
     },
     RouteContract {
+        access: Access::Public,
+        method: "GET",
+        openapi: false,
+        path: ASSET_PUBLIC_LOCALE,
+        phase: Phase::Always,
+        probe_path: "/assets/public/locales/en-US.json",
+    },
+    RouteContract {
         access: Access::OperatorAny,
         method: "GET",
         openapi: false,
@@ -122,6 +133,14 @@ const ROUTES: &[RouteContract] = &[
         path: ASSET_OPERATOR_SETTINGS_JS,
         phase: Phase::PostSetup,
         probe_path: ASSET_OPERATOR_SETTINGS_JS,
+    },
+    RouteContract {
+        access: Access::OperatorAny,
+        method: "GET",
+        openapi: false,
+        path: ASSET_OPERATOR_LOCALE,
+        phase: Phase::PostSetup,
+        probe_path: "/assets/operator/locales/en-US.json",
     },
     RouteContract {
         access: Access::OperatorAny,
@@ -170,6 +189,14 @@ const ROUTES: &[RouteContract] = &[
         path: "/api/config",
         phase: Phase::PostSetup,
         probe_path: "/api/config",
+    },
+    RouteContract {
+        access: Access::Public,
+        method: "GET",
+        openapi: true,
+        path: "/api/locale-bootstrap",
+        phase: Phase::Always,
+        probe_path: "/api/locale-bootstrap",
     },
     RouteContract {
         access: Access::OperatorAny,
@@ -314,7 +341,8 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    const REGISTERED_API_PATHS: [&str; 12] = [
+    const REGISTERED_API_PATHS: [&str; 13] = [
+        API_LOCALE_BOOTSTRAP,
         API_DASHBOARD,
         API_DASHBOARD_NOW,
         API_CONFIG,
@@ -332,7 +360,7 @@ mod tests {
     fn assert_registered_api_paths(registered_api_paths: &[&str]) {
         assert_eq!(
             registered_api_paths.len(),
-            12,
+            13,
             "route-contract:registration: every nested /api registration must be reconciled"
         );
         for registered_path in registered_api_paths {
@@ -360,13 +388,13 @@ mod tests {
             serde_json::from_str(&crate::api::openapi_json()).expect("generated OpenAPI JSON");
         let paths = spec["paths"].as_object().expect("OpenAPI paths");
 
-        assert_eq!(ROUTES.len(), 30, "route-contract:inventory");
+        assert_eq!(ROUTES.len(), 33, "route-contract:inventory");
         assert_eq!(
             ROUTES
                 .iter()
                 .filter(|route| route.path.starts_with("/assets/"))
                 .count(),
-            7,
+            9,
             "route-contract:assets"
         );
         assert_registered_api_paths(&REGISTERED_API_PATHS);
@@ -391,8 +419,8 @@ mod tests {
                 .iter()
                 .filter(|route| route.phase == Phase::Always)
                 .count(),
-            7,
-            "route-contract:phase: health, both login methods, logout, and public assets are phase-independent"
+            9,
+            "route-contract:phase: health, both login methods, logout, bootstrap, and public assets are phase-independent"
         );
         assert_eq!(
             ROUTES
@@ -407,7 +435,7 @@ mod tests {
                 .iter()
                 .filter(|route| route.phase == Phase::PostSetup)
                 .count(),
-            20,
+            21,
             "route-contract:phase: operator, operator assets, and client routes"
         );
         assert!(
