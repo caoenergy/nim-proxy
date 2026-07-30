@@ -115,10 +115,9 @@ const localeArg = (() => {
   const i = args.indexOf('--locale');
   return i >= 0 ? args[i + 1] : null;
 })();
-// Catalog values are escaped once at load, so no render helper may escape its
-// label argument again (knowledge/decisions/message-catalog-and-escaping.md).
-// English labels contain no escapable character, so a second escape is
-// invisible until a real locale ships. This makes it visible now.
+// Catalog values are plain Unicode text. The probe proves ordinary text and
+// allowed attributes render literally, while fixed-markup HTML builders
+// perform their one context-appropriate escape at the sink.
 const escapeProbe = args.includes('--escape-probe');
 // Appended to every catalog value under --escape-probe. See the mutation below.
 const PROBE_MARKER = 'Ampersand';
@@ -253,9 +252,9 @@ function buildPage(tmpdir) {
   // In-page capture as well as CDP: the page boots from an async IIFE, so a
   // throw there surfaces as an unhandled rejection, which Runtime.exceptionThrown
   // does not reliably report. A gate blind to that is blind to boot failure.
-  // The probe string carries both directions of the escape-once rule:
-  //   `&` and `'`  — escaped twice, they surface as literal `&amp;` / `&#39;`
-  //   `<b>`        — not escaped at all, it becomes a real ELEMENT in the DOM
+  // The probe string carries both directions of the contextual-sink rule:
+  //   `&` and `'`  — escaped as text, they surface as literal entities
+  //   `<b>`        — parsed as HTML, it becomes a real ELEMENT in the DOM
   // Without the tag the probe was a double-escape detector only, structurally
   // blind to the missing-escape direction — which is the XSS direction.
   if (escapeProbe) {
@@ -418,10 +417,9 @@ const SETUP_STEPS = {
   step3: `(() => {
     $('to3').click();
     const reviewed = ($('review').textContent || '').length > 0;
-    // Toggle both ways: apiAccessLine() has two branches and they land in
-    // different sinks — esc() into innerHTML on first render, textContent on
-    // change. Leave it checked so step4 reaches showConnect rather than
-    // navigating to /.
+    // Toggle both ways: apiAccessMessageId() has two branches and both feed the
+    // ID-taking text sink. Leave it checked so step4 reaches showConnect
+    // rather than navigating to /.
     $('mintkey').checked = false;
     $('mintkey').dispatchEvent(new Event('change'));
     $('mintkey').checked = true;
@@ -572,45 +570,209 @@ async function main() {
     return r.result.value;
   };
 
-  /* Both runtimes must refuse to localize an attribute outside the allowlist.
-     This was asserted by two knowledge pages and a lint comment while only ONE
-     of the two pages actually enforced it, and the wizard shipped without the
-     guard. Reasoning found that; nothing re-checks it, so assert it in-page on
-     a synthetic element rather than trusting either description. */
-  const attrGuard = await evaluate(`
-    (() => {
-      if (typeof applyStatic !== 'function') return 'applyStatic is not reachable';
-      if (typeof I18N_ATTRS === 'undefined') return 'I18N_ATTRS is not defined';
+  /* Exercise the page's real ID/descriptor runtime. Static self-tests cover
+     source-level forbidden contexts; this probe proves the helpers use native
+     DOM sinks, preserve literal Unicode/entities/markup, and reject every
+     non-text attribute. */
+  if (escapeProbe) {
+    const sinkContext = await evaluate(`
+      (() => {
+      const required = ['setMessageText', 'setMessageAttr'];
+      for (const name of required) {
+        if (typeof globalThis[name] !== 'function') return name + ' is not reachable';
+      }
+      if (typeof message !== 'function') return 'lexical message resolver is not reachable';
+      if (typeof globalThis.message !== 'undefined')
+        return 'raw message resolver is exposed on globalThis';
+      if (!${JSON.stringify(IS_SETUP)} &&
+          (typeof catalogMessage !== 'function' || typeof escapeHtml !== 'function'))
+        return 'catalog descriptor or HTML sink is not reachable';
+      if (typeof I18N_TEXT_ATTRS === 'undefined') return 'I18N_TEXT_ATTRS is not defined';
+      const allowedAttrs = [...I18N_TEXT_ATTRS].sort().join(',');
+      if (allowedAttrs !== 'alt,aria-label,placeholder,title')
+        return 'I18N_TEXT_ATTRS is not exactly the four approved attributes';
+      for (const old of ['rawMsg', 't', 'tRaw', 'tHtml']) {
+        if (typeof globalThis[old] !== 'undefined') return old + ' escaped/plain compatibility helper survives';
+      }
+      const ids = Object.keys(MSG);
+      if (!ids.length) return 'catalog has no probe id';
+      const id = ids[0];
+      const expected = message(id);
+      if (!expected.includes(${JSON.stringify(PROBE_MARKER)})) return 'message() did not return the hostile probe';
+      if (!expected.includes('<b>${PROBE_TAG_TEXT}</b>')) return 'message() did not return literal markup text';
+
       const host = document.createElement('div');
-      // A localizable attribute must be set; a scripting one must be refused.
-      host.innerHTML =
-        '<span id="__probe_ok" data-i18n-attr="title:__missing_id"></span>' +
-        '<span id="__probe_bad" data-i18n-attr="onclick:__missing_id"></span>' +
-        '<span id="__probe_style" data-i18n-attr="style:__missing_id"></span>';
       document.body.appendChild(host);
-      // The guard reports refusals with console.error, which this gate treats
-      // as a failure — correctly, in general. Silence it for the duration of
-      // the probe only: those two refusals are the behaviour under test, and
-      // the page must keep logging them for real operators.
-      const realError = console.error;
-      console.error = () => {};
-      try { applyStatic(host); }
-      catch (e) { console.error = realError; return 'applyStatic threw: ' + e.message; }
-      finally { console.error = realError; }
-      const ok = host.querySelector('#__probe_ok');
-      const bad = host.querySelector('#__probe_bad');
-      const sty = host.querySelector('#__probe_style');
       const problems = [];
-      if (!ok.hasAttribute('title')) problems.push('refused an allowlisted attribute (title)');
-      if (bad.hasAttribute('onclick')) problems.push('set onclick= from a catalog id');
-      if (sty.hasAttribute('style')) problems.push('set style= from a catalog id');
+
+      if (!${JSON.stringify(IS_SETUP)}) {
+        const descriptor = catalogMessage(id);
+        if (!Object.isFrozen(descriptor)) problems.push('catalog descriptor is mutable');
+        let coercionError = '';
+        try { String(descriptor); } catch (e) { coercionError = e.message; }
+        if (coercionError !== 'catalog descriptor requires escapeHtml')
+          problems.push('catalog descriptor did not refuse ordinary coercion');
+        const escaped = expected.replace(/[&<>"']/g, c =>
+          ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        if (escapeHtml(descriptor) !== escaped)
+          problems.push('HTML sink did not resolve and escape the catalog descriptor');
+        for (const attempt of [
+          d => { document.createElement('a').href = d; },
+          d => { document.createElement('div').style.cssText = d; },
+          d => { document.createElement('div').setAttribute('title', d); },
+        ]) {
+          let error = '';
+          try { attempt(descriptor); } catch (e) { error = e.message; }
+          if (error !== 'catalog descriptor requires escapeHtml')
+            problems.push('catalog descriptor did not refuse a coercive non-HTML sink');
+        }
+      }
+
+      const text = document.createElement('span');
+      host.appendChild(text);
+      setMessageText(text, id);
+      if (text.textContent !== expected) problems.push('element text changed catalog bytes');
+      if (text.children.length) problems.push('element text parsed catalog markup');
+      const textHost = document.createElement('span');
+      const textNode = document.createTextNode('');
+      textHost.appendChild(textNode);
+      host.appendChild(textHost);
+      setMessageText(textNode, id);
+      if (textNode.textContent !== expected)
+        problems.push('ordinary parented text node changed catalog bytes');
+
+      for (const node of [
+        document.createElement('script'),
+        document.createElement('style'),
+        document.createElementNS('http://www.w3.org/2000/svg', 'svg'),
+      ]) {
+        let error = '';
+        try { setMessageText(node, id); }
+        catch (e) { error = e.message; }
+        if (error !== 'forbidden catalog text target')
+          problems.push(node.nodeName + ' did not throw the stable text-target refusal');
+        if (node.textContent) problems.push(node.nodeName + ' received catalog text');
+      }
+      for (const parent of [
+        document.createElement('script'),
+        document.createElement('style'),
+        document.createElementNS('http://www.w3.org/2000/svg', 'svg'),
+      ]) {
+        const textNode = document.createTextNode('');
+        parent.appendChild(textNode);
+        let error = '';
+        try { setMessageText(textNode, id); }
+        catch (e) { error = e.message; }
+        if (error !== 'forbidden catalog text target')
+          problems.push(parent.nodeName + ' parented text node was accepted');
+        if (textNode.textContent) problems.push(parent.nodeName + ' parent received catalog text');
+      }
+
+      for (const attr of ['title', 'placeholder', 'aria-label', 'alt']) {
+        const node = document.createElement(attr === 'alt' ? 'img' : 'input');
+        host.appendChild(node);
+        try { setMessageAttr(node, attr, id); }
+        catch (e) { problems.push('refused allowlisted attribute ' + attr + ': ' + e.message); continue; }
+        if (node.getAttribute(attr) !== expected) problems.push(attr + ' changed catalog bytes');
+      }
+      const accessibleSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      setMessageAttr(accessibleSvg, 'aria-label', id);
+      if (accessibleSvg.getAttribute('aria-label') !== expected)
+        problems.push('SVG aria-label changed catalog bytes');
+
+      for (const attr of ['href', 'src', 'style', 'onclick']) {
+        const node = document.createElement('a');
+        host.appendChild(node);
+        let error = '';
+        try { setMessageAttr(node, attr, id); }
+        catch (e) { error = e.message; }
+        if (error !== 'forbidden catalog attribute: ' + attr)
+          problems.push(attr + ' did not throw the stable refusal');
+        if (node.hasAttribute(attr)) problems.push(attr + ' was set from a catalog id');
+      }
+      if (typeof setMessageWithNodes === 'function') {
+        const id = 'setup.step3.mintkey';
+        const original = MSG[id].en;
+        const key = document.createElement('code');
+        key.textContent = 'KEY';
+        try {
+          MSG[id].en = 'A {key} B {key}';
+          setMessageWithNodes(host, id, [['{key}', key]]);
+          if (host.textContent !== 'A KEY B KEY')
+            problems.push('structured replacement did not preserve repeated placeholders');
+          if (host.querySelectorAll('code').length !== 2)
+            problems.push('structured replacement did not create one fixed node per placeholder');
+        } finally {
+          MSG[id].en = original;
+        }
+        for (const node of [
+          document.createElement('script'),
+          document.createElement('style'),
+          document.createElementNS('http://www.w3.org/2000/svg', 'svg'),
+        ]) {
+          let error = '';
+          try { setMessageWithNodes(node, id, [['{key}', key]]); }
+          catch (e) { error = e.message; }
+          if (error !== 'forbidden catalog text target')
+            problems.push(node.nodeName + ' structured helper did not refuse its target');
+          if (node.textContent) problems.push(node.nodeName + ' received structured catalog text');
+        }
+        for (const replacement of [
+          document.createElement('script'),
+          document.createElement('style'),
+          document.createElementNS('http://www.w3.org/2000/svg', 'svg'),
+          (() => {
+            const wrapper = document.createElement('span');
+            wrapper.appendChild(document.createElement('script'));
+            return wrapper;
+          })(),
+        ]) {
+          let error = '';
+          try { setMessageWithNodes(host, id, [['{key}', replacement]]); }
+          catch (e) { error = e.message; }
+          if (error !== 'forbidden catalog text target')
+            problems.push(replacement.nodeName + ' structured replacement was accepted');
+        }
+      }
+      if (typeof setEmphasizedMessage === 'function') {
+        const id = 'setup.step3.mintwarn';
+        for (const node of [
+          document.createElement('script'),
+          document.createElement('style'),
+          document.createElementNS('http://www.w3.org/2000/svg', 'svg'),
+        ]) {
+          let error = '';
+          try { setEmphasizedMessage(node, id, document.createElement('b')); }
+          catch (e) { error = e.message; }
+          if (error !== 'forbidden catalog text target')
+            problems.push(node.nodeName + ' emphasis helper did not refuse its target');
+          if (node.textContent) problems.push(node.nodeName + ' received emphasized catalog text');
+        }
+        for (const emphasis of [
+          document.createElement('script'),
+          document.createElement('style'),
+          document.createElementNS('http://www.w3.org/2000/svg', 'svg'),
+          (() => {
+            const wrapper = document.createElement('b');
+            wrapper.appendChild(document.createElement('script'));
+            return wrapper;
+          })(),
+        ]) {
+          let error = '';
+          try { setEmphasizedMessage(host, id, emphasis); }
+          catch (e) { error = e.message; }
+          if (error !== 'forbidden catalog text target')
+            problems.push(emphasis.nodeName + ' emphasis replacement was accepted');
+        }
+      }
       host.remove();
       return problems.length ? problems.join('; ') : '';
-    })()`);
-  if (attrGuard) {
-    console.error(`FAIL — ${PAGE_REL} attribute allowlist: ${attrGuard}`);
-    proc.kill('SIGKILL');
-    process.exit(1);
+      })()`);
+    if (sinkContext) {
+      console.error(`[sink-context] FAIL — ${PAGE_REL}: ${sinkContext}`);
+      proc.kill('SIGKILL');
+      process.exit(1);
+    }
   }
 
   const untranslatedByTab = new Map();
@@ -838,8 +1000,8 @@ async function main() {
   if (doubleEscaped.length) {
     const dbl = doubleEscaped.filter((d) => d.dir !== 'missing');
     const miss = doubleEscaped.filter((d) => d.dir === 'missing');
-    console.error(`\nFAIL — escape-once violated: ${dbl.length} double-escaped, ${miss.length} unescaped`);
-    if (dbl.length) console.error('  a helper escaped an already-escaped catalog value:');
+    console.error(`\nFAIL — contextual catalog sink violated: ${dbl.length} entity-escaped, ${miss.length} parsed as markup`);
+    if (dbl.length) console.error('  a text/attribute sink rendered escaped entities:');
     const seen = new Set();
     for (const d of dbl) {
       if (seen.has(d.el)) continue;

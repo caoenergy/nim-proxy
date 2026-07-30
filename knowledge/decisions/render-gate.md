@@ -112,24 +112,29 @@ faked.
 - The fixtures are a **snapshot of a wire format**. If `/api/dashboard` changes
   shape, they must be recaptured — the gate will fail loudly rather than
   silently drift, which is the intended failure mode.
-- `--escape-probe` gives the escape-once rule in
+- `--escape-probe` gives the contextual-sink rule in
   [message-catalog-and-escaping](message-catalog-and-escaping.md) an
-  enforcement mechanism instead of a paragraph.
+  enforcement mechanism instead of a paragraph. The probe requires inert
+  dashboard descriptors to resolve only through the HTML escape boundary, the
+  exact four-attribute allowlist, literal DOM text/attribute values, stable
+  script/style/SVG target refusal, repeated fixed-node placeholders, and
+  catches both entity leakage and markup parsing.
 
   It enforces **both directions**, and the second one was added only after an
   adversarial review proved the first was not enough. The probe appends
   `Ampersand & Quote' <b>Tag</b>` to every catalog value:
 
-  - *Double-escaped* — the `&` and `'` come back as literal `&amp;` / `&#39;`
-    in the rendered output.
-  - *Not escaped at all* — the `<b>` parses into a real element, so a catalog
-    value that reached a raw-HTML sink is a DOM node rather than text.
+  - *Wrong text/attribute context* — the `&` and `'` come back as literal
+    `&amp;` / `&#39;` in the rendered output.
+  - *Raw HTML context* — the `<b>` parses into a real element, so a catalog
+    value that reached an HTML parser without its sink escape is a DOM node
+    rather than text.
 
   The original probe carried no tag and scanned text nodes only, which made it
-  a double-escape detector that was structurally blind to the missing-escape
+  an entity-leak detector that was structurally blind to the markup-parsing
   direction — the XSS direction — and blind to every attribute sink
-  (`deltaChip`'s `title=`, `ringGauge`'s `aria-label=`, the taxonomy segbar's
-  `title=`, and all of `applyStatic`'s `setAttribute` path). Four deliberate
+  (`deltaChip`'s and the taxonomy segbar's `title=`, and all of
+  `applyStatic`'s `setAttribute` path). Four deliberate
   defects were injected to establish that: two the probe caught, two it passed
   green. It now scans `title`, `aria-label`, `placeholder` and `alt` as well as
   text, and both injected defects fail.
@@ -163,12 +168,10 @@ faked.
   never sends proves the page works against fiction.
 
 - **Both runtimes are asserted to refuse non-allowlisted attributes.** The gate
-  builds a synthetic element carrying `data-i18n-attr` for `title`, `onclick`
-  and `style`, runs the page's own `applyStatic` over it, and fails unless the
-  first is set and the other two are refused. This existed as prose in
-  [message-catalog-and-escaping](message-catalog-and-escaping.md) and as a
-  comment in `check_i18n.py` while only one of the two pages enforced it.
-  Proved non-vacuous by deleting the guard: `FAIL — src/setup.html attribute
-  allowlist: set onclick= from a catalog id; set style= from a catalog id`.
+  calls each page's own `setMessageAttr` for all four allowed attributes and
+  for `href`, `src`, `style`, and `onclick`. Allowed values must equal the
+  hostile plain message byte-for-byte; forbidden attributes must throw the
+  stable refusal and remain unset. Static self-tests separately cover URL
+  properties, script text, CSS, raw SVG, and HTML-string sinks.
 - It is not a screenshot test and takes no screenshots. Layout review stays
   human, per the plan's original and still-correct reasoning.

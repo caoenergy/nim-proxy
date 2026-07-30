@@ -40,7 +40,7 @@ page describes a conclusion, a plan describes the live state.
 | [dependency-update-cooldown](decisions/dependency-update-cooldown.md) | Routine dependency updates wait seven days; security updates remain immediate |
 | [lane-cooldown-naming](decisions/lane-cooldown-naming.md) | `bench` → `cooldown`; renames the metric and accepts a bounded history gap over a permanent alias |
 | [no-estimated-savings-metric](decisions/no-estimated-savings-metric.md) | "Dollars saved" needed per-model published rates to be honest; deleted rather than faked |
-| [message-catalog-and-escaping](decisions/message-catalog-and-escaping.md) | Inline `en-US` catalog behind `t()`; values escaped once at load because four render helpers do not escape their arguments |
+| [message-catalog-and-escaping](decisions/message-catalog-and-escaping.md) | Catalog ids for DOM sinks; inert descriptors resolved only by fixed-markup HTML escaping |
 | [intl-formatting](decisions/intl-formatting.md) | Cached `Intl` formatters keyed to the catalog locale; CSS percentages deliberately excluded |
 | [locale-guards](decisions/locale-guards.md) | `en-XA` pseudolocale, `locale-v1` validator, untagged-string lint — every check with a negative fixture written first |
 | [plural-categories-not-ternaries](decisions/plural-categories-not-ternaries.md) | Counted labels select a CLDR category via `Intl.PluralRules`; all six forms live in the source catalog because `locale-v1` requires id parity |

@@ -99,8 +99,8 @@ details input { margin-top:8px; }
   <section id="step3" hidden>
     <div class="review" id="review"></div>
     <label class="opt"><input type="checkbox" id="mintkey" checked>
-      <span data-i18n-html="setup.step3.mintkey"></span></label>
-    <p class="warn" id="mintwarn" hidden data-i18n-html="setup.step3.mintwarn"></p>
+      <span id="mintkey-label"></span></label>
+    <p class="warn" id="mintwarn" hidden></p>
     <div class="row">
       <button type="button" class="ghost" id="back2" data-i18n="setup.wizard.back">Back</button>
       <button type="submit" class="primary" id="finish" data-i18n="setup.step3.finish">Create &amp; open dashboard</button>
@@ -108,7 +108,7 @@ details input { margin-top:8px; }
   </section>
 
   <section id="step4" hidden>
-    <p class="sub" data-i18n-html="setup.step4.intro"></p>
+    <p class="sub" id="setup-complete-intro"></p>
     <label data-i18n="setup.step4.baseurl">Client base URL</label>
     <div class="copyrow"><code id="cbase"></code><button type="button" class="ghost" data-copy="cbase" data-i18n="setup.step4.copy">Copy</button></div>
     <label data-i18n="setup.step4.apikey">Client API key</label>
@@ -121,82 +121,156 @@ details input { margin-top:8px; }
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
-const err = (m) => { $("err").textContent = m || ""; };
-const esc = (s) => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const setErrorText = (text) => { $("err").textContent = text || ""; };
 
 /* ---------- i18n ----------
-   Catalog values are PLAIN TEXT, escaped once here at load. Inline markup a
-   message needs is expressed as {b}...{/b} / {key} / {endpoint} placeholders
-   and expanded from the fixed table below — never stored as HTML in the
-   catalog, so a translator can move emphasis without being able to inject. */
+   Catalog values remain plain Unicode text. Native DOM sinks own ordinary
+   element and text-bearing attribute contexts. Structured messages splice
+   fixed caller-created nodes between text nodes; catalog text is never HTML. */
 const MSG = JSON.parse($("i18n-catalog").textContent).messages;
-const rawMsg = (id) => (MSG[id] === undefined ? id : MSG[id].en);
-/* Substitution happens AFTER the message is escaped, so the escaper is passed
-   in rather than hardcoded: t() lands in innerHTML and must escape its params,
-   tRaw() lands in textContent, which parses no entities and would render an
-   escaped param as visible "&amp;". Word order differs by language, so a
-   sentence is one message with a placeholder, never concatenated fragments. */
-function fill(s, p, e) {
-  if (!p) return s;
-  for (const k in p) s = s.split("{" + k + "}").join(e(p[k]));
-  return s;
+const message = (id, params = {}) => {
+  let text = MSG[id] === undefined ? id : MSG[id].en;
+  for (const key in params)
+    text = text.split("{" + key + "}").join(String(params[key]));
+  return text;
+};
+const I18N_TEXT_ATTRS = new Set(["title", "placeholder", "aria-label", "alt"]);
+function assertMessageTextTarget(node) {
+  const context = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+  if (!context ||
+      context instanceof HTMLScriptElement ||
+      context instanceof HTMLStyleElement ||
+      context instanceof SVGElement ||
+      context.closest?.("script,style,svg"))
+    throw new Error("forbidden catalog text target");
 }
-/* Same names as the dashboard's, so the two pages read alike and the
-   untagged-string linter recognises call sites on both. */
-const tRaw = (id, p) => fill(rawMsg(id), p, String);
-const t = (id, p) => fill(esc(rawMsg(id)), p, esc);
-const I18N_ATTRS = new Set(["title", "placeholder", "aria-label", "alt"]);
-const INLINE = { "{b}": "<b>", "{/b}": "</b>",
-                 "{key}": "<code>npk_\u2026</code>", "{endpoint}": "<code>/v1</code>" };
-function tHtml(id) {
-  let s = esc(rawMsg(id));
-  for (const k in INLINE) s = s.split(k).join(INLINE[k]);
-  return s;
+function setMessageText(node, id, params = {}) {
+  assertMessageTextTarget(node);
+  node.textContent = message(id, params);
+}
+function setMessageAttr(node, attr, id, params = {}) {
+  if (!I18N_TEXT_ATTRS.has(attr))
+    throw new Error(`forbidden catalog attribute: ${attr}`);
+  node.setAttribute(attr, message(id, params));
+}
+function setMessageWithNodes(node, id, replacements) {
+  assertMessageTextTarget(node);
+  for (const [, replacement] of replacements) {
+    assertMessageTextTarget(replacement);
+    if (replacement.querySelector?.("script,style,svg"))
+      throw new Error("forbidden catalog text target");
+  }
+  let text = message(id);
+  const children = [];
+  while (text) {
+    let next = null;
+    for (const [token, replacement] of replacements) {
+      const at = text.indexOf(token);
+      if (at >= 0 && (!next || at < next.at))
+        next = { at, replacement, token };
+    }
+    if (!next) {
+      children.push(document.createTextNode(text));
+      break;
+    }
+    if (next.at) children.push(document.createTextNode(text.slice(0, next.at)));
+    children.push(next.replacement.cloneNode(true));
+    text = text.slice(next.at + next.token.length);
+  }
+  node.replaceChildren(...children);
+}
+function setEmphasizedMessage(node, id, emphasis) {
+  assertMessageTextTarget(node);
+  assertMessageTextTarget(emphasis);
+  if (emphasis.querySelector?.("script,style,svg"))
+    throw new Error("forbidden catalog text target");
+  const text = message(id);
+  const open = text.indexOf("{b}");
+  const close = text.indexOf("{/b}", open + 3);
+  if (open < 0 || close < 0)
+    throw new Error(`invalid emphasis placeholders: ${id}`);
+  emphasis.textContent = text.slice(open + 3, close);
+  node.replaceChildren(
+    document.createTextNode(text.slice(0, open)),
+    emphasis,
+    document.createTextNode(text.slice(close + 4)),
+  );
 }
 function applyStatic(root) {
-  root.querySelectorAll("[data-i18n]").forEach(el => { el.innerHTML = t(el.dataset.i18n); });
-  root.querySelectorAll("[data-i18n-html]").forEach(el => { el.innerHTML = tHtml(el.dataset.i18nHtml); });
+  root.querySelectorAll("[data-i18n]").forEach(el => {
+    setMessageText(el, el.dataset.i18n);
+  });
   // Own first text node — used for <title>, whose content is plain text.
   root.querySelectorAll("[data-i18n-text]").forEach(el => {
     for (const n of el.childNodes) {
-      if (n.nodeType === 3 && n.textContent.trim()) { n.textContent = tRaw(el.dataset.i18nText); break; }
+      if (n.nodeType === 3 && n.textContent.trim()) { setMessageText(n, el.dataset.i18nText); break; }
     }
   });
   root.querySelectorAll("[data-i18n-attr]").forEach(el => {
     el.dataset.i18nAttr.split(",").forEach(pair => {
       const i = pair.indexOf(":");
       const attr = pair.slice(0, i);
-      // Only text-bearing attributes are localizable. Without this, a markup
-      // edit could route a catalog value into onclick= or style=, and the CSP
-      // permits inline handlers. Same set the dashboard enforces.
-      if (!I18N_ATTRS.has(attr)) { console.error("refusing to localize attribute", attr); return; }
-      el.setAttribute(attr, tRaw(pair.slice(i + 1)));
+      setMessageAttr(el, attr, pair.slice(i + 1));
     });
   });
 }
 applyStatic(document);
+const keyLiteral = document.createElement("code");
+keyLiteral.textContent = "npk_\u2026";
+const endpointLiteral = document.createElement("code");
+endpointLiteral.textContent = "/v1";
+setMessageWithNodes($("mintkey-label"), "setup.step3.mintkey", [
+  ["{key}", keyLiteral],
+  ["{endpoint}", endpointLiteral],
+]);
+setEmphasizedMessage(
+  $("mintwarn"),
+  "setup.step3.mintwarn",
+  document.createElement("b"),
+);
+setEmphasizedMessage(
+  $("setup-complete-intro"),
+  "setup.step4.intro",
+  document.createElement("b"),
+);
 let keys = []; // {key, rpm, models}
 
 function show(n) {
   [1,2,3].forEach(i => { $("step"+i).hidden = i !== n; $("s"+i).classList.toggle("on", i <= n); });
-  err("");
+  setErrorText("");
 }
 function mask(k) { return k.length > 8 ? k.slice(0,6) + "••••" + k.slice(-4) : "••••"; }
 function renderKeys() {
-  $("keylist").innerHTML = keys.map((k,i) =>
-    `<li><span class="ok">✓</span> <code>${esc(mask(k.key))}</code>` +
-    `<span class="meta">${t("setup.step2.key_meta", { models: k.models, rpm: k.rpm })}</span>` +
-    `<button type="button" class="ghost" data-i="${i}">×</button></li>`).join("");
-  $("keylist").querySelectorAll("button").forEach(b =>
-    b.onclick = () => { keys.splice(+b.dataset.i, 1); renderKeys(); });
+  const rows = keys.map((key, index) => {
+    const row = document.createElement("li");
+    const ok = document.createElement("span");
+    ok.className = "ok";
+    ok.textContent = "✓";
+    const masked = document.createElement("code");
+    masked.textContent = mask(key.key);
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    setMessageText(meta, "setup.step2.key_meta", {
+      models: key.models,
+      rpm: key.rpm,
+    });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "ghost";
+    remove.textContent = "×";
+    remove.onclick = () => { keys.splice(index, 1); renderKeys(); };
+    row.append(ok, " ", masked, meta, remove);
+    return row;
+  });
+  $("keylist").replaceChildren(...rows);
   $("to3").disabled = keys.length === 0;
 }
 
 $("to2").onclick = () => {
   const u = $("username").value.trim(), p = $("password").value;
-  if (!/^[A-Za-z0-9._-]{1,32}$/.test(u)) return err(tRaw("setup.step1.error.username_charset"));
-  if (p.length < 10) return err(tRaw("setup.step1.error.password_length"));
-  if (p !== $("confirm").value) return err(tRaw("setup.step1.error.password_mismatch"));
+  if (!/^[A-Za-z0-9._-]{1,32}$/.test(u)) return setMessageText($("err"), "setup.step1.error.username_charset");
+  if (p.length < 10) return setMessageText($("err"), "setup.step1.error.password_length");
+  if (p !== $("confirm").value) return setMessageText($("err"), "setup.step1.error.password_mismatch");
   show(2);
 };
 $("back1").onclick = () => show(1);
@@ -204,10 +278,10 @@ $("back2").onclick = () => show(2);
 
 $("addkey").onclick = async () => {
   const key = $("newkey").value.trim(), rpm = Math.max(1, Math.min(10000, +$("newrpm").value || 40));
-  if (!key) return err(tRaw("setup.step2.error.key_required"));
-  if (keys.some(k => k.key === key)) return err(tRaw("setup.step2.error.key_duplicate"));
-  err("");
-  $("addkey").disabled = true; $("addkey").textContent = tRaw("setup.step2.validating");
+  if (!key) return setMessageText($("err"), "setup.step2.error.key_required");
+  if (keys.some(k => k.key === key)) return setMessageText($("err"), "setup.step2.error.key_duplicate");
+  setErrorText("");
+  $("addkey").disabled = true; setMessageText($("addkey"), "setup.step2.validating");
   try {
     const body = { key };
     const base = $("baseurl").value.trim();
@@ -216,41 +290,69 @@ $("addkey").onclick = async () => {
       headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const v = await r.json();
     if (v.ok) { keys.push({ key, rpm, models: v.models }); $("newkey").value = ""; renderKeys(); }
-    else err(tRaw("setup.step2.error.validation_failed", { error: v.error || r.status }));
-  } catch (e) { err(tRaw("setup.step2.error.validation_request", { error: e })); }
-  $("addkey").disabled = false; $("addkey").textContent = tRaw("setup.step2.addkey");
+    else setMessageText($("err"), "setup.step2.error.validation_failed", { error: v.error || r.status });
+  } catch (e) { setMessageText($("err"), "setup.step2.error.validation_request", { error: e }); }
+  $("addkey").disabled = false; setMessageText($("addkey"), "setup.step2.addkey");
 };
 
-// tRaw: one caller wraps this in esc() for innerHTML, the other assigns it to
-// textContent. Both need the plain value.
-function apiAccessLine() {
+function apiAccessMessageId() {
   return $("mintkey").checked
-    ? tRaw("setup.step3.api_access_keyed")
-    : tRaw("setup.step3.api_access_open");
+    ? "setup.step3.api_access_keyed"
+    : "setup.step3.api_access_open";
 }
 $("to3").onclick = () => {
   const base = $("baseurl").value.trim();
   const poolRpm = keys.reduce((a,k)=>a+k.rpm,0);
-  // t(), not tRaw(): every value here is interpolated into innerHTML. The two
-  // user-controlled values keep their own esc(); catalog values are escaped by
-  // t() and must not be escaped a second time.
-  $("review").innerHTML =
-    `<div><span class="k">${t("setup.step3.review.superuser")}</span><span>${esc($("username").value.trim())}</span></div>` +
-    `<div><span class="k">${t("setup.step3.review.keys")}</span><span>${t("setup.step3.review.keys_value", { count: keys.length, rpm: poolRpm })}</span></div>` +
-    `<div><span class="k">${t("setup.step3.review.upstream")}</span><span>${esc(base || "https://integrate.api.nvidia.com")}</span></div>` +
-    `<div><span class="k">${t("setup.step3.review.api_access")}</span><span id="apiline">${esc(apiAccessLine())}</span></div>`;
+  const reviewRow = (labelId, value, valueId, messageId, params = {}) => {
+    const row = document.createElement("div");
+    const label = document.createElement("span");
+    label.className = "k";
+    setMessageText(label, labelId);
+    const display = document.createElement("span");
+    if (valueId) display.id = valueId;
+    if (messageId) setMessageText(display, messageId, params);
+    else display.textContent = value;
+    row.append(label, display);
+    return row;
+  };
+  $("review").replaceChildren(
+    reviewRow(
+      "setup.step3.review.superuser",
+      $("username").value.trim(),
+    ),
+    reviewRow(
+      "setup.step3.review.keys",
+      "",
+      "",
+      "setup.step3.review.keys_value",
+      {
+        count: keys.length,
+        rpm: poolRpm,
+      },
+    ),
+    reviewRow(
+      "setup.step3.review.upstream",
+      base || "https://integrate.api.nvidia.com",
+    ),
+    reviewRow(
+      "setup.step3.review.api_access",
+      "",
+      "apiline",
+      apiAccessMessageId(),
+    ),
+  );
   show(3);
 };
 $("mintkey").onchange = () => {
   $("mintwarn").hidden = $("mintkey").checked;
   const line = document.getElementById("apiline");
-  if (line) line.textContent = apiAccessLine();
+  if (line) setMessageText(line, apiAccessMessageId());
 };
 
 // Final screen: base URL + the once-only secret, with copy buttons.
 function showConnect(secret) {
   [1,2,3].forEach(i => { $("step"+i).hidden = true; $("s"+i).classList.add("on"); });
-  err("");
+  setErrorText("");
   $("cbase").textContent = window.location.origin + "/v1";
   $("csecret").textContent = secret;
   $("step4").hidden = false;
@@ -259,9 +361,9 @@ document.querySelectorAll("[data-copy]").forEach(b => {
   b.onclick = async () => {
     // Never claim "Copied" when the write failed (no clipboard API on a
     // plain-http remote) — this is a once-only secret.
-    try { await navigator.clipboard.writeText($(b.dataset.copy).textContent); b.textContent = tRaw("setup.step4.copied"); }
-    catch { b.textContent = tRaw("setup.step4.select_copy"); }
-    setTimeout(() => { b.textContent = tRaw("setup.step4.copy"); }, 1500);
+    try { await navigator.clipboard.writeText($(b.dataset.copy).textContent); setMessageText(b, "setup.step4.copied"); }
+    catch { setMessageText(b, "setup.step4.select_copy"); }
+    setTimeout(() => { setMessageText(b, "setup.step4.copy"); }, 1500);
   };
 });
 $("opendash").onclick = () => { window.location = "/"; };
@@ -287,8 +389,9 @@ $("wiz").onsubmit = async (ev) => {
       return;
     }
     const v = await r.json().catch(() => ({}));
-    err((v.error && v.error.message) || tRaw("setup.step3.error.failed", { status: r.status }));
-  } catch (e) { err(tRaw("setup.step3.error.request", { error: e })); }
+    if (v.error && v.error.message) setErrorText(v.error.message);
+    else setMessageText($("err"), "setup.step3.error.failed", { status: r.status });
+  } catch (e) { setMessageText($("err"), "setup.step3.error.request", { error: e }); }
   $("finish").disabled = false;
 };
 </script>

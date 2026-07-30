@@ -23,11 +23,12 @@ The checks, and why each exists:
   dropped placeholder leaves `{count}` visible in the interface.
 - **formatter syntax** — an unbalanced brace parses as literal text and ships
   as literal text.
-- **no raw markup** — values are escaped once at load. Markup in a value
-  renders literally today, and injects the moment a non-escaping path is added.
+- **no catalog markup** — catalog values are plain Unicode text. Raw markup
+  and entity-encoded markup are rejected independently so neither can become
+  executable or double-encoded when a value reaches the wrong sink.
   See knowledge/decisions/message-catalog-and-escaping.md.
-- **inline balance** — `{b}` without `{/b}` produces unclosed markup after the
-  runtime expands it.
+- **inline structure** — removed, duplicated, or reordered `{b}`/`{/b}`
+  markers describe a shape the fixed-node runtime does not accept.
 - **source-hash freshness** — the hash records which en-US text a translation
   was made from. When the source changes and the hash does not, the translation
   is stale: still valid, no longer correct. This is the check that makes a
@@ -36,6 +37,7 @@ The checks, and why each exists:
 """
 import argparse
 import hashlib
+import html
 import json
 import pathlib
 import re
@@ -50,6 +52,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests/fixtures/locales"
 INLINE_OPEN = {"{b}"}
 INLINE_CLOSE = {"{/b}"}
+INLINE_TOKEN = re.compile(r"\{/?b\}")
 PLACEHOLDER = re.compile(r"\{[^{}]*\}")
 
 
@@ -99,12 +102,22 @@ def validate(source: dict, candidate: dict, name: str) -> list:
                 ))
 
         if "<" in text or ">" in text:
-            problems.append(("markup", f"{name}: {mid} contains raw markup"))
+            problems.append(("catalog-markup", f"{name}: {mid} contains raw markup"))
+        decoded = html.unescape(text)
+        if decoded != text and ("<" in decoded or ">" in decoded):
+            problems.append((
+                "catalog-entity-markup",
+                f"{name}: {mid} contains entity-encoded markup",
+            ))
 
-        opens = sum(text.count(o) for o in INLINE_OPEN)
-        closes = sum(text.count(c2) for c2 in INLINE_CLOSE)
-        if opens != closes:
-            problems.append(("inline", f"{name}: {mid} has {opens} inline open vs {closes} close"))
+        source_inline = INLINE_TOKEN.findall(s["en"])
+        candidate_inline = INLINE_TOKEN.findall(text)
+        if candidate_inline != source_inline:
+            problems.append((
+                "inline",
+                f"{name}: {mid} inline structure {candidate_inline!r} "
+                f"does not match source {source_inline!r}",
+            ))
 
         if c.get("hash") != s["hash"]:
             problems.append((
@@ -146,9 +159,11 @@ def selftest() -> int:
         "orphan-key.json": "orphan",
         "placeholder-mismatch.json": "placeholders",
         "bad-formatter-syntax.json": "syntax",
-        "raw-html.json": "markup",
+        "raw-html.json": "catalog-markup",
+        "entity-html.json": "catalog-entity-markup",
         "stale-hash.json": "stale",
         "too-long.json": "length",
+        "inline-dropped.json": "inline",
         "unbalanced-inline.json": "inline",
         "frozen-token-dropped.json": "frozen",
     }

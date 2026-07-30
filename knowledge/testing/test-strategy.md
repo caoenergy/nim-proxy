@@ -40,6 +40,14 @@ that proof.
   `node scripts/render_check.js --escape-probe`,
   `node scripts/render_check.js --page setup`, and
   `node scripts/render_check.js --page setup --escape-probe`.
+  The escape probe enforces the id/descriptor context-owned-sink contract:
+  lexical resolver isolation, descriptor coercion refusal and one HTML
+  resolver, the exact four-attribute
+  allowlist, literal hostile text in element content and allowed attributes,
+  stable rejection of forbidden attributes and script/style/SVG destinations
+  and replacements, including parented text-node contexts, repeated fixed-node
+  placeholders, no compatibility lookup, no parsed markup, and no literal
+  entity leakage.
 - **Number, date, and duration formatting:**
   `TZ=UTC LC_ALL=en_US.UTF-8 node scripts/formatter_fixture.js --check`.
 - **Catalog and UI text:** `python3 scripts/check_i18n.py --selftest`, then
@@ -188,10 +196,28 @@ Dashboard changes get two more checks.
 **Automated — `node scripts/render_check.js`.** Renders the page against the
 captured payloads in `tests/fixtures/api/`, walks all five tabs, hovers every
 chart with real pointer input, and fails on any uncaught page error.
-`--escape-probe` additionally fails on a render helper escaping a catalog value
-that was already escaped at load. This is the only gate that proves the page
-*runs*: `cargo test` asserts on served HTML text and `node --check` proves only
-that it parses. See [render-gate](../decisions/render-gate.md).
+`--escape-probe` additionally mutates every catalog value with hostile literal
+text and fails if a page parses it as markup, renders entity text, permits a
+forbidden catalog attribute, or retains an escaped/plain compatibility helper.
+`check_i18n.py --selftest` carries the static forbidden-context matrix, while
+`locale_v1.py --selftest` distinguishes raw and entity-encoded catalog markup
+and rejects inline-marker structure the runtime cannot render.
+The source gate blanks only the lexical resolver declaration and exact
+canonical raw-lookup helper bodies, then fails on every remaining bare
+`message` identifier. Negative controls cover aliases, `call`, `bind`, global
+property access, string-spoofed owners, ASI-separated calls, fake canonical
+attribute writes, script/style/SVG element aliases and helper targets, plus
+descriptors sent directly to text, URL, style, native-attribute, or raw-SVG
+sinks.
+This direct-convention scan is a regression guard, not a general verifier for
+trusted source deliberately obfuscated with computed properties,
+`Object.assign`, or native-method `.call`. Runtime proof supplies the security
+boundary for accidental misuse: the resolver is not global, descriptors throw
+on coercion, and structured helpers validate destinations and replacements.
+This is the only gate that proves the page *runs*: `cargo test` asserts on
+served HTML text and `node --check` proves only that it parses. See
+[render-gate](../decisions/render-gate.md) and
+[message-catalog-and-escaping](../decisions/message-catalog-and-escaping.md).
 
 **Human — screenshots, still.** Real-browser screenshots under live traffic
 (the UI is dark-only since the operator-console redesign), inspected by eye —

@@ -183,7 +183,8 @@ NOT_DISPLAY = re.compile(
     r"querySelector|getElementById|createElementNS|setAttribute\(|getAttribute\(|"
     r"classList|\.style|addEventListener|removeEventListener|localStorage|"
     r"nimproxy_|labels\[|dataset\.|\.dataset|JSON\.|console\.|new Intl|"
-    r"\.split\(|\.join\(|\.replace\(|padStart|toFixed|encodeURI|fetch\("
+    r"new (?:Error|TypeError)|\.split\(|\.join\(|\.replace\(|padStart|toFixed|"
+    r"encodeURI|fetch\("
 )
 
 
@@ -235,12 +236,245 @@ def lint_runtime_helpers(name: str, raw: str) -> list:
     if not body:
         return []
     js = strip_comments(body.group(1))
-    called = set(re.findall(r"\b(t|tRaw|tHtml|applyStatic|rawMsg|fill)\s*\(", js))
-    defined = set(re.findall(r"(?:const|let|var|function)\s+(t|tRaw|tHtml|applyStatic|rawMsg|fill)\b", js))
+    helpers = (
+        r"message|setMessageText|setMessageAttr|setMessageWithNodes|"
+        r"setEmphasizedMessage|applyStatic|t|tRaw|tHtml|rawMsg"
+    )
+    called = set(re.findall(rf"\b({helpers})\s*\(", js))
+    defined = set(
+        re.findall(rf"(?:const|let|var|function)\s+({helpers})\b", js)
+    )
     return [
         f"{name}: calls {fn}() but never defines it — the page will not localize"
         for fn in sorted(called - defined)
     ]
+
+
+I18N_TEXT_ATTRS = {"title", "placeholder", "aria-label", "alt"}
+CANONICAL_LOOKUPS = {
+    "src/dashboard.html": (
+        r"""function escapeHtml\(value\) \{
+  const text = value && value\.type === CATALOG_MESSAGE
+    \? message\(value\.id, value\.params\)
+    : String\(value\);
+  return text\.replace""",
+        r"""function setMessageText\(node, id, params = \{\}\) \{
+  assertMessageTextTarget\(node\);
+  node\.textContent = message\(id, params\);
+\}""",
+        r"""function setMessageAttr\(node, attr, id, params = \{\}\) \{
+  if \(!I18N_TEXT_ATTRS\.has\(attr\)\)
+    throw new Error\(`forbidden catalog attribute: \$\{attr\}`\);
+  node\.setAttribute\(attr, message\(id, params\)\);
+\}""",
+    ),
+    "src/setup.html": (
+        r"""function setMessageText\(node, id, params = \{\}\) \{
+  assertMessageTextTarget\(node\);
+  node\.textContent = message\(id, params\);
+\}""",
+        r"""function setMessageAttr\(node, attr, id, params = \{\}\) \{
+  if \(!I18N_TEXT_ATTRS\.has\(attr\)\)
+    throw new Error\(`forbidden catalog attribute: \$\{attr\}`\);
+  node\.setAttribute\(attr, message\(id, params\)\);
+\}""",
+        r"""function setMessageWithNodes\(node, id, replacements\) \{
+  assertMessageTextTarget\(node\);
+  for \(const \[, replacement\] of replacements\) \{
+    assertMessageTextTarget\(replacement\);
+    if \(replacement\.querySelector\?\.\("script,style,svg"\)\)
+      throw new Error\("forbidden catalog text target"\);
+  \}
+  let text = message\(id\);""",
+        r"""function setEmphasizedMessage\(node, id, emphasis\) \{
+  assertMessageTextTarget\(node\);
+  assertMessageTextTarget\(emphasis\);
+  if \(emphasis\.querySelector\?\.\("script,style,svg"\)\)
+    throw new Error\("forbidden catalog text target"\);
+  const text = message\(id\);""",
+    ),
+}
+
+
+def _consume_canonical_lookups(name: str, source: str, problems: list) -> str:
+    """Blank only the deliberately tiny set of raw catalog lookup bodies.
+
+    Page code passes ids or inert descriptors. A raw ``message()`` lookup is
+    legal only inside one canonical sink helper, whose complete opening shape
+    is fixed here. This is intentionally a bounded convention rather than a
+    partial JavaScript parser.
+    """
+    working = source
+    for pattern in CANONICAL_LOOKUPS.get(name, ()):
+        matches = list(re.finditer(pattern, working))
+        if len(matches) != 1:
+            problems.append((
+                "sink-context",
+                f"{name}: canonical catalog sink shape occurs {len(matches)} times",
+            ))
+            continue
+        match = matches[0]
+        replacement = match.group(0).replace("message(", "__catalog_lookup__(")
+        working = working[:match.start()] + replacement + working[match.end():]
+
+    declarations = list(
+        re.finditer(r"\bconst message\s*=\s*\(id, params = \{\}\)\s*=>", working)
+    )
+    if name in CANONICAL_LOOKUPS and len(declarations) != 1:
+        problems.append((
+            "sink-context",
+            f"{name}: raw catalog lookup declaration occurs {len(declarations)} times",
+        ))
+    working = re.sub(
+        r"\bconst message(\s*=\s*\(id, params = \{\}\)\s*=>)",
+        r"const __catalog_lookup__\1",
+        working,
+    )
+    return working
+
+
+def lint_catalog_sinks(name: str, raw: str) -> list:
+    """Enforce the bounded ID/descriptor-to-sink convention."""
+    problems = []
+    source = strip_comments(raw)
+
+    def add(check: str, detail: str):
+        if not any(existing == check for existing, _ in problems):
+            problems.append((check, detail))
+
+    if re.search(r'data-i18n-html=|\btHtml\s*\(', source):
+        add(
+            "structured-message-html",
+            f"{name}: structured catalog message uses an HTML-producing path",
+        )
+
+    if re.search(r"\b(?:rawMsg|tRaw)\s*\(|\b(?:const|let|var)\s+t\s*=", source):
+        add(
+            "sink-context",
+            f"{name}: escaped/plain catalog compatibility helper survives",
+        )
+
+    for match in re.finditer(
+        r"\bsetMessageAttr\s*\([^,]+,\s*['\"]([^'\"]+)['\"]", source
+    ):
+        attr = match.group(1)
+        if attr not in I18N_TEXT_ATTRS:
+            add(
+                "forbidden-catalog-context",
+                f"{name}: catalog value targets forbidden attribute {attr!r}",
+            )
+
+    # Declarative and helper-owned text paths never target active text or SVG.
+    if re.search(r"<(?:script|style|svg)\b[^>]*\bdata-i18n", source, re.I):
+        add(
+            "forbidden-catalog-context",
+            f"{name}: declarative catalog text targets script, CSS, or SVG",
+        )
+    forbidden_names = {"script", "scriptNode", "style", "styleNode", "svg", "svgNode"}
+    created = {
+        match.group(1)
+        for match in re.finditer(
+            r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*"
+            r"document\.createElement(?:NS)?\([^;\n]*['\"](?:script|style|svg)['\"]",
+            source,
+        )
+    }
+    targets = "|".join(re.escape(target) for target in sorted(forbidden_names | created))
+    if targets and re.search(
+        rf"\b(?:setMessageText|setMessageWithNodes|setEmphasizedMessage)"
+        rf"\s*\(\s*(?:{targets})\b",
+        source,
+    ):
+        add(
+            "forbidden-catalog-context",
+            f"{name}: catalog text helper targets script, CSS, or SVG",
+        )
+
+    body = re.search(r"<script>(.*?)</script>", raw, re.S)
+    javascript = strip_comments(body.group(1)) if body else ""
+    working = _consume_canonical_lookups(name, javascript, problems)
+    catalog_value = r"(?:message|catalogMessage)\s*\("
+
+    # These contexts never accept repository-owned text, even when escaped.
+    forbidden_patterns = (
+        rf"\.(?:href|src|onclick)\s*=\s*[^;\n]*{catalog_value}",
+        rf"\.style(?:\.[A-Za-z_$][\w$]*)?\s*=\s*[^;\n]*{catalog_value}",
+        rf"\.setAttribute\s*\([^;\n]*{catalog_value}",
+        rf"\b(?:script|scriptNode|style|styleNode)\.textContent\s*=\s*"
+        rf"[^;\n]*{catalog_value}",
+        rf"\b(?:svg|svgNode)\.(?:textContent|innerHTML)\s*=\s*"
+        rf"[^;\n]*{catalog_value}",
+    )
+    if any(re.search(pattern, working) for pattern in forbidden_patterns):
+        add(
+            "forbidden-catalog-context",
+            f"{name}: catalog value enters URL, style, event, script, CSS, SVG, "
+            "or native attribute context",
+        )
+    for alias in created:
+        if re.search(
+            rf"\b{re.escape(alias)}\.(?:textContent|innerHTML)\s*=\s*"
+            rf"[^;\n]*{catalog_value}",
+            working,
+        ):
+            add(
+                "forbidden-catalog-context",
+                f"{name}: catalog value enters script, CSS, or SVG alias",
+            )
+
+    # Descriptors may be resolved only by escapeHtml; ID-taking DOM helpers
+    # resolve their own catalog values and reject a descriptor argument.
+    if re.search(
+        r"\b(?:setMessageText|setMessageAttr|setMessageWithNodes|"
+        r"setEmphasizedMessage)\s*\([^,]+,\s*(?:['\"][^'\"]+['\"]\s*,\s*)?"
+        r"catalogMessage\s*\(",
+        working,
+    ):
+        add(
+            "sink-context",
+            f"{name}: catalog descriptor bypasses its owning HTML sink",
+        )
+    for write in re.finditer(
+        r"\.(?:innerHTML\s*\+?=|insertAdjacentHTML\s*\()([^;\n]*)", working
+    ):
+        expression = write.group(1)
+        if (
+            re.search(r"\bcatalogMessage\s*\(", expression)
+            and not re.search(
+                r"\bescapeHtml\s*\([^;\n]*\bcatalogMessage\s*\(", expression
+            )
+        ):
+            add(
+                "sink-context",
+                f"{name}: inert catalog descriptor reaches HTML without escapeHtml",
+            )
+    if re.search(
+        r"(?:\.textContent\s*=|createTextNode\s*\()[^;\n]*"
+        r"\bcatalogMessage\s*\(",
+        working,
+    ):
+        add(
+            "sink-context",
+            f"{name}: catalog descriptor bypasses an ID-taking text sink",
+        )
+
+    # After the exact canonical bodies and lexical declaration are blanked,
+    # any remaining bare resolver identifier is a convention violation. This
+    # catches aliases, bind/call access, and destructuring without inferring
+    # eventual JavaScript ownership.
+    if (
+        not any(check == "forbidden-catalog-context" for check, _ in problems)
+        and (
+            re.search(r"(?<![.\w$-])message\b", working)
+            or re.search(r"\[\s*['\"]message['\"]\s*\]", working)
+        )
+    ):
+        add(
+            "sink-context",
+            f"{name}: raw message resolver is referenced outside canonical sinks",
+        )
+
+    return problems
 
 
 def lint_untagged(name: str, raw: str) -> list:
@@ -264,7 +498,9 @@ def lint_untagged(name: str, raw: str) -> list:
         text = m.group(1)
         if frozen(text):
             continue
-        errors.append(f"{name}: untagged display string {text!r} — route it through t()")
+        errors.append(
+            f"{name}: untagged display string {text!r} — route it through message()"
+        )
 
     stripped = strip_comments(scanned)
     for line in stripped.splitlines():
@@ -287,7 +523,9 @@ def lint_untagged(name: str, raw: str) -> list:
             if ATTR_VALUE.search(before):
                 continue
             if looks_like_prose(text):
-                errors.append(f"{name}: untagged prose {text!r} — route it through t()")
+                errors.append(
+                    f"{name}: untagged prose {text!r} — route it through message()"
+                )
 
     # Bare prose sitting between tags inside a template literal.
     for m in TEMPLATE_LITERAL.finditer(stripped):
@@ -300,7 +538,7 @@ def lint_untagged(name: str, raw: str) -> list:
                 if piece and looks_like_prose(piece):
                     errors.append(
                         f"{name}: untagged prose {piece!r} in template markup"
-                        f" — route it through t()"
+                        f" — route it through message()"
                     )
 
     # Localizable attributes carrying prose, with no data-i18n-attr beside them.
@@ -448,6 +686,257 @@ SELFTEST_CASES = [
     ("lowercase-token", "const z = 'sticky';", None),
 ]
 
+SINK_SELFTEST_CASES = [
+    # Allowed plain-text contexts.
+    ("element-text", "setMessageText(el, 'probe');", None),
+    ("attr-title", "setMessageAttr(el, 'title', 'probe');", None),
+    ("attr-placeholder", "setMessageAttr(el, 'placeholder', 'probe');", None),
+    ("attr-aria-label", "setMessageAttr(el, 'aria-label', 'probe');", None),
+    (
+        "attr-svg-aria-label",
+        "setMessageAttr(svgNode, 'aria-label', 'probe');",
+        None,
+    ),
+    ("attr-alt", "setMessageAttr(el, 'alt', 'probe');", None),
+    # Forbidden contexts are independent so a broad check cannot hide a hole.
+    ("attr-href", "setMessageAttr(el, 'href', 'probe');", "forbidden-catalog-context"),
+    ("attr-src", "setMessageAttr(el, 'src', 'probe');", "forbidden-catalog-context"),
+    ("attr-style", "setMessageAttr(el, 'style', 'probe');", "forbidden-catalog-context"),
+    ("attr-onclick", "setMessageAttr(el, 'onclick', 'probe');", "forbidden-catalog-context"),
+    ("property-href", "el.href = message('probe');", "forbidden-catalog-context"),
+    ("property-src", "el.src = message('probe');", "forbidden-catalog-context"),
+    ("property-style", "el.style.cssText = message('probe');", "forbidden-catalog-context"),
+    ("property-onclick", "el.onclick = message('probe');", "forbidden-catalog-context"),
+    ("script-text", "scriptNode.textContent = message('probe');", "forbidden-catalog-context"),
+    ("css-text", "styleNode.textContent = message('probe');", "forbidden-catalog-context"),
+    ("raw-svg", "svgNode.innerHTML = message('probe');", "forbidden-catalog-context"),
+    (
+        "raw-svg-concat",
+        "svgNode.innerHTML = '<text>' + message('probe') + '</text>';",
+        "forbidden-catalog-context",
+    ),
+    (
+        "raw-svg-escaped",
+        "svgNode.innerHTML = '<text>' + esc(message('probe')) + '</text>';",
+        "forbidden-catalog-context",
+    ),
+    ("html-string", "el.innerHTML = message('probe');", "sink-context"),
+    (
+        "escaped-html-string",
+        "el.innerHTML = '<span>' + escapeHtml(catalogMessage('probe')) + '</span>';",
+        None,
+    ),
+    (
+        "html-owner-string-spoof",
+        "el.innerHTML = 'esc(' + message('probe');",
+        "sink-context",
+    ),
+    (
+        "adjacent-owner-string-spoof",
+        "el.insertAdjacentHTML('beforeend', 'esc(' + message('probe'));",
+        "sink-context",
+    ),
+    ("approved-html-owner", "metricRow(catalogMessage('probe'), '1');", None),
+    ("approved-plain-binding", "const windowLabel = catalogMessage('probe');", None),
+    (
+        "raw-html-concat",
+        "el.innerHTML = '<span>' + message('probe') + '</span>';",
+        "sink-context",
+    ),
+    (
+        "raw-html-multiline",
+        "el.innerHTML = `<span>\n${message('probe')}\n</span>`;",
+        "sink-context",
+    ),
+    (
+        "raw-insert-adjacent",
+        "el.insertAdjacentHTML('beforeend', message('probe'));",
+        "sink-context",
+    ),
+    (
+        "raw-html-plus-equals",
+        "el.innerHTML += message('probe');",
+        "sink-context",
+    ),
+    (
+        "raw-html-no-semicolon",
+        "el.innerHTML = message('probe')",
+        "sink-context",
+    ),
+    (
+        "raw-insert-no-semicolon",
+        "el.insertAdjacentHTML('beforeend', message('probe'))",
+        "sink-context",
+    ),
+    (
+        "direct-setattribute-href",
+        "el.setAttribute('href', message('probe'));",
+        "forbidden-catalog-context",
+    ),
+    (
+        "direct-setattribute-style",
+        "el.setAttribute('style', message('probe'));",
+        "forbidden-catalog-context",
+    ),
+    (
+        "direct-setattribute-nested",
+        "el.setAttribute('href', message('probe', {x: fn()}));",
+        "forbidden-catalog-context",
+    ),
+    (
+        "direct-setattribute-fake-canonical",
+        "function setMessageAttr() {} other.setAttribute(attr, message(id, params));",
+        "forbidden-catalog-context",
+    ),
+    (
+        "canonical-setattribute-forbidden",
+        "function setMessageAttr(node, attr, id, params) { node.setAttribute('href', message(id, params)); }",
+        "forbidden-catalog-context",
+    ),
+    ("unknown-owner", "unknownSink(message('probe'));", "sink-context"),
+    ("unknown-binding", "const surprise = message('probe');", "sink-context"),
+    ("resolver-alias", "const lookup = message; lookup('probe');", "sink-context"),
+    ("resolver-call", "message.call(null, 'probe');", "sink-context"),
+    ("resolver-bind", "const lookup = message.bind(null);", "sink-context"),
+    ("resolver-window", "window['message']('probe');", "sink-context"),
+    (
+        "unknown-in-returner",
+        "function apiAccessLine() { return unknownSink(message('probe')); }",
+        "sink-context",
+    ),
+    (
+        "unknown-in-approved-binding",
+        "const windowLabel = unknownSink(message('probe'));",
+        "sink-context",
+    ),
+    (
+        "unknown-in-internal",
+        "function setMessageWithNodes() { unknownSink(message('probe')); }",
+        "sink-context",
+    ),
+    (
+        "script-alias-text",
+        "const alias = document.createElement('script'); alias.textContent = message('probe');",
+        "forbidden-catalog-context",
+    ),
+    (
+        "style-alias-text",
+        "const alias = document.createElement('style'); alias.textContent = message('probe');",
+        "forbidden-catalog-context",
+    ),
+    (
+        "svg-alias-text",
+        "const alias = document.createElementNS('urn:x', 'svg'); alias.textContent = message('probe');",
+        "forbidden-catalog-context",
+    ),
+    (
+        "helper-script-target",
+        "setMessageText(scriptNode, 'probe');",
+        "forbidden-catalog-context",
+    ),
+    (
+        "helper-style-target",
+        "setMessageText(styleNode, 'probe');",
+        "forbidden-catalog-context",
+    ),
+    (
+        "helper-svg-target",
+        "setMessageText(svgNode, 'probe');",
+        "forbidden-catalog-context",
+    ),
+    (
+        "structured-script-target",
+        "setMessageWithNodes(scriptNode, 'probe', []);",
+        "forbidden-catalog-context",
+    ),
+    (
+        "emphasis-style-target",
+        "setEmphasizedMessage(styleNode, 'probe', document.createElement('b'));",
+        "forbidden-catalog-context",
+    ),
+    (
+        "text-asi-unknown",
+        "el.textContent = 'safe'\nunknownSink(message('probe'));",
+        "sink-context",
+    ),
+    (
+        "binding-asi-unknown",
+        "const windowLabel = 'safe'\nunknownSink(message('probe'));",
+        "sink-context",
+    ),
+    (
+        "return-asi-unknown",
+        "function apiAccessLine() { return 'safe'\nsurprise = message('probe') }",
+        "sink-context",
+    ),
+    (
+        "approved-returner",
+        "function apiAccessLine() { return message('probe'); }",
+        "sink-context",
+    ),
+    (
+        "approved-internal",
+        "function setMessageWithNodes() { let text = message('probe'); }",
+        "sink-context",
+    ),
+    (
+        "descriptor-property-href",
+        "el.href = catalogMessage('probe');",
+        "forbidden-catalog-context",
+    ),
+    (
+        "descriptor-property-style",
+        "el.style.cssText = catalogMessage('probe');",
+        "forbidden-catalog-context",
+    ),
+    (
+        "descriptor-native-attr",
+        "el.setAttribute('title', catalogMessage('probe'));",
+        "forbidden-catalog-context",
+    ),
+    (
+        "descriptor-raw-svg",
+        "svgNode.innerHTML = escapeHtml(catalogMessage('probe'));",
+        "forbidden-catalog-context",
+    ),
+    (
+        "descriptor-text-helper",
+        "setMessageText(el, catalogMessage('probe'));",
+        "sink-context",
+    ),
+    (
+        "descriptor-direct-text",
+        "el.textContent = catalogMessage('probe');",
+        "sink-context",
+    ),
+    (
+        "descriptor-text-node",
+        "document.createTextNode(catalogMessage('probe'));",
+        "sink-context",
+    ),
+    (
+        "declarative-script-target",
+        '<script data-i18n="probe"></script>',
+        "forbidden-catalog-context",
+    ),
+    (
+        "declarative-style-target",
+        '<style data-i18n="probe"></style>',
+        "forbidden-catalog-context",
+    ),
+    (
+        "declarative-svg-target",
+        '<svg data-i18n="probe"></svg>',
+        "forbidden-catalog-context",
+    ),
+    (
+        "structured-html",
+        '<span data-i18n-html="probe"></span>',
+        "structured-message-html",
+    ),
+    ("escaped-compat-helper", "const t = id => id;", "sink-context"),
+]
+
 SELFTEST_PAGE = """<!doctype html><html><body>
 <script type="application/json" id="i18n-catalog">{"locale":"en-US","messages":{}}</script>
 <script>
@@ -479,12 +968,28 @@ def selftest() -> int:
         else:
             print(f"  ok  {label:24} trips {want}")
 
+    for label, snippet, want in SINK_SELFTEST_CASES:
+        page = SELFTEST_PAGE % snippet
+        found = {check for check, _ in lint_catalog_sinks("selftest", page)}
+        if want is None:
+            if found:
+                failures.append(f"{label}: expected to pass, tripped {sorted(found)}")
+            else:
+                print(f"  ok  {label:24} passes")
+        elif found != {want}:
+            failures.append(
+                f"{label}: expected only {want!r}, tripped {sorted(found) or 'nothing'}"
+            )
+        else:
+            print(f"  ok  {label:24} trips {want}")
+
     if failures:
         print("\nselftest FAILED:")
         for f in failures:
             print("  -", f)
         return 1
-    print(f"\nselftest ok — {len(SELFTEST_CASES)} cases, every check observed to fail")
+    total = len(SELFTEST_CASES) + len(SINK_SELFTEST_CASES)
+    print(f"\nselftest ok — {total} cases, every check observed to fail")
     return 0
 
 
@@ -507,8 +1012,8 @@ def main() -> int:
             if mid not in catalog:
                 errors.append(f"{name}: data-i18n={mid} has no catalog entry")
                 continue
-            # catalog stores PLAIN text; the runtime escapes on load, so compare
-            # the markup with entities decoded
+            # Catalog values are plain text. Decode source-markup entities
+            # before comparing the authored fallback text with the catalog.
             want = catalog[mid]["en"]
             if htmlmod.unescape(inner).strip() != want.strip():
                 errors.append(
@@ -528,31 +1033,17 @@ def main() -> int:
                     f"{name}: {mid} text node {first[:50]!r} != catalog {want[:50]!r}"
                 )
 
-        # data-i18n-html carries inline markup as placeholders; the element is
-        # emptied in the markup, so there is no text to round-trip against.
-        # What must hold is that every placeholder is one the runtime expands.
-        known = {"{b}", "{/b}", "{key}", "{endpoint}"}
-        for m in re.finditer(r'data-i18n-html="([^"]+)"', source):
-            mid = m.group(1)
-            referenced.add(mid)
-            if mid not in catalog:
-                errors.append(f"{name}: data-i18n-html={mid} has no catalog entry")
-                continue
-            for ph in re.findall(r"\{[^}]*\}", catalog[mid]["en"]):
-                if ph not in known:
-                    errors.append(f"{name}: {mid} uses unknown placeholder {ph}")
-            if "<" in catalog[mid]["en"]:
-                errors.append(f"{name}: {mid} contains raw markup; use a placeholder")
-
-        # No value anywhere may carry markup or an HTML entity. Entities would
-        # double-encode (values are plain text, escaped once at load); markup
-        # would render literally through the escaping paths and inject through
-        # any that is added later.
+        # No value anywhere may carry raw or entity-encoded markup. Catalog
+        # values are plain text; an HTML parser never owns their meaning.
         for mid, msg in catalog.items():
             if "<" in msg["en"] or ">" in msg["en"]:
-                errors.append(f"{name}: {mid} contains raw markup")
-            if re.search(r"&(?:[a-zA-Z]+|#\d+);", msg["en"]):
-                errors.append(f"{name}: {mid} contains an HTML entity; store plain text")
+                errors.append(f"[catalog-markup] {name}: {mid} contains raw markup")
+            decoded = htmlmod.unescape(msg["en"])
+            if decoded != msg["en"] and ("<" in decoded or ">" in decoded):
+                errors.append(
+                    f"[catalog-entity-markup] {name}: {mid} contains "
+                    "entity-encoded markup"
+                )
 
         # Only text-bearing attributes are localizable; the runtime enforces
         # the same set, so a mismatch here is a bug in one of the two.
@@ -583,15 +1074,15 @@ def main() -> int:
                     f"{name}: {mid} hash {msg.get('hash')} stale, text hashes to {got}"
                 )
 
-        # ids used from JavaScript: t('id') / tRaw('id') / tHtml('id').
-        # These must exist — an unknown id renders the raw id string to the
-        # operator rather than failing loudly.
-        # both quote styles: dashboard.html uses ', setup.html uses "
-        for m in re.finditer(r"""\bt(?:Raw|Html)?\(\s*['"]([a-z0-9_.]+)['"]""", strip_comments(raw)):
+        # Executable page code carries catalog ids as quoted values passed to
+        # ID-taking sinks or catalogMessage(). The application/json catalog is
+        # deliberately excluded, or every orphan would appear referenced.
+        js = strip_comments("".join(re.findall(r"<script>(.*?)</script>", raw, re.S)))
+        for m in re.finditer(r"""['"]((?:dashboard|setup)\.[a-z0-9_.]+)['"]""", js):
             mid = m.group(1)
             referenced.add(mid)
             if mid not in catalog:
-                errors.append(f"{name}: t('{mid}') has no catalog entry")
+                errors.append(f"{name}: message id {mid!r} has no catalog entry")
 
         for mid in catalog:
             if mid not in referenced:
@@ -619,6 +1110,10 @@ def main() -> int:
     for name in ("src/dashboard.html", "src/setup.html"):
         page = (ROOT / name).read_text()
         errors += lint_runtime_helpers(name, page)
+        errors += [
+            f"[{check}] {detail}"
+            for check, detail in lint_catalog_sinks(name, page)
+        ]
         errors += lint_untagged(name, page)
         if 'id="i18n-catalog"' in page:
             errors += lint_retired_vocabulary(name, page)

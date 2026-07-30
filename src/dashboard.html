@@ -582,66 +582,77 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
 "use strict";
 const $ = id => document.getElementById(id);
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-// HTML-escape any value that reaches innerHTML. Model ids and client names
-// originate from request data; the server sanitizes them, but escape here too
-// so a stray character can never become markup (defense in depth vs XSS).
-const esc = s => String(s).replace(/[&<>"']/g, c =>
-  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 /* ---------- i18n ----------
-   The catalog ships inline as a JSON block (the CSP already permits inline).
-   Values are stored as PLAIN TEXT and escaped once, here, at load.
-
-   That is the whole safety contract. Every call site interpolates into
-   innerHTML, and metricRow/tile/prow/perfBlock do not escape their label
-   argument, nor does kpiCards escape k.value/k.sub. Escaping at load is what
-   keeps those sinks safe — do not escape at call sites, and do not skip it.
-
-   t()    -> escaped, for innerHTML and template literals
-   tRaw() -> plain, for setAttribute and textContent, neither of which
-             parses entities
-   Catalog values may reach element content and quoted attributes only. Never
-   style=, href=, src=, or on*=. */
+   Catalog values remain plain Unicode text. Native DOM sinks own ordinary
+   element and text-bearing attribute contexts. A branded catalog descriptor
+   is inert until the fixed-markup HTML sink resolves and escapes it. */
 const I18N = JSON.parse($('i18n-catalog').textContent);
 const MSG = I18N.messages;
-const rawMsg = id => (MSG[id] === undefined ? id : MSG[id].en);
-/* Substitution happens AFTER the message is escaped, so an unescaped param
-   would land raw in metricRow/tile/prow, none of which escape their argument.
-   The escaper is a PARAMETER, matching setup.html, because the two helpers need
-   opposite ones: t() lands in innerHTML and must escape its params, while
-   tRaw() lands in textContent and setAttribute, which parse no entities and
-   would render an escaped param as a visible "&amp;". Hardcoding esc() here
-   was latent rather than wrong — no tRaw() call site passes params today — but
-   two same-named functions with different contracts across two files is the
-   trap, not the bug. */
-function fill(s, p, e) {
-  if (!p) return s;
-  for (const k in p) s = s.split('{' + k + '}').join(e(p[k]));
-  return s;
+const message = (id, params = {}) => {
+  let text = MSG[id] === undefined ? id : MSG[id].en;
+  for (const key in params)
+    text = text.split('{' + key + '}').join(String(params[key]));
+  return text;
+};
+const CATALOG_MESSAGE = Symbol('catalog-message');
+const catalogMessage = (id, params = {}) =>
+  Object.freeze({
+    type: CATALOG_MESSAGE,
+    id,
+    params: Object.freeze({ ...params }),
+    [Symbol.toPrimitive]() {
+      throw new TypeError('catalog descriptor requires escapeHtml');
+    },
+  });
+function escapeHtml(value) {
+  const text = value && value.type === CATALOG_MESSAGE
+    ? message(value.id, value.params)
+    : String(value);
+  return text.replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-const I18N_ATTRS = new Set(['title', 'placeholder', 'aria-label', 'alt']);
-const t = (id, p) => fill(esc(rawMsg(id)), p, esc);
-const tRaw = (id, p) => fill(rawMsg(id), p, String);
+function assertMessageTextTarget(node) {
+  const context = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+  if (!context ||
+      context instanceof HTMLScriptElement ||
+      context instanceof HTMLStyleElement ||
+      context instanceof SVGElement ||
+      context.closest?.('script,style,svg'))
+    throw new Error('forbidden catalog text target');
+}
+const I18N_TEXT_ATTRS = new Set(['title', 'placeholder', 'aria-label', 'alt']);
+function setMessageText(node, id, params = {}) {
+  assertMessageTextTarget(node);
+  node.textContent = message(id, params);
+}
+function setMessageAttr(node, attr, id, params = {}) {
+  if (!I18N_TEXT_ATTRS.has(attr))
+    throw new Error(`forbidden catalog attribute: ${attr}`);
+  node.setAttribute(attr, message(id, params));
+}
 /* Static markup carries data-i18n="<id>" for content and
    data-i18n-attr="<attr>:<id>[,<attr>:<id>]" for attributes. */
 function applyStatic(root) {
-  root.querySelectorAll('[data-i18n]').forEach(el => { el.innerHTML = t(el.dataset.i18n); });
+  root.querySelectorAll('[data-i18n]').forEach(el => {
+    setMessageText(el, el.dataset.i18n);
+  });
   /* Replace an element's own first text node, leaving sibling markup alone.
      Assigning to a text node cannot introduce markup, so this path needs no
      escaping — and it keeps headings that mix a text node with an icon and a
      .note span structurally identical. */
   root.querySelectorAll('[data-i18n-text]').forEach(el => {
     for (const n of el.childNodes) {
-      if (n.nodeType === 3 && n.textContent.trim()) { n.textContent = tRaw(el.dataset.i18nText); break; }
+      if (n.nodeType === 3 && n.textContent.trim()) {
+        setMessageText(n, el.dataset.i18nText);
+        break;
+      }
     }
   });
   root.querySelectorAll('[data-i18n-attr]').forEach(el => {
     el.dataset.i18nAttr.split(',').forEach(pair => {
       const i = pair.indexOf(':');
       const attr = pair.slice(0, i);
-      // Only text-bearing attributes are localizable. Without this, a markup
-      // edit could route a catalog value into onclick= or style=.
-      if (!I18N_ATTRS.has(attr)) { console.error('refusing to localize attribute', attr); return; }
-      el.setAttribute(attr, tRaw(pair.slice(i + 1)));
+      setMessageAttr(el, attr, pair.slice(i + 1));
     });
   });
 }
@@ -796,7 +807,7 @@ const deltaBuckets = (cur, prev) => cur.map((b, i) => ({ le: b.le, count: b.coun
 
 /* ---------- state: one selected range plus a lightweight current snapshot ---------- */
 const POLL_MS = 3000;
-let samples = [];              // synthetic cumulative [{t(ms), rows}]
+let samples = [];              // synthetic cumulative [{t: milliseconds, rows}]
 let rangeData = null;
 let nowData = null;
 let nowRows = [];
@@ -933,7 +944,7 @@ function lineChart(el, series, unitFmt, opts = {}) {
   const H = opts.height || 190;
   el.classList.add('chart');
   const live = series.filter(s => s.pts.length > 1);
-  if (!live.length) { el.innerHTML = `<div class="empty">${t('dashboard.common.empty.no_data_in_range')}</div>`; return; }
+  if (!live.length) { el.innerHTML = `<div class="empty">${escapeHtml(catalogMessage('dashboard.common.empty.no_data_in_range'))}</div>`; return; }
   const W = el.clientWidth || 500, PT = 16, PB = 16;
   const t0 = Math.min(...live.map(s => s.pts[0].t));
   const t1 = Math.max(...live.map(s => s.pts[s.pts.length-1].t));
@@ -980,7 +991,7 @@ function lineChart(el, series, unitFmt, opts = {}) {
       let p = s.pts[0];
       for (const q of s.pts) if (Math.abs(q.t - best.t) < Math.abs(p.t - best.t)) p = q;
       dots += `<circle cx="${X(p.t)}" cy="${Y(p.v)}" r="4" fill="${s.color}" stroke="${css('--bg')}" stroke-width="1.5"/>`;
-      html += `<div class="row"><span><i class="sw" style="background:${s.color}"></i>${esc(s.name)}</span><b>${unitFmt(p.v)}</b></div>`;
+      html += `<div class="row"><span><i class="sw" style="background:${s.color}"></i>${escapeHtml(s.name)}</span><b>${unitFmt(p.v)}</b></div>`;
     }
     hoverg.innerHTML = xh.outerHTML + dots;
     hoverg.setAttribute('visibility', 'visible');
@@ -1009,7 +1020,7 @@ function stackChart(el, series, unitFmt, opts = {}) {
   const ts = (bands[0] || { pts: [] }).pts.map(p => p.t);
   const bandAt = (s, i) => Math.max(0, s.pts[i] ? s.pts[i].v : 0);
   const totals = ts.map((_, i) => bands.reduce((a, s) => a + bandAt(s, i), 0));
-  if (ts.length < 2 || !totals.some(v => v > 0)) { el.innerHTML = `<div class="empty">${t('dashboard.common.empty.no_data_in_range')}</div>`; return; }
+  if (ts.length < 2 || !totals.some(v => v > 0)) { el.innerHTML = `<div class="empty">${escapeHtml(catalogMessage('dashboard.common.empty.no_data_in_range'))}</div>`; return; }
   const W = el.clientWidth || 500, PT = 16, PB = 16;
   const t0 = ts[0], t1 = ts[ts.length-1];
   let vmax = Math.max(1e-6, ...totals);
@@ -1053,7 +1064,7 @@ function stackChart(el, series, unitFmt, opts = {}) {
       dots += `<circle cx="${mx}" cy="${Y(cum[k][bi])}" r="3" fill="${bands[k].color}" stroke="${css('--bg')}" stroke-width="1.5"/>`;
     let html = `<div class="t">${at(STAMP, ts[bi])}</div>`;
     for (const s of bands)
-      html += `<div class="row"><span><i class="sw" style="background:${s.color}"></i>${esc(s.name)}</span><b>${unitFmt(bandAt(s, bi))}</b></div>`;
+      html += `<div class="row"><span><i class="sw" style="background:${s.color}"></i>${escapeHtml(s.name)}</span><b>${unitFmt(bandAt(s, bi))}</b></div>`;
     html += `<div class="row" style="border-top:1px solid var(--hairline);margin-top:3px;padding-top:4px"><span>total</span><b>${unitFmt(totals[bi])}</b></div>`;
     hoverg.innerHTML = xh.outerHTML + dots;
     hoverg.setAttribute('visibility', 'visible');
@@ -1067,7 +1078,7 @@ function stackChart(el, series, unitFmt, opts = {}) {
 
 function legend(el, series) {
   el.innerHTML = series.length > 1
-    ? series.map(s => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join('')
+    ? series.map(s => `<span><i style="background:${s.color}"></i>${escapeHtml(s.name)}</span>`).join('')
     : '';
 }
 
@@ -1078,7 +1089,10 @@ function legend(el, series) {
    saved/restored around the innerHTML swap so the 3s live poll doesn't jump. */
 const sortState = new Map();
 function sortTable(el, id, cols, rows, opts = {}) {
-  if (!rows.length) { el.innerHTML = `<div class="empty">${opts.empty || t('dashboard.common.empty.no_traffic')}</div>`; return; }
+  if (!rows.length) {
+    el.innerHTML = `<div class="empty">${escapeHtml(opts.empty || catalogMessage('dashboard.common.empty.no_traffic'))}</div>`;
+    return;
+  }
   const st = sortState.get(id) || { idx: opts.defaultIdx ?? 1, asc: opts.defaultAsc ?? false };
   sortState.set(id, st);
   const sorted = [...rows].sort((a, b) => {
@@ -1095,7 +1109,7 @@ function sortTable(el, id, cols, rows, opts = {}) {
   });
   let h = `<div class="scroll" style="max-height:${opts.maxH || 420}px"><table style="min-width:${opts.minW || 0}px"><thead><tr>` +
     cols.map((c, i) =>
-      `<th class="${c.align === 'l' ? 'l' : ''}${i === st.idx ? ' on' : ''}" data-i="${i}">${c.label}${i === st.idx ? (st.asc ? ' ↑' : ' ↓') : ''}</th>`
+      `<th class="${c.align === 'l' ? 'l' : ''}${i === st.idx ? ' on' : ''}" data-i="${i}">${escapeHtml(c.label)}${i === st.idx ? (st.asc ? ' ↑' : ' ↓') : ''}</th>`
     ).join('') + '</tr></thead><tbody>' +
     sorted.map(r => '<tr>' + r.cells.map((cell, i) => {
       const best = bests[i] !== null && r.vals[i] === bests[i];
@@ -1119,33 +1133,35 @@ function sortTable(el, id, cols, rows, opts = {}) {
    scale (percentages, utilization). */
 function barList(el, entries, fmtV, maxV) {
   const vals = entries.filter(e => isFinite(e.v));
-  if (!vals.length) { el.innerHTML = `<div class="empty">${t('dashboard.common.empty.no_data_yet')}</div>`; return; }
+  if (!vals.length) { el.innerHTML = `<div class="empty">${escapeHtml(catalogMessage('dashboard.common.empty.no_data_yet'))}</div>`; return; }
   const max = maxV || Math.max(1e-9, ...vals.map(e => e.v));
   el.innerHTML = entries.map(e =>
-    `<div class="brow"><span class="bname" title="${esc(e.name)}">${esc(e.label ?? e.name)}</span>` +
+    `<div class="brow"><span class="bname" title="${escapeHtml(e.name)}">${escapeHtml(e.label ?? e.name)}</span>` +
     `<span class="btrack">${isFinite(e.v) ? `<span style="width:${Math.max(2, e.v / max * 100).toFixed(0)}%;background:${e.color}"></span>` : ''}</span>` +
     `<span class="bval">${e.vtext ?? (isFinite(e.v) ? fmtV(e.v) : '–')}</span></div>`).join('');
 }
 
 /* leaderboard rows: chip square + name + value + thin progress bar */
 function leaderList(el, entries, fmtV) {
-  if (!entries.length) { el.innerHTML = `<div class="empty">${t('dashboard.common.empty.no_traffic')}</div>`; return; }
+  if (!entries.length) { el.innerHTML = `<div class="empty">${escapeHtml(catalogMessage('dashboard.common.empty.no_traffic'))}</div>`; return; }
   const max = Math.max(1e-9, ...entries.map(e => e.v));
   el.innerHTML = entries.map(e =>
     `<div class="lead">${e.chip}<div class="lbody">` +
-    `<div class="lrow"><span class="lname" title="${esc(e.name)}">${esc(e.label ?? e.name)}</span><span class="lval">${fmtV(e.v)}</span></div>` +
+    `<div class="lrow"><span class="lname" title="${escapeHtml(e.name)}">${escapeHtml(e.label ?? e.name)}</span><span class="lval">${fmtV(e.v)}</span></div>` +
     `<div class="ltrack"><span style="width:${Math.max(2, e.v / max * 100).toFixed(0)}%;background:${e.color}"></span></div>` +
     `</div></div>`).join('');
 }
 
 /* ---------- ring gauge ---------- */
-function ringGauge(el, ratio, text, color, label, sub) {
+function ringGauge(el, ratio, text, color, labelId, sub) {
   const C = 2 * Math.PI * 34, cl = Math.max(0, Math.min(1, ratio));
-  el.innerHTML = `<div class="ring"><svg width="76" height="76" viewBox="0 0 84 84" role="img" aria-label="${esc(label)} ${esc(text)}">
+  const label = catalogMessage(labelId);
+  el.innerHTML = `<div class="ring"><svg width="76" height="76" viewBox="0 0 84 84" role="img">
     <circle cx="42" cy="42" r="34" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="7"/>
     ${cl > 0.004 ? `<circle cx="42" cy="42" r="34" fill="none" stroke="${color}" stroke-width="7" stroke-linecap="round" stroke-dasharray="${(C*cl).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 42 42)"/>` : ''}
-    </svg><span class="rtext">${text}</span></div>
-    <div class="rlabel">${esc(label)}</div><div class="rsub">${sub}</div>`;
+    </svg><span class="rtext">${escapeHtml(text)}</span></div>
+    <div class="rlabel">${escapeHtml(label)}</div><div class="rsub">${escapeHtml(sub)}</div>`;
+  setMessageAttr(el.querySelector('svg'), 'aria-label', labelId);
 }
 
 /* ---------- KPI metric cards ---------- */
@@ -1177,27 +1193,27 @@ function deltaChip(pts, downIsGood) {
   const d = (b - a) / a * 100;
   if (!isFinite(d) || Math.abs(d) < 0.05) return '';
   const good = downIsGood ? d <= 0 : d >= 0;
-  return `<span class="chip ${good ? 'good' : 'bad'}" title="${t('dashboard.common.kpi.delta_tooltip')}">${(Math.abs(d) >= 10 ? PCT_SIGNED_0 : PCT_SIGNED_1).format(d / 100)}</span>`;
+  return `<span class="chip ${good ? 'good' : 'bad'}" title="${escapeHtml(catalogMessage('dashboard.common.kpi.delta_tooltip'))}">${(Math.abs(d) >= 10 ? PCT_SIGNED_0 : PCT_SIGNED_1).format(d / 100)}</span>`;
 }
 /* k: {icon, label, value, sub, delta?, pts?} */
 function kpiCards(el, defs, hero) {
   el.innerHTML = defs.map(k =>
     `<div class="kpi${hero ? ' hero' : ''}">` +
-    `<div class="kpihead"><span class="kpilabel"><svg viewBox="0 0 16 16">${ICONS[k.icon] || ''}</svg>${k.label}</span>${k.delta || ''}</div>` +
-    `<div class="kpival">${k.value}</div>` +
-    `<div class="kpisub">${k.sub || ''}</div>` +
+    `<div class="kpihead"><span class="kpilabel"><svg viewBox="0 0 16 16">${ICONS[k.icon] || ''}</svg>${escapeHtml(k.label)}</span>${k.delta || ''}</div>` +
+    `<div class="kpival">${escapeHtml(k.value)}</div>` +
+    `<div class="kpisub">${escapeHtml(k.sub || '')}</div>` +
     sparkSvg(k.pts, hero) + `</div>`).join('');
 }
 
 /* one metric-list row: label, right-aligned mono value, optional tone */
-const metricRow = (l, v, tone) => `<div class="kv${tone ? ' ' + tone : ''}"><span>${l}</span><b>${v}</b></div>`;
+const metricRow = (l, v, tone) => `<div class="kv${tone ? ' ' + tone : ''}"><span>${escapeHtml(l)}</span><b>${escapeHtml(v)}</b></div>`;
 
 /* ---------- activity heatmap: weekday x hour, sequential green ramp ---------- */
 /* 2024-01-01 was a Monday, so offset 0 of the reference week is ISO Monday. */
 const DAYS = Array.from({ length: 7 }, (_, i) =>
   WEEKDAY_SHORT.format(Date.UTC(2024, 0, 1 + ((FIRST_DAY - 1 + i) % 7))));
 function heatmap(el, matrix, vmax) {
-  if (!vmax) { el.innerHTML = `<div class="empty">${t('dashboard.common.empty.no_data_in_range')}</div>`; return; }
+  if (!vmax) { el.innerHTML = `<div class="empty">${escapeHtml(catalogMessage('dashboard.common.empty.no_data_in_range'))}</div>`; return; }
   const CW = 26, CH = 18, GAP = 3, PL = 36, PT = 18;
   const W = PL + 24*(CW+GAP), H = PT + 7*(CH+GAP);
   let g = '';
@@ -1216,7 +1232,7 @@ function heatmap(el, matrix, vmax) {
     if (!c) { hideTip(); return; }
     const d = +c.dataset.d, h = +c.dataset.h;
     showTip(ev.clientX, ev.clientY,
-      `<div class="t">${DAYS[d]} ${HOUR_ONLY.formatRange(Date.UTC(2024, 0, 1, h), Date.UTC(2024, 0, 1, h + 1))}</div><div class="row"><span>${t('dashboard.common.col.requests')}</span><b>${fmt(matrix[d][h])}</b></div>`);
+      `<div class="t">${DAYS[d]} ${HOUR_ONLY.formatRange(Date.UTC(2024, 0, 1, h), Date.UTC(2024, 0, 1, h + 1))}</div><div class="row"><span>${escapeHtml(catalogMessage('dashboard.common.col.requests'))}</span><b>${fmt(matrix[d][h])}</b></div>`);
   });
   el.querySelector('svg').addEventListener('mouseleave', hideTip);
 }
@@ -1264,7 +1280,7 @@ const initialsOf = name => name.replace(/[^A-Za-z0-9 ]/g, ' ').trim().split(/\s+
 function chipHtml(pub) {
   const initials = initialsOf(pub.name);
   if (!pub.slug) return `<span class="logo" style="background:${pub.color}">${initials}</span>`;
-  return `<span class="logo cdnchip" style="background:rgba(255,255,255,0.05)" data-fb-bg="${esc(pub.color)}" data-fb-text="${esc(initials)}"><img alt="" src="https://unpkg.com/@lobehub/icons-static-svg@latest/icons/${encodeURIComponent(pub.slug)}.svg"></span>`;
+  return `<span class="logo cdnchip" style="background:rgba(255,255,255,0.05)" data-fb-bg="${escapeHtml(pub.color)}" data-fb-text="${escapeHtml(initials)}"><img alt="" src="https://unpkg.com/@lobehub/icons-static-svg@latest/icons/${encodeURIComponent(pub.slug)}.svg"></span>`;
 }
 /* CDN logo failed: fall back to the brand monogram. Delegated in the capture
    phase because `error` on <img> does not bubble. Replaces an onerror="..."
@@ -1309,17 +1325,17 @@ let activeTab = 'overview';
    is invisible to the untagged-string linter, which is the one thing that
    stops English creeping back. */
 const TITLES = {
-  overview: tRaw('dashboard.nav.tab.overview'), models: tRaw('dashboard.nav.tab.models'),
-  clients: tRaw('dashboard.nav.tab.clients'), reliability: tRaw('dashboard.nav.tab.reliability'),
-  capacity: tRaw('dashboard.nav.tab.capacity'), settings: tRaw('dashboard.nav.tab.settings'),
+  overview: 'dashboard.nav.tab.overview', models: 'dashboard.nav.tab.models',
+  clients: 'dashboard.nav.tab.clients', reliability: 'dashboard.nav.tab.reliability',
+  capacity: 'dashboard.nav.tab.capacity', settings: 'dashboard.nav.tab.settings',
 };
 
 function render() {
   if (!samples.length) return;
   const last = samples[samples.length-1], rows = nowRows;
-  // t(), not tRaw(): every consumer interpolates this into innerHTML through a
-  // sink that does not escape (kpiCards' k.sub, the availability hero's note).
-  const windowLabel = t('dashboard.common.note.selected_time_range');
+  // Keep this plain. Consumers that place it in fixed markup escape it at
+  // their own HTML sink.
+  const windowLabel = catalogMessage('dashboard.common.note.selected_time_range');
 
   /* ----- shared per-model aggregates ----- */
   const ptok = wgroups('nimproxy_prompt_tokens_total', 'model');
@@ -1413,7 +1429,7 @@ function render() {
 
 /* client monogram chip (client leaderboards) */
 const clientChip = cl =>
-  `<span class="logo" style="background:${clientColor(cl)}">${esc(initialsOf(String(cl)))}</span>`;
+  `<span class="logo" style="background:${clientColor(cl)}">${escapeHtml(initialsOf(String(cl)))}</span>`;
 
 /* ===== overview ===== */
 function renderOverview(c) {
@@ -1427,9 +1443,9 @@ function renderOverview(c) {
     return dr > 0 ? { t: s.t, v: Math.max(0, Math.min(100, dok / dr * 100)) } : null;
   }).filter(Boolean);
   kpiCards($('o-kpis'), [
-    { icon: 'pulse', label: t('dashboard.common.col.requests'), value: fmt(wreq), sub: windowLabel, delta: deltaChip(reqPts), pts: reqPts },
-    { icon: 'stack', label: t('dashboard.common.col.tokens_out'), value: fmt(allC), sub: `${fmt(allP)} in`, delta: deltaChip(ctokPts), pts: ctokPts },
-    { icon: 'check', label: t('dashboard.common.kpi.success_rate'), value: wreq ? pctOf(okRatio, 2) : NO_VALUE,
+    { icon: 'pulse', label: catalogMessage('dashboard.common.col.requests'), value: fmt(wreq), sub: windowLabel, delta: deltaChip(reqPts), pts: reqPts },
+    { icon: 'stack', label: catalogMessage('dashboard.common.col.tokens_out'), value: fmt(allC), sub: `${fmt(allP)} in`, delta: deltaChip(ctokPts), pts: ctokPts },
+    { icon: 'check', label: catalogMessage('dashboard.common.kpi.success_rate'), value: wreq ? pctOf(okRatio, 2) : NO_VALUE,
       sub: `${fmt(wok)} of ${fmt(wreq)}`, delta: deltaChip(okPts), pts: okPts },
   ], true);
 
@@ -1437,26 +1453,25 @@ function renderOverview(c) {
   lineChart($('o-traffic'), [{ name: 'req/min', color: MED, pts: reqPts, area: true }], fmt, { height: 220 });
 
   $('o-rings').innerHTML = '<div class="ringwrap" id="o-ring-cap"></div><div class="ringwrap" id="o-ring-ok"></div>';
-  // tRaw for the ring LABEL: ringGauge escapes it itself, in both the
-  // aria-label and .rlabel. t() there would double-encode.
+  // ringGauge accepts an id and owns its separate HTML and attribute sinks.
   ringGauge($('o-ring-cap'), capRatio, pctOf(capRatio, 0), capColor,
-    tRaw('dashboard.overview.ring.capacity_used'), `${fmt(rpmNow)} / ${fmt(capacity)} rpm · ${cfg.lanes} key${cfg.lanes === 1 ? '' : 's'}`);
+    'dashboard.overview.ring.capacity_used', `${fmt(rpmNow)} / ${fmt(capacity)} rpm · ${cfg.lanes} key${cfg.lanes === 1 ? '' : 's'}`);
   const errShare = wreq ? (wreq - wok) / wreq * 100 : 0;
   ringGauge($('o-ring-ok'), okRatio, wreq ? pctOf(okRatio, 0) : NO_VALUE, okColor,
-    tRaw('dashboard.common.kpi.success_rate'), `errors ${pctOf(errShare / 100, errShare && errShare < 10 ? 1 : 0)} · ${fmt(cooldown429)} cooldowns`);
+    'dashboard.common.kpi.success_rate', `errors ${pctOf(errShare / 100, errShare && errShare < 10 ? 1 : 0)} · ${fmt(cooldown429)} cooldowns`);
   $('o-health').innerHTML =
-    metricRow(t('dashboard.common.row.active_now'), fmt(sum(rows, 'nimproxy_active_requests'))) +
-    metricRow(t('dashboard.common.row.queued'), fmt(sum(rows, 'nimproxy_queue_depth'))) +
-    metricRow(t('dashboard.common.row.rate_limit_cooldowns'), fmt(cooldown429), cooldown429 > 0 ? 'warn' : 'zero') +
-    metricRow(t('dashboard.common.row.dropped'), fmt(shed), shed > 0 ? 'crit' : 'zero') +
-    metricRow(t('dashboard.common.row.unauthorized'), fmt(unauth), unauth > 0 ? 'crit' : 'zero') +
-    metricRow(t('dashboard.common.row.failed_logins'), fmt(logins), logins > 0 ? 'crit' : 'zero');
+    metricRow(catalogMessage('dashboard.common.row.active_now'), fmt(sum(rows, 'nimproxy_active_requests'))) +
+    metricRow(catalogMessage('dashboard.common.row.queued'), fmt(sum(rows, 'nimproxy_queue_depth'))) +
+    metricRow(catalogMessage('dashboard.common.row.rate_limit_cooldowns'), fmt(cooldown429), cooldown429 > 0 ? 'warn' : 'zero') +
+    metricRow(catalogMessage('dashboard.common.row.dropped'), fmt(shed), shed > 0 ? 'crit' : 'zero') +
+    metricRow(catalogMessage('dashboard.common.row.unauthorized'), fmt(unauth), unauth > 0 ? 'crit' : 'zero') +
+    metricRow(catalogMessage('dashboard.common.row.failed_logins'), fmt(logins), logins > 0 ? 'crit' : 'zero');
 
   const perfBlock = (label, note, p50, p95, fmtV) => {
     const scale = Math.max(isFinite(p50) ? p50 : 0, isFinite(p95) ? p95 : 0, 1e-9) * 1.25;
     const pos = v => Math.min(96, v / scale * 100).toFixed(1) + '%';
     return `<div><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px">` +
-      `<span style="font-size:12.5px;color:var(--ink-2)">${label}</span><span style="font:400 10px var(--mono);color:var(--ink-3)">${note}</span></div>` +
+      `<span style="font-size:12.5px;color:var(--ink-2)">${escapeHtml(label)}</span><span style="font:400 10px var(--mono);color:var(--ink-3)">${escapeHtml(note)}</span></div>` +
       `<div class="ptrack">${isFinite(p50) ? `<div class="p50" style="left:${pos(p50)}"></div>` : ''}${isFinite(p95) ? `<div class="p95" style="left:${pos(p95)}"></div>` : ''}</div>` +
       `<div class="pvals"><div><div class="l">p50</div><div class="v" style="color:var(--green-lt)">${fmtV(p50)}</div></div>` +
       `<div style="text-align:right"><div class="l">p95</div><div class="v" style="color:var(--ink-2)">${fmtV(p95)}</div></div></div></div>`;
@@ -1466,9 +1481,9 @@ function renderOverview(c) {
   const [s50, s95] = q('nimproxy_tokens_per_second', l => l.source === 'usage');
   const [i50, i95] = q('nimproxy_tpot_seconds');
   $('o-perf').innerHTML =
-    perfBlock(t('dashboard.models.ttft.heading'), t('dashboard.overview.perf.lower_is_better'), t50, t95, secs) +
-    perfBlock(t('dashboard.models.genspeed.heading'), t('dashboard.overview.perf.higher_is_better'), s50, s95, v => isFinite(v) ? fmt(v) + ' tok/s' : '–') +
-    perfBlock(t('dashboard.models.itl.heading'), t('dashboard.overview.perf.lower_is_better'), i50, i95, secs);
+    perfBlock(catalogMessage('dashboard.models.ttft.heading'), catalogMessage('dashboard.overview.perf.lower_is_better'), t50, t95, secs) +
+    perfBlock(catalogMessage('dashboard.models.genspeed.heading'), catalogMessage('dashboard.overview.perf.higher_is_better'), s50, s95, v => isFinite(v) ? fmt(v) + ' tok/s' : '–') +
+    perfBlock(catalogMessage('dashboard.models.itl.heading'), catalogMessage('dashboard.overview.perf.lower_is_better'), i50, i95, secs);
 
   leaderList($('o-topmodels'), models.slice(0, 5).map(m => {
     const pub = publisher(m);
@@ -1487,16 +1502,16 @@ function renderModels(c) {
   const chatReqs = [...reqModels.values()].reduce((a, b) => a + b, 0);
   const qmed = (metric, f) => { const v = quantile(wbuckets(metric, f), 0.5); return isFinite(v) ? v : NaN; };
   kpiCards($('m-kpis'), [
-    { icon: 'pulse', label: t('dashboard.common.col.requests'), value: fmt(chatReqs), sub: `${models.length} model${models.length === 1 ? '' : 's'}`,
+    { icon: 'pulse', label: catalogMessage('dashboard.common.col.requests'), value: fmt(chatReqs), sub: `${models.length} model${models.length === 1 ? '' : 's'}`,
       pts: rateSeries(s => sum(s.rows, 'nimproxy_requests_total', l => l.path === '/v1/chat/completions')) },
-    { icon: 'stack', label: t('dashboard.models.kpi.completion_tokens'), value: fmt(allC), sub: windowLabel,
+    { icon: 'stack', label: catalogMessage('dashboard.models.kpi.completion_tokens'), value: fmt(allC), sub: windowLabel,
       pts: rateSeries(s => sum(s.rows, 'nimproxy_completion_tokens_total')) },
-    { icon: 'grid', label: t('dashboard.models.kpi.prompt_tokens'), value: fmt(allP), sub: windowLabel,
+    { icon: 'grid', label: catalogMessage('dashboard.models.kpi.prompt_tokens'), value: fmt(allP), sub: windowLabel,
       pts: rateSeries(s => sum(s.rows, 'nimproxy_prompt_tokens_total')) },
-    { icon: 'clock', label: t('dashboard.models.col.avg_ttft'), value: ttftN ? secs(ttftS / ttftN) : '–',
+    { icon: 'clock', label: catalogMessage('dashboard.models.col.avg_ttft'), value: ttftN ? secs(ttftS / ttftN) : '–',
       sub: `median ${secs(qmed('nimproxy_ttft_seconds'))}`,
       pts: avgSeries('nimproxy_ttft_seconds_sum', 'nimproxy_ttft_seconds_count') },
-    { icon: 'bolt', label: t('dashboard.models.kpi.avg_speed'), value: tpsN ? fmt(tpsS / tpsN) + ' tok/s' : '–',
+    { icon: 'bolt', label: catalogMessage('dashboard.models.kpi.avg_speed'), value: tpsN ? fmt(tpsS / tpsN) + ' tok/s' : '–',
       sub: `median ${isFinite(qmed('nimproxy_tokens_per_second', l => l.source === 'usage')) ? fmt(qmed('nimproxy_tokens_per_second', l => l.source === 'usage')) + ' tok/s' : '–'}`,
       pts: avgSeries('nimproxy_tokens_per_second_sum', 'nimproxy_tokens_per_second_count') },
   ]);
@@ -1525,28 +1540,28 @@ function renderModels(c) {
 
   /* how responses end */
   // enum key (persisted, never translated) · label · severity class
-  const FINISH = [['stop', t('dashboard.models.finish.completed'), ''],
-    ['length', t('dashboard.models.col.truncated'), 'critc'],
-    ['tool_calls', t('dashboard.models.finish.tool_call'), ''],
-    ['content_filter', t('dashboard.models.finish.filtered'), 'warnc'],
-    ['other', t('dashboard.models.finish.other'), '']];
+  const FINISH = [['stop', catalogMessage('dashboard.models.finish.completed'), ''],
+    ['length', catalogMessage('dashboard.models.col.truncated'), 'critc'],
+    ['tool_calls', catalogMessage('dashboard.models.finish.tool_call'), ''],
+    ['content_filter', catalogMessage('dashboard.models.finish.filtered'), 'warnc'],
+    ['other', catalogMessage('dashboard.models.finish.other'), '']];
   const finByReason = Object.fromEntries(FINISH.map(([r]) => [r, wgroups('nimproxy_finish_reason_total', 'model', l => l.reason === r)]));
   const finModels = models.filter(m => finTotal.get(m));
   $('m-fincount').textContent = finModels.length ? `${finModels.length} model${finModels.length === 1 ? '' : 's'}` : '';
   sortTable($('table-finish'), 'finish',
-    [{ label: t('dashboard.common.col.model'), align: 'l', str: true }, ...FINISH.map(([, l]) => ({ label: l }))],
+    [{ label: catalogMessage('dashboard.common.col.model'), align: 'l', str: true }, ...FINISH.map(([, l]) => ({ label: l }))],
     finModels.map(m => {
       const tot = finTotal.get(m) || 1;
       const shares = FINISH.map(([r]) => (finByReason[r].get(m) || 0) / tot * 100);
       return {
         vals: [prettyName(m), ...shares],
-        cells: [`<i class="sw" style="background:${publisher(m).color}"></i>${esc(prettyName(m))}`,
+        cells: [`<i class="sw" style="background:${publisher(m).color}"></i>${escapeHtml(prettyName(m))}`,
           ...shares.map((v, i) => `<span class="${v >= 0.5 ? FINISH[i][2] : 'dim'}">${pct(v)}</span>`)],
       };
-    }), { defaultIdx: 1, maxH: 300, minW: 460, empty: t('dashboard.common.empty.no_completed_requests') });
+    }), { defaultIdx: 1, maxH: 300, minW: 460, empty: catalogMessage('dashboard.common.empty.no_completed_requests') });
 
   const reasoningModels = models.filter(m => (reasoningByModel.get(m) || 0) > 0);
-  if (!reasoningModels.length) $('meters-reasoning').innerHTML = `<div class="empty">${t('dashboard.models.empty.no_reasoning')}</div>`;
+  if (!reasoningModels.length) $('meters-reasoning').innerHTML = `<div class="empty">${escapeHtml(catalogMessage('dashboard.models.empty.no_reasoning'))}</div>`;
   else barList($('meters-reasoning'),
     reasoningModels.map(m => ({ name: prettyName(m), v: reasonPct(m), color: publisher(m).color })), pct);
 
@@ -1568,13 +1583,13 @@ function renderModels(c) {
   const avgReply = m => okByModel.get(m) ? (ctok.get(m) || 0) / okByModel.get(m) : NaN;
   const cmp = models.slice(0, 8);
   sortTable($('compare-scorecard'), 'scorecard', [
-    { label: t('dashboard.common.col.model'), align: 'l', str: true },
-    { label: t('dashboard.common.col.requests'), best: 'max' }, { label: 'TTFT', best: 'min' }, { label: 'tok/s', best: 'max' },
-    { label: 'TPOT', best: 'min' }, { label: t('dashboard.models.col.avg_response'), best: 'max' }, { label: t('dashboard.models.col.truncated'), best: 'min' },
-    { label: t('dashboard.models.col.reasoning'), best: 'min' }, { label: t('dashboard.models.col.errors'), best: 'min' },
+    { label: catalogMessage('dashboard.common.col.model'), align: 'l', str: true },
+    { label: catalogMessage('dashboard.common.col.requests'), best: 'max' }, { label: 'TTFT', best: 'min' }, { label: 'tok/s', best: 'max' },
+    { label: 'TPOT', best: 'min' }, { label: catalogMessage('dashboard.models.col.avg_response'), best: 'max' }, { label: catalogMessage('dashboard.models.col.truncated'), best: 'min' },
+    { label: catalogMessage('dashboard.models.col.reasoning'), best: 'min' }, { label: catalogMessage('dashboard.models.col.errors'), best: 'min' },
   ], cmp.map(m => ({
     vals: [prettyName(m), reqModels.get(m) || 0, avgTtft(m), avgTps(m), tpotAvg(m), avgReply(m), truncPct(m), reasonPct(m), errRate(m)],
-    cells: [`<i class="sw" style="background:${publisher(m).color}"></i>${esc(prettyName(m))}`,
+    cells: [`<i class="sw" style="background:${publisher(m).color}"></i>${escapeHtml(prettyName(m))}`,
       fmt(reqModels.get(m) || 0), isFinite(avgTtft(m)) ? secs(avgTtft(m)) : '–', isFinite(avgTps(m)) ? fmt(avgTps(m)) : '–',
       isFinite(tpotAvg(m)) ? secs(tpotAvg(m)) : '–', isFinite(avgReply(m)) ? fmt(avgReply(m)) + ' tok' : '–',
       pct(truncPct(m)), pct(reasonPct(m)), pct(errRate(m))],
@@ -1583,39 +1598,42 @@ function renderModels(c) {
     v => fmt(v) + ' tok/s');
 
   /* leading model cards (top 4; the rest live in the table) */
-  // tRaw: textContent does not parse entities, so an escaped value would show
-  // its entities literally.
-  $('m-cardnote').textContent = models.length ? tRaw('dashboard.models.cards.note') : '';
+  if (models.length) setMessageText($('m-cardnote'), 'dashboard.models.cards.note');
+  else $('m-cardnote').textContent = '';
   $('modelcards').innerHTML = models.slice(0, 4).map((m, i) => {
     const pub = publisher(m), ct = ctok.get(m) || 0, e = errRate(m);
-    const stat = (l, v, cls) => `<div class="stat"><div class="l">${l}</div><div class="v${cls ? ' ' + cls : ''}">${v}</div></div>`;
+    const stat = (l, v, cls) => `<div class="stat"><div class="l">${escapeHtml(l)}</div><div class="v${cls ? ' ' + cls : ''}">${escapeHtml(v)}</div></div>`;
     return `<div class="mcard"><span class="rank">#${i + 1}</span>
       <div class="mbrand">${chipHtml(pub)}
-        <div><div class="mname" title="${esc(m)}">${esc(prettyName(m))}</div><div class="mpub">${esc(pub.name)}</div></div>
+        <div><div class="mname" title="${escapeHtml(m)}">${escapeHtml(prettyName(m))}</div><div class="mpub">${escapeHtml(pub.name)}</div></div>
       </div>
       <div class="mstats">
         ${stat('requests', fmt(reqModels.get(m) || 0))}
-        ${stat(t('dashboard.common.note.tokens_out'), fmt(ct))}
+        ${stat(catalogMessage('dashboard.common.note.tokens_out'), fmt(ct))}
         ${stat('TTFT', ttftMC.get(m) ? secs(avgTtft(m)) : '–')}
         ${stat('tok/s', tpsMC.get(m) ? fmt(avgTps(m)) : '–')}
         ${stat('errors', errPct(m), isFinite(e) && e > 0 ? 'critc' : 'dim')}
       </div></div>`;
-  }).join('') || `<div class="empty">${t('dashboard.common.empty.no_traffic')}</div>`;
+  }).join('') || `<div class="empty">${escapeHtml(catalogMessage('dashboard.common.empty.no_traffic'))}</div>`;
 
   /* per-model table */
-  // tRaw, not t: this lands in textContent, which does not parse entities, so
-  // an escaped value renders its entities literally.
-  $('m-tablecount').textContent = models.length ? `${models.length} model${models.length === 1 ? '' : 's'} · ${tRaw('dashboard.common.sort_hint')}` : '';
+  const modelCount = $('m-tablecount');
+  if (models.length) {
+    setMessageText(modelCount, 'dashboard.common.sort_hint');
+    modelCount.prepend(`${models.length} model${models.length === 1 ? '' : 's'} · `);
+  } else {
+    modelCount.replaceChildren();
+  }
   sortTable($('table-models'), 'models', [
-    { label: t('dashboard.common.col.model'), align: 'l', str: true }, { label: t('dashboard.common.col.requests') }, { label: t('dashboard.common.col.tokens_out') },
-    { label: t('dashboard.models.col.avg_ttft') }, { label: t('dashboard.models.col.avg_tps') }, { label: 'TPOT' }, { label: t('dashboard.models.col.avg_response') },
-    { label: t('dashboard.models.col.truncated') }, { label: t('dashboard.models.col.reasoning') }, { label: t('dashboard.models.col.errors') },
+    { label: catalogMessage('dashboard.common.col.model'), align: 'l', str: true }, { label: catalogMessage('dashboard.common.col.requests') }, { label: catalogMessage('dashboard.common.col.tokens_out') },
+    { label: catalogMessage('dashboard.models.col.avg_ttft') }, { label: catalogMessage('dashboard.models.col.avg_tps') }, { label: 'TPOT' }, { label: catalogMessage('dashboard.models.col.avg_response') },
+    { label: catalogMessage('dashboard.models.col.truncated') }, { label: catalogMessage('dashboard.models.col.reasoning') }, { label: catalogMessage('dashboard.models.col.errors') },
   ], models.map(m => {
     const ct = ctok.get(m) || 0, ok = okByModel.get(m) || 0, e = errRate(m);
     return {
       vals: [m, reqModels.get(m) || 0, ct, avgTtft(m), avgTps(m), tpotAvg(m), ok ? ct / ok : NaN,
         truncPct(m), reasonPct(m), e],
-      cells: [`<i class="sw" style="background:${publisher(m).color}"></i>${esc(m)}`,
+      cells: [`<i class="sw" style="background:${publisher(m).color}"></i>${escapeHtml(m)}`,
         fmt(reqModels.get(m) || 0), fmt(ct),
         ttftMC.get(m) ? secs(avgTtft(m)) : '–', tpsMC.get(m) ? fmt(avgTps(m)) : '–',
         isFinite(tpotAvg(m)) ? secs(tpotAvg(m)) : '–', ok ? fmt(ct / ok) + ' tok' : '–',
@@ -1640,13 +1658,13 @@ function renderClients(c) {
   const streamPct = cl => genReq(cl) ? (streamT.get(cl) || 0) / genReq(cl) * 100 : NaN;
   const oTools = wsum('nimproxy_request_tools_sum'), oToolsN = wsum('nimproxy_request_tools_count');
   const oMsgs = wsum('nimproxy_request_messages_sum'), oMsgsN = wsum('nimproxy_request_messages_count');
-  const tile = (label, v, unit) => `<div class="tile"><div class="tlabel">${label}</div><div class="tval">${v}${unit ? `<span class="unit">${unit}</span>` : ''}</div></div>`;
+  const tile = (label, v, unit) => `<div class="tile"><div class="tlabel">${escapeHtml(label)}</div><div class="tval">${escapeHtml(v)}${unit ? `<span class="unit">${escapeHtml(unit)}</span>` : ''}</div></div>`;
   $('h-kpis').innerHTML =
-    tile(t('dashboard.clients.tile.clients'), clients.length) +
-    tile(t('dashboard.clients.tile.streaming_share'), totGen ? pctOf(totStreamT / totGen, 0) : NO_VALUE) +
-    tile(t('dashboard.clients.tile.avg_tools'), oToolsN ? fmt(oTools / oToolsN) : '–') +
-    tile(t('dashboard.clients.tile.avg_messages'), oMsgsN ? fmt(oMsgs / oMsgsN) : '–') +
-    tile(t('dashboard.clients.tile.requests_using_tools'), totGen ? pctOf(totToolReq / totGen, 0) : NO_VALUE);
+    tile(catalogMessage('dashboard.clients.tile.clients'), clients.length) +
+    tile(catalogMessage('dashboard.clients.tile.streaming_share'), totGen ? pctOf(totStreamT / totGen, 0) : NO_VALUE) +
+    tile(catalogMessage('dashboard.clients.tile.avg_tools'), oToolsN ? fmt(oTools / oToolsN) : '–') +
+    tile(catalogMessage('dashboard.clients.tile.avg_messages'), oMsgsN ? fmt(oMsgs / oMsgsN) : '–') +
+    tile(catalogMessage('dashboard.clients.tile.requests_using_tools'), totGen ? pctOf(totToolReq / totGen, 0) : NO_VALUE);
   barList($('h-toolint'), clients.map(cl => ({ name: cl, v: toolsAvg(cl), color: clientColor(cl) })), fmt);
   barList($('h-depth'), clients.map(cl => ({ name: cl, v: msgsAvg(cl), color: clientColor(cl) })), fmt);
   barList($('h-temp'), clients.map(cl => ({ name: cl, v: tempAvg(cl), color: clientColor(cl) })), v => NUM_2DP.format(v));
@@ -1660,11 +1678,11 @@ function renderClients(c) {
   if (maxTokClients.length)
     barList($('h-maxtok'), maxTokClients.map(cl => ({ name: cl, v: maxTokAvg(cl), color: clientColor(cl) })), fmt);
   sortTable($('table-harness'), 'harness', [
-    { label: t('dashboard.common.col.client'), align: 'l', str: true }, { label: t('dashboard.common.col.requests') }, { label: t('dashboard.common.col.tokens_out') },
-    { label: 'Tools/req' }, { label: 'Msgs/req' }, { label: t('dashboard.common.col.streaming') },
+    { label: catalogMessage('dashboard.common.col.client'), align: 'l', str: true }, { label: catalogMessage('dashboard.common.col.requests') }, { label: catalogMessage('dashboard.common.col.tokens_out') },
+    { label: 'Tools/req' }, { label: 'Msgs/req' }, { label: catalogMessage('dashboard.common.col.streaming') },
   ], clients.map(cl => ({
     vals: [cl, cReq.get(cl) || 0, cC.get(cl) || 0, toolsAvg(cl), msgsAvg(cl), streamPct(cl)],
-    cells: [`<i class="sw" style="background:${clientColor(cl)}"></i>${esc(cl)}`,
+    cells: [`<i class="sw" style="background:${clientColor(cl)}"></i>${escapeHtml(cl)}`,
       fmt(cReq.get(cl) || 0), fmt(cC.get(cl) || 0),
       isFinite(toolsAvg(cl)) ? fmt(toolsAvg(cl)) : '–', isFinite(msgsAvg(cl)) ? fmt(msgsAvg(cl)) : '–',
       isFinite(streamPct(cl)) ? Math.round(streamPct(cl)) + '%' : '–'],
@@ -1695,52 +1713,51 @@ function renderReliability(c) {
      translator nothing to move. 'SLO' is frozen. */
   const sloLine = (target, hasTraffic, isMet) => {
     const p = { target: (target * 100).toFixed(1) + '%' };
-    if (!hasTraffic) return t('dashboard.reliability.slo.no_traffic', p);
-    return isMet ? t('dashboard.reliability.slo.met', p)
-                 : t('dashboard.reliability.slo.missed', p);
+    if (!hasTraffic) return catalogMessage('dashboard.reliability.slo.no_traffic', p);
+    return isMet ? catalogMessage('dashboard.reliability.slo.met', p)
+                 : catalogMessage('dashboard.reliability.slo.missed', p);
   };
   const budget = !isFinite(availability) ? 0
     : slo >= 1 ? (availability >= 1 ? 0 : 100)
     : Math.min(100, (1 - availability) / (1 - slo) * 100);
   $('r-avail').innerHTML =
-    `<div class="hlabel">${t('dashboard.reliability.hero.availability')} <span class="note">${windowLabel}</span></div>
+    `<div class="hlabel">${escapeHtml(catalogMessage('dashboard.reliability.hero.availability'))} <span class="note">${escapeHtml(windowLabel)}</span></div>
     <div class="hbig" style="color:${met ? 'var(--green-lt)' : 'var(--red)'};margin-top:8px">${availTxt}</div>
-    <div style="font:400 11px var(--mono);color:var(--ink-3);margin-top:2px">${sloLine(slo, eligible, met)}</div>
-    <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink-25);margin:16px 0 6px">${t('dashboard.reliability.hero.error_budget')}<span style="font:500 11px var(--mono);color:var(--ink-2)">${t('dashboard.reliability.hero.budget_used', { pct: budget.toFixed(0) + '%' })}</span></div>
+    <div style="font:400 11px var(--mono);color:var(--ink-3);margin-top:2px">${escapeHtml(sloLine(slo, eligible, met))}</div>
+    <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink-25);margin:16px 0 6px">${escapeHtml(catalogMessage('dashboard.reliability.hero.error_budget'))}<span style="font:500 11px var(--mono);color:var(--ink-2)">${escapeHtml(catalogMessage('dashboard.reliability.hero.budget_used', { pct: budget.toFixed(0) + '%' }))}</span></div>
     <div class="htrack"><span style="width:${budget.toFixed(0)}%;background:${budget >= 100 ? 'var(--red)' : 'var(--amber)'}"></span></div>`;
 
   /* hero: where time goes (median-ish composition from windowed averages) */
   const qw = qwN ? qwS / qwN : 0, ttft = ttftN ? ttftS / ttftN : NaN, up = upN ? upS / upN : NaN;
   if (!upN) {
-    $('r-time').innerHTML = `<div class="hlabel">${t('dashboard.reliability.latency.title')} <span class="note">${t('dashboard.reliability.latency.note')}</span></div><div class="empty">${t('dashboard.common.empty.no_completed_requests')}</div>`;
+    $('r-time').innerHTML = `<div class="hlabel">${escapeHtml(catalogMessage('dashboard.reliability.latency.title'))} <span class="note">${escapeHtml(catalogMessage('dashboard.reliability.latency.note'))}</span></div><div class="empty">${escapeHtml(catalogMessage('dashboard.common.empty.no_completed_requests'))}</div>`;
   } else {
     const gen = Math.max(0, up - (isFinite(ttft) ? ttft : 0));
     const segs = [
-      { label: t('dashboard.reliability.col.queue_wait'), v: qw, color: 'var(--amber)' },
-      { label: t('dashboard.reliability.col.first_token'), v: isFinite(ttft) ? ttft : 0, color: 'var(--blue)' },
-      { label: t('dashboard.reliability.col.generation'), v: gen, color: 'var(--green)' },
+      { label: catalogMessage('dashboard.reliability.col.queue_wait'), v: qw, color: 'var(--amber)' },
+      { label: catalogMessage('dashboard.reliability.col.first_token'), v: isFinite(ttft) ? ttft : 0, color: 'var(--blue)' },
+      { label: catalogMessage('dashboard.reliability.col.generation'), v: gen, color: 'var(--green)' },
     ].filter(s => s.v > 0);
     const tot = segs.reduce((a, s) => a + s.v, 0) || 1;
     $('r-time').innerHTML =
-      `<div style="display:flex;align-items:baseline;gap:10px"><span class="hlabel">${t('dashboard.reliability.latency.title')}</span>
-      <span class="note" style="font:400 10px var(--mono);color:var(--ink-3)">${t('dashboard.reliability.latency.note')}</span>
+      `<div style="display:flex;align-items:baseline;gap:10px"><span class="hlabel">${escapeHtml(catalogMessage('dashboard.reliability.latency.title'))}</span>
+      <span class="note" style="font:400 10px var(--mono);color:var(--ink-3)">${escapeHtml(catalogMessage('dashboard.reliability.latency.note'))}</span>
       <span style="margin-left:auto;font-size:22px;font-weight:600;letter-spacing:-0.5px">${secs(tot)}</span></div>
       <div class="segbar" style="height:16px;margin:16px 0 12px">${segs.map(s => `<div style="width:${(s.v / tot * 100).toFixed(1)}%;background:${s.color}"></div>`).join('')}</div>
-      <div class="seglegend">${segs.map(s => `<div class="sl"><span class="sw" style="background:${s.color}"></span><div><div class="sll">${s.label}</div><div class="slv">${secs(s.v)}</div></div></div>`).join('')}</div>`;
+      <div class="seglegend">${segs.map(s => `<div class="sl"><span class="sw" style="background:${s.color}"></span><div><div class="sll">${escapeHtml(s.label)}</div><div class="slv">${secs(s.v)}</div></div></div>`).join('')}</div>`;
   }
 
   /* hero: live load + error taxonomy */
   const act = sum(rows, 'nimproxy_active_requests'), que = sum(rows, 'nimproxy_queue_depth');
   const errN = Math.max(0, wreq - wok);
-  // tRaw: these labels land in a title= attribute built with esc() below, so
-  // the escaping happens at that call site and must not happen twice.
+  // These labels remain plain until the title= HTML sink escapes them below.
   const TAX = [
-    [tRaw('dashboard.common.status.rate_limited'), s => s === '429', 'var(--amber)'],
-    [tRaw('dashboard.common.status.disconnect'), s => s === 'disconnect', 'var(--blue)'],
-    [tRaw('dashboard.common.status.timeout_stall'), s => s === '504' || s === 'stall', 'var(--red)'],
-    [tRaw('dashboard.common.status.client_error_4xx'), s => /^4\d\d$/.test(s) && s !== '429', 'var(--violet, #8B7BB8)'],
+    [catalogMessage('dashboard.common.status.rate_limited'), s => s === '429', 'var(--amber)'],
+    [catalogMessage('dashboard.common.status.disconnect'), s => s === 'disconnect', 'var(--blue)'],
+    [catalogMessage('dashboard.common.status.timeout_stall'), s => s === '504' || s === 'stall', 'var(--red)'],
+    [catalogMessage('dashboard.common.status.client_error_4xx'), s => /^4\d\d$/.test(s) && s !== '429', 'var(--violet, #8B7BB8)'],
     ['5xx', s => /^5\d\d$/.test(s) && s !== '504', '#C15F3C'],
-    [tRaw('dashboard.models.finish.other'), () => true, 'var(--ink-3)'],
+    [catalogMessage('dashboard.models.finish.other'), () => true, 'var(--ink-3)'],
   ];
   const taxCounts = []; let seen = new Set([...statusG.keys()].filter(IS_2XX));
   for (const [label, match, color] of TAX) {
@@ -1751,12 +1768,12 @@ function renderReliability(c) {
   const taxTot = taxCounts.reduce((a, x) => a + x.n, 0) || 1;
   $('r-load').innerHTML =
     `<div style="display:flex;gap:20px">
-      <div><div class="tlabel">${t('dashboard.common.row.active_now')}</div><div style="font-size:26px;font-weight:600;color:var(--green)">${fmt(act)}</div></div>
-      <div><div class="tlabel">${t('dashboard.common.row.queued')}</div><div style="font-size:26px;font-weight:600;color:var(--amber)">${fmt(que)}</div></div>
+      <div><div class="tlabel">${escapeHtml(catalogMessage('dashboard.common.row.active_now'))}</div><div style="font-size:26px;font-weight:600;color:var(--green)">${fmt(act)}</div></div>
+      <div><div class="tlabel">${escapeHtml(catalogMessage('dashboard.common.row.queued'))}</div><div style="font-size:26px;font-weight:600;color:var(--amber)">${fmt(que)}</div></div>
     </div>
     <div class="segbar" style="height:8px;border-radius:99px;margin:12px 0">${act + que ? `<div style="width:${(act / (act + que) * 100)}%;background:var(--green)"></div><div style="width:${(que / (act + que) * 100)}%;background:var(--amber)"></div>` : '<div style="width:100%;background:var(--track)"></div>'}</div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--hairline)"><span class="tlabel">${t('dashboard.common.row.error_rate')}</span><span style="font:600 15px var(--mono);color:${errN ? 'var(--red)' : 'var(--ink-3)'}">${wreq ? pctOf(errN / wreq, 1) : NO_VALUE}</span></div>
-    <div class="segbar" style="height:6px;border-radius:99px;margin-top:8px;gap:1px">${taxCounts.length ? taxCounts.map(x => `<div style="width:${(x.n / taxTot * 100).toFixed(1)}%;background:${x.color}" title="${esc(x.label)}: ${fmt(x.n)}"></div>`).join('') : '<div style="width:100%;background:var(--track)"></div>'}</div>`;
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--hairline)"><span class="tlabel">${escapeHtml(catalogMessage('dashboard.common.row.error_rate'))}</span><span style="font:600 15px var(--mono);color:${errN ? 'var(--red)' : 'var(--ink-3)'}">${wreq ? pctOf(errN / wreq, 1) : NO_VALUE}</span></div>
+    <div class="segbar" style="height:6px;border-radius:99px;margin-top:8px;gap:1px">${taxCounts.length ? taxCounts.map(x => `<div style="width:${(x.n / taxTot * 100).toFixed(1)}%;background:${x.color}" title="${escapeHtml(x.label)}: ${fmt(x.n)}"></div>`).join('') : '<div style="width:100%;background:var(--track)"></div>'}</div>`;
 
   lineChart($('chart-reqrate'), [{ name: 'requests/min', color: MED, pts: reqPts, area: true }], fmt, { height: 150 });
   const outcomeSeries = [
@@ -1769,16 +1786,15 @@ function renderReliability(c) {
   /* stacked composition over time — the same taxonomy groups as the hero
      error breakdown above (success prepended), first match wins so each
      status lands in exactly one band. */
-  // tRaw for the same reason as TAX: these become series names, and both
-  // stackChart's hover tooltip and legend() run them through esc().
+  // These become series names; stackChart and legend escape them at HTML sinks.
   const OUTCOMES = [
-    [tRaw('dashboard.common.status.success'), css('--green'), IS_2XX],
-    [tRaw('dashboard.common.status.rate_limited'), css('--amber'), s => s === '429'],
-    [tRaw('dashboard.common.status.disconnect'), css('--blue'), s => s === 'disconnect'],
-    [tRaw('dashboard.common.status.timeout_stall'), css('--red'), s => s === '504' || s === 'stall'],
-    [tRaw('dashboard.common.status.client_error_4xx'), 'var(--violet, #8B7BB8)', s => /^4\d\d$/.test(s) && s !== '429'],
+    [catalogMessage('dashboard.common.status.success'), css('--green'), IS_2XX],
+    [catalogMessage('dashboard.common.status.rate_limited'), css('--amber'), s => s === '429'],
+    [catalogMessage('dashboard.common.status.disconnect'), css('--blue'), s => s === 'disconnect'],
+    [catalogMessage('dashboard.common.status.timeout_stall'), css('--red'), s => s === '504' || s === 'stall'],
+    [catalogMessage('dashboard.common.status.client_error_4xx'), 'var(--violet, #8B7BB8)', s => /^4\d\d$/.test(s) && s !== '429'],
     ['5xx', '#C15F3C', s => /^5\d\d$/.test(s) && s !== '504'],
-    [tRaw('dashboard.models.finish.other'), css('--ink-3'), () => true],
+    [catalogMessage('dashboard.models.finish.other'), css('--ink-3'), () => true],
   ];
   const outcomeIdx = s => OUTCOMES.findIndex(([, , m]) => m(s));
   const stackSeries = OUTCOMES
@@ -1816,8 +1832,8 @@ function renderReliability(c) {
   const pcard = $('card-pressure');
   pcard.hidden = !(exhausted > 0 || govLimits.length);
   if (!pcard.hidden) {
-    // tRaw: lineChart's hover tooltip escapes s.name itself.
-    lineChart($('chart-exhaust'), [{ name: tRaw('dashboard.reliability.pressure.series'), color: css('--amber'),
+    // lineChart's hover tooltip escapes the plain series name itself.
+    lineChart($('chart-exhaust'), [{ name: catalogMessage('dashboard.reliability.pressure.series'), color: css('--amber'),
       pts: rateSeries(s => sum(s.rows, 'nimproxy_worker_exhausted_total')), area: 'url(#gMuted)' }], fmt, { height: 130 });
     const inflight = groups(rows, 'nimproxy_model_inflight', 'model');
     barList($('pressure-bars'), govLimits.map(([m, cap]) => ({
@@ -1827,56 +1843,56 @@ function renderReliability(c) {
   }
 
   /* non-success outcomes ranked by count */
-  // tRaw throughout: reason() feeds both a sort key and a cell built with
-  // esc() below, so these must stay plain. Ids are spelled out rather than
+  // reason() feeds the escaped display cell; the stable status remains the
+  // sort key. Ids are spelled out rather than
   // built from the status, which would hide them from the untagged-string lint.
   const REASONS = {
-    'disconnect': tRaw('dashboard.common.status.client_disconnected'),
-    'stall': tRaw('dashboard.common.status.stream_stalled'),
-    'stream_error': tRaw('dashboard.common.status.stream_error'),
-    '504': tRaw('dashboard.common.status.upstream_timeout_504'),
-    '429': tRaw('dashboard.common.status.rate_limited_429'),
-    '400': tRaw('dashboard.common.status.bad_request_400'),
-    '401': tRaw('dashboard.common.status.unauthorized_401'),
-    '403': tRaw('dashboard.common.status.forbidden_403'),
-    '404': tRaw('dashboard.common.status.not_found_404'),
-    '502': tRaw('dashboard.common.status.bad_gateway_502'),
-    '503': tRaw('dashboard.common.status.unavailable_503'),
+    'disconnect': catalogMessage('dashboard.common.status.client_disconnected'),
+    'stall': catalogMessage('dashboard.common.status.stream_stalled'),
+    'stream_error': catalogMessage('dashboard.common.status.stream_error'),
+    '504': catalogMessage('dashboard.common.status.upstream_timeout_504'),
+    '429': catalogMessage('dashboard.common.status.rate_limited_429'),
+    '400': catalogMessage('dashboard.common.status.bad_request_400'),
+    '401': catalogMessage('dashboard.common.status.unauthorized_401'),
+    '403': catalogMessage('dashboard.common.status.forbidden_403'),
+    '404': catalogMessage('dashboard.common.status.not_found_404'),
+    '502': catalogMessage('dashboard.common.status.bad_gateway_502'),
+    '503': catalogMessage('dashboard.common.status.unavailable_503'),
   };
   const reason = s => REASONS[s] || (/^\d+$/.test(s) ? `HTTP ${s}` : s);
   const totReq = [...statusG.values()].reduce((a, b) => a + b, 0) || 1;
   const bad = [...statusG.entries()].filter(([s]) => !IS_2XX(s));
   sortTable($('table-outcomes'), 'outcomes',
-    [{ label: t('dashboard.common.col.reason'), align: 'l', str: true }, { label: t('dashboard.common.col.count') }, { label: t('dashboard.common.col.share') }],
+    [{ label: catalogMessage('dashboard.common.col.reason'), align: 'l', str: true }, { label: catalogMessage('dashboard.common.col.count') }, { label: catalogMessage('dashboard.common.col.share') }],
     bad.map(([s, n]) => ({
-      vals: [reason(s), n, n / totReq * 100],
-      cells: [esc(reason(s)), fmt(n), pctOf(n / totReq, 1)],
-    })), { defaultIdx: 1, maxH: 240, empty: t('dashboard.reliability.empty.no_errors') });
+      vals: [s, n, n / totReq * 100],
+      cells: [escapeHtml(reason(s)), fmt(n), pctOf(n / totReq, 1)],
+    })), { defaultIdx: 1, maxH: 240, empty: catalogMessage('dashboard.reliability.empty.no_errors') });
 
   $('table-reliability').innerHTML =
-    metricRow(t('dashboard.common.row.active_now'), fmt(act)) +
-    metricRow(t('dashboard.common.row.queued'), fmt(que)) +
-    metricRow(t('dashboard.reliability.row.dropped_503'), fmt(shed), shed > 0 ? 'crit' : 'zero') +
-    metricRow(t('dashboard.common.row.rate_limit_cooldowns'), fmt(cooldown429), cooldown429 > 0 ? 'warn' : 'zero') +
-    metricRow(t('dashboard.common.status.upstream_error_cooldowns'), fmt(cooldownOther), cooldownOther > 0 ? 'warn' : 'zero') +
-    metricRow(t('dashboard.common.status.unauthorized_401'), fmt(unauth), unauth > 0 ? 'crit' : 'zero') +
-    metricRow(t('dashboard.common.row.failed_logins'), fmt(logins), logins > 0 ? 'crit' : 'zero');
+    metricRow(catalogMessage('dashboard.common.row.active_now'), fmt(act)) +
+    metricRow(catalogMessage('dashboard.common.row.queued'), fmt(que)) +
+    metricRow(catalogMessage('dashboard.reliability.row.dropped_503'), fmt(shed), shed > 0 ? 'crit' : 'zero') +
+    metricRow(catalogMessage('dashboard.common.row.rate_limit_cooldowns'), fmt(cooldown429), cooldown429 > 0 ? 'warn' : 'zero') +
+    metricRow(catalogMessage('dashboard.common.status.upstream_error_cooldowns'), fmt(cooldownOther), cooldownOther > 0 ? 'warn' : 'zero') +
+    metricRow(catalogMessage('dashboard.common.status.unauthorized_401'), fmt(unauth), unauth > 0 ? 'crit' : 'zero') +
+    metricRow(catalogMessage('dashboard.common.row.failed_logins'), fmt(logins), logins > 0 ? 'crit' : 'zero');
   const jsonMode = windowed(s => sum(s.rows, 'nimproxy_json_mode_total'));
   const tcModes = wgroups('nimproxy_tool_choice_total', 'mode');
-  const tcStr = [...tcModes.entries()].sort((a, b) => b[1] - a[1]).map(([m, n]) => `${esc(m)} ${fmt(n)}`).join(', ') || '–';
+  const tcStr = [...tcModes.entries()].sort((a, b) => b[1] - a[1]).map(([m, n]) => `${m} ${fmt(n)}`).join(', ') || '–';
   $('table-reqtypes').innerHTML =
-    metricRow(t('dashboard.common.row.streaming'), `${fmt(totStreamT)}${totGen ? ` (${Math.round(totStreamT / totGen * 100)}%)` : ''}`) +
-    metricRow(t('dashboard.reliability.row.buffered'), `${fmt(totStreamF)}${totGen ? ` (${Math.round(totStreamF / totGen * 100)}%)` : ''}`) +
-    metricRow(t('dashboard.reliability.row.requests_with_tools'), `${fmt(totToolReq)}${totGen ? ` (${Math.round(totToolReq / totGen * 100)}%)` : ''}`) +
-    metricRow(t('dashboard.reliability.row.json_mode'), fmt(jsonMode)) +
-    metricRow(t('dashboard.reliability.row.tool_choice'), tcStr);
+    metricRow(catalogMessage('dashboard.common.row.streaming'), `${fmt(totStreamT)}${totGen ? ` (${Math.round(totStreamT / totGen * 100)}%)` : ''}`) +
+    metricRow(catalogMessage('dashboard.reliability.row.buffered'), `${fmt(totStreamF)}${totGen ? ` (${Math.round(totStreamF / totGen * 100)}%)` : ''}`) +
+    metricRow(catalogMessage('dashboard.reliability.row.requests_with_tools'), `${fmt(totToolReq)}${totGen ? ` (${Math.round(totToolReq / totGen * 100)}%)` : ''}`) +
+    metricRow(catalogMessage('dashboard.reliability.row.json_mode'), fmt(jsonMode)) +
+    metricRow(catalogMessage('dashboard.reliability.row.tool_choice'), tcStr);
 
   sortTable($('table-clients'), 'clients', [
-    { label: t('dashboard.common.col.client'), align: 'l', str: true }, { label: t('dashboard.common.col.requests') }, { label: t('dashboard.common.col.tokens_in') },
-    { label: t('dashboard.common.col.tokens_out') },
+    { label: catalogMessage('dashboard.common.col.client'), align: 'l', str: true }, { label: catalogMessage('dashboard.common.col.requests') }, { label: catalogMessage('dashboard.common.col.tokens_in') },
+    { label: catalogMessage('dashboard.common.col.tokens_out') },
   ], clients.map(cl => ({
     vals: [cl, cReq.get(cl) || 0, cP.get(cl) || 0, cC.get(cl) || 0],
-    cells: [`<i class="sw" style="background:${clientColor(cl)}"></i>${esc(cl)}`,
+    cells: [`<i class="sw" style="background:${clientColor(cl)}"></i>${escapeHtml(cl)}`,
       fmt(cReq.get(cl) || 0), fmt(cP.get(cl) || 0), fmt(cC.get(cl) || 0)],
   })), { defaultIdx: 3, maxH: 420, minW: 560 });
 }
@@ -1894,12 +1910,12 @@ const KEY_PLURALS = new Intl.PluralRules(LOCALE);
 const enabledKeys = n => {
   const p = { n: fmt(n) };
   switch (KEY_PLURALS.select(n)) {
-    case 'zero': return t('dashboard.capacity.note.enabled_keys.zero', p);
-    case 'one': return t('dashboard.capacity.note.enabled_keys.one', p);
-    case 'two': return t('dashboard.capacity.note.enabled_keys.two', p);
-    case 'few': return t('dashboard.capacity.note.enabled_keys.few', p);
-    case 'many': return t('dashboard.capacity.note.enabled_keys.many', p);
-    default: return t('dashboard.capacity.note.enabled_keys.other', p);
+    case 'zero': return catalogMessage('dashboard.capacity.note.enabled_keys.zero', p);
+    case 'one': return catalogMessage('dashboard.capacity.note.enabled_keys.one', p);
+    case 'two': return catalogMessage('dashboard.capacity.note.enabled_keys.two', p);
+    case 'few': return catalogMessage('dashboard.capacity.note.enabled_keys.few', p);
+    case 'many': return catalogMessage('dashboard.capacity.note.enabled_keys.many', p);
+    default: return catalogMessage('dashboard.capacity.note.enabled_keys.other', p);
   }
 };
 /* Same reasoning as enabledKeys above: `interval${n === 1 ? '' : 's'}` was a
@@ -1907,12 +1923,12 @@ const enabledKeys = n => {
 const unknownIntervals = n => {
   const p = { n: fmt(n) };
   switch (KEY_PLURALS.select(n)) {
-    case 'zero': return t('dashboard.capacity.history.no_data.zero', p);
-    case 'one': return t('dashboard.capacity.history.no_data.one', p);
-    case 'two': return t('dashboard.capacity.history.no_data.two', p);
-    case 'few': return t('dashboard.capacity.history.no_data.few', p);
-    case 'many': return t('dashboard.capacity.history.no_data.many', p);
-    default: return t('dashboard.capacity.history.no_data.other', p);
+    case 'zero': return catalogMessage('dashboard.capacity.history.no_data.zero', p);
+    case 'one': return catalogMessage('dashboard.capacity.history.no_data.one', p);
+    case 'two': return catalogMessage('dashboard.capacity.history.no_data.two', p);
+    case 'few': return catalogMessage('dashboard.capacity.history.no_data.few', p);
+    case 'many': return catalogMessage('dashboard.capacity.history.no_data.many', p);
+    default: return catalogMessage('dashboard.capacity.history.no_data.other', p);
   }
 };
 function renderCapacity(c) {
@@ -1922,16 +1938,16 @@ function renderCapacity(c) {
   const satPct = Math.min(1, capRatio);
   const headroom = Math.max(0, capacity - rpmNow);
   $('k-sat').innerHTML =
-    `<div style="display:flex;align-items:baseline;gap:10px"><span class="hlabel">${t('dashboard.capacity.hero.saturation')}</span><span class="tag">${t('dashboard.common.tag.now')}</span>
-    <span class="note" style="font:400 10px var(--mono);color:var(--ink-3)">${t('dashboard.capacity.note.current_vs_capacity')}</span>
+    `<div style="display:flex;align-items:baseline;gap:10px"><span class="hlabel">${escapeHtml(catalogMessage('dashboard.capacity.hero.saturation'))}</span><span class="tag">${escapeHtml(catalogMessage('dashboard.common.tag.now'))}</span>
+    <span class="note" style="font:400 10px var(--mono);color:var(--ink-3)">${escapeHtml(catalogMessage('dashboard.capacity.note.current_vs_capacity'))}</span>
     <span style="margin-left:auto;font-size:30px;font-weight:600;letter-spacing:-1px;color:${capColor}">${Math.round(satPct * 100)}%</span></div>
     <div style="position:relative;height:20px;background:var(--track);border-radius:6px;overflow:hidden;margin:16px 0 8px">
       <div style="position:absolute;inset:0;width:${(satPct * 100).toFixed(1)}%;background:linear-gradient(90deg,var(--green-dk),var(--green));border-radius:6px"></div>
     </div>
     <div style="display:flex;justify-content:space-between;font:400 11px var(--mono);color:var(--ink-3)">
       <span style="color:var(--ink-2)">${fmt(rpmNow)} / ${fmt(capacity)} rpm</span>
-      <span>${enabledKeys(cfg.lanes)}</span>
-      <span style="color:var(--green-lt)">${fmt(headroom)} ${t('dashboard.capacity.note.rpm_available')}</span>
+      <span>${escapeHtml(enabledKeys(cfg.lanes))}</span>
+      <span style="color:var(--green-lt)">${fmt(headroom)} ${escapeHtml(catalogMessage('dashboard.capacity.note.rpm_available'))}</span>
     </div>`;
 
   /* Historical comparisons use each bucket's capacity at the time.
@@ -1940,8 +1956,8 @@ function renderCapacity(c) {
   const unknownCapacity = capacityPoints.length - knownCapacity.length;
   if (!knownCapacity.length) {
     $('k-prov').innerHTML =
-      `<div class="hlabel">${t('dashboard.capacity.history.title')}</div>
-      <div class="empty">${t('dashboard.capacity.empty.no_capacity_data')}</div>`;
+      `<div class="hlabel">${escapeHtml(catalogMessage('dashboard.capacity.history.title'))}</div>
+      <div class="empty">${escapeHtml(catalogMessage('dashboard.capacity.empty.no_capacity_data'))}</div>`;
   } else {
     const weightedSeconds = knownCapacity.reduce((n, point) => n + point.duration, 0);
     const averageUtil = weightedSeconds
@@ -1953,15 +1969,15 @@ function renderCapacity(c) {
       point.rpm - point.capacity > best.rpm - best.capacity ? point : best);
     const shortRpm = Math.max(0, Math.ceil(shortfall.rpm - shortfall.capacity));
     $('k-prov').innerHTML =
-      `<div class="hlabel">${t('dashboard.capacity.history.title')}</div>
+      `<div class="hlabel">${escapeHtml(catalogMessage('dashboard.capacity.history.title'))}</div>
       <div style="display:flex;align-items:baseline;gap:8px;margin-top:12px">
         <span style="font-size:34px;font-weight:600;letter-spacing:-1px;color:${shortRpm > 0 ? 'var(--amber)' : 'var(--ink-1)'}">${fmt(shortRpm)}</span>
-        <span style="font:400 12px var(--mono);color:var(--ink-3)">${t('dashboard.capacity.history.shortfall')}</span></div>
+        <span style="font:400 12px var(--mono);color:var(--ink-3)">${escapeHtml(catalogMessage('dashboard.capacity.history.shortfall'))}</span></div>
       <div style="font:400 11.5px var(--mono);color:var(--ink-25);margin-top:6px">
-        ${t('dashboard.capacity.history.utilization', {
+        ${escapeHtml(catalogMessage('dashboard.capacity.history.utilization', {
           avg: isFinite(averageUtil) ? pctOf(averageUtil, 0) : NO_VALUE,
           peak: pctOf(peak.rpm / peak.capacity, 0),
-        })}${unknownCapacity ? ' · ' + unknownIntervals(unknownCapacity) : ''}
+        }))}${unknownCapacity ? ' · ' + escapeHtml(unknownIntervals(unknownCapacity)) : ''}
       </div>`;
   }
 
@@ -1969,12 +1985,12 @@ function renderCapacity(c) {
   const sticky = windowed(s => sum(s.rows, 'nimproxy_affinity_total', l => l.result === 'sticky'));
   const spill = windowed(s => sum(s.rows, 'nimproxy_affinity_total', l => l.result === 'spill'));
   const stickyTxt = sticky + spill ? Math.round(sticky / (sticky + spill) * 100) + '%' : '–';
-  const prow = (l, v, color) => `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0"><span style="font-size:12.5px;color:var(--ink-2)">${l}</span><span style="font:600 15px var(--mono);color:${color || 'var(--ink-1)'}">${v}</span></div>`;
+  const prow = (l, v, color) => `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0"><span style="font-size:12.5px;color:var(--ink-2)">${escapeHtml(l)}</span><span style="font:600 15px var(--mono);color:${color || 'var(--ink-1)'}">${escapeHtml(v)}</span></div>`;
   $('k-pressure').innerHTML =
-    `<div class="hlabel" style="margin-bottom:12px">${t('dashboard.capacity.hero.throttling')}</div>` +
-    prow(t('dashboard.common.status.rate_limited_429'), fmt(cooldown429), cooldown429 > 0 ? 'var(--amber)' : 'var(--ink-3)') +
-    prow(t('dashboard.capacity.row.session_affinity'), stickyTxt) +
-    prow(t('dashboard.capacity.row.slots_in_use'), cfg.lanes);
+    `<div class="hlabel" style="margin-bottom:12px">${escapeHtml(catalogMessage('dashboard.capacity.hero.throttling'))}</div>` +
+    prow(catalogMessage('dashboard.common.status.rate_limited_429'), fmt(cooldown429), cooldown429 > 0 ? 'var(--amber)' : 'var(--ink-3)') +
+    prow(catalogMessage('dashboard.capacity.row.session_affinity'), stickyTxt) +
+    prow(catalogMessage('dashboard.capacity.row.slots_in_use'), cfg.lanes);
 
   /* Current per-slot utilization comes from adjacent `/now` polls. Selected
      window counts remain selected-window values; neither domain is subtracted
@@ -1991,7 +2007,7 @@ function renderCapacity(c) {
       util: Math.min(1, currentRpm / Math.max(1, laneRpm(i))),
       b429: lane429.get(k) || 0, bOther: laneOther.get(k) || 0 };
   });
-  if (!lanes.length) $('meters').innerHTML = `<div class="empty">${t('dashboard.common.empty.no_keys_configured')}</div>`;
+  if (!lanes.length) $('meters').innerHTML = `<div class="empty">${escapeHtml(catalogMessage('dashboard.common.empty.no_keys_configured'))}</div>`;
   else barList($('meters'), lanes.map(l => ({
     name: l.name, v: l.util * 100, color: l.util >= 0.9 ? css('--amber') : laneColor(l.i),
   })), v => Math.round(v) + '%', 100);
@@ -2004,15 +2020,15 @@ function renderCapacity(c) {
   legend($('legend-cooldowns'), cooldownSeries);
 
   sortTable($('table-lanes'), 'lanes', [
-    { label: t('dashboard.common.col.key'), align: 'l', str: true }, { label: t('dashboard.common.col.requests') }, { label: t('dashboard.common.col.share') },
-    { label: t('dashboard.capacity.col.current_rate') }, { label: t('dashboard.capacity.col.429s') }, { label: t('dashboard.common.status.upstream_error_cooldowns') },
+    { label: catalogMessage('dashboard.common.col.key'), align: 'l', str: true }, { label: catalogMessage('dashboard.common.col.requests') }, { label: catalogMessage('dashboard.common.col.share') },
+    { label: catalogMessage('dashboard.capacity.col.current_rate') }, { label: catalogMessage('dashboard.capacity.col.429s') }, { label: catalogMessage('dashboard.common.status.upstream_error_cooldowns') },
   ], lanes.map(l => ({
     vals: [l.name, l.cur, l.cur / totalLane * 100, l.currentRpm, l.b429, l.bOther],
-    cells: [`<i class="sw" style="background:${laneColor(l.i)}"></i>${esc(l.name)}`,
+    cells: [`<i class="sw" style="background:${laneColor(l.i)}"></i>${escapeHtml(l.name)}`,
       fmt(l.cur), pctOf(l.cur / totalLane, 0), `${fmt(l.currentRpm)} / ${laneRpm(l.i)}`,
       `<span class="${l.b429 ? 'warnc' : 'dim'}">${fmt(l.b429)}</span>`,
       `<span class="${l.bOther ? 'critc' : 'dim'}">${fmt(l.bOther)}</span>`],
-  })), { defaultIdx: 1, maxH: 360, minW: 560, empty: t('dashboard.common.empty.no_keys_configured') });
+  })), { defaultIdx: 1, maxH: 360, minW: 560, empty: catalogMessage('dashboard.common.empty.no_keys_configured') });
 }
 
 /* ===== settings — config-driven, not metrics-driven: fetched from
@@ -2053,7 +2069,7 @@ function renderSettings() {
     .filter(([id]) => id === 'access' || id === 'account' || (id === 'server' ? !!SET.server : !!SET.users));
   if (!subs.some(([id]) => id === setSub)) setSub = 'access';
   $('setnav').innerHTML = subs.map(([id, label]) =>
-    `<button role="tab" data-sub="${id}" aria-selected="${id === setSub}"><span class="nbar"></span>${SICONS[id]}<span>${esc(label)}</span></button>`).join('');
+    `<button role="tab" data-sub="${id}" aria-selected="${id === setSub}"><span class="nbar"></span>${SICONS[id]}<span>${escapeHtml(label)}</span></button>`).join('');
   for (const b of $('setnav').querySelectorAll('button'))
     b.addEventListener('click', () => { setSub = b.dataset.sub; renderSettings(); });
   ({ access: renderAccess, server: renderServer, users: renderUsers, account: renderAccount })[setSub]();
@@ -2080,8 +2096,8 @@ async function copyText(text, btn) {
    stray re-render can't eat the one chance to copy it */
 function showSecret(name, secret) {
   $('modal-body').innerHTML =
-    `<p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">Client key <b>${esc(name)}</b> is ready. Copy it now — <b style="color:var(--amber-lt)">you won't see this again.</b></p>
-    <div class="secretbox">${esc(secret)}</div>
+    `<p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">Client key <b>${escapeHtml(name)}</b> is ready. Copy it now — <b style="color:var(--amber-lt)">you won't see this again.</b></p>
+    <div class="secretbox">${escapeHtml(secret)}</div>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
       <button class="pbtn" id="modal-copy">Copy key</button>
       <button class="gbtn" id="modal-done">Done</button>
@@ -2093,15 +2109,15 @@ function showSecret(name, secret) {
 
 function renderAccess() {
   const admin = !!SET.users;
-  const ownerChip = o => admin ? ` <span class="tag">${esc(o)}</span>` : '';
+  const ownerChip = o => admin ? ` <span class="tag">${escapeHtml(o)}</span>` : '';
   const keyRows = SET.nim_keys.map((k, i) => {
     const st = keyState(k);
     return `<div class="krow${k.enabled ? '' : ' koff'}">
       <div style="min-width:0">
-        <div class="kmask">nvapi-••••${esc(k.last4)}${ownerChip(k.owner)}</div>
-        <div class="kmeta">fp ${esc(String(k.fingerprint).slice(0, 8))} · ${k.lane != null ? `slot ${+k.lane + 1}` : k.enabled ? 'unassigned' : 'off'}</div>
+        <div class="kmask">nvapi-••••${escapeHtml(k.last4)}${ownerChip(k.owner)}</div>
+        <div class="kmeta">fp ${escapeHtml(String(k.fingerprint).slice(0, 8))} · ${k.lane != null ? `slot ${+k.lane + 1}` : k.enabled ? 'unassigned' : 'off'}</div>
       </div>
-      <span class="${st.cls}" data-ksfp="${esc(k.fingerprint)}">${esc(st.text)}</span>
+      <span class="${st.cls}" data-ksfp="${escapeHtml(k.fingerprint)}">${escapeHtml(st.text)}</span>
       <span class="rpmwrap"><input class="sin num" type="number" min="1" max="10000" value="${+k.rpm}" data-rpm="${i}"><span class="unitl">rpm</span></span>
       <button class="tog" role="switch" aria-checked="${!!k.enabled}" data-tog="${i}" title="${k.enabled ? 'Disable — its rate window stays warm' : 'Enable'}"></button>
       ${k.guarded
@@ -2111,14 +2127,14 @@ function renderAccess() {
   }).join('');
   const ckRows = SET.client_keys.map((ck, i) =>
     `<div class="krow">
-      <span style="font-weight:600;flex:0 1 160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(ck.name)}">${esc(ck.name)}</span>
-      <span class="kmask" style="color:var(--ink-25);font-weight:500">npk_••••••••${esc(ck.last4)}</span>
-      ${admin ? `<span class="tag">${esc(ck.owner)}</span>` : ''}
+      <span style="font-weight:600;flex:0 1 160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(ck.name)}">${escapeHtml(ck.name)}</span>
+      <span class="kmask" style="color:var(--ink-25);font-weight:500">npk_••••••••${escapeHtml(ck.last4)}</span>
+      ${admin ? `<span class="tag">${escapeHtml(ck.owner)}</span>` : ''}
       <button class="dbtn" style="margin-left:auto" data-ckdel="${i}">Revoke</button>
     </div>`).join('');
   $('setbody').innerHTML = `
     <div class="card mb">
-      <h2>${admin ? 'NIM keys' : 'My NIM keys'} <span class="note" id="pool-note">${esc(poolNote())}</span></h2>
+      <h2>${admin ? 'NIM keys' : 'My NIM keys'} <span class="note" id="pool-note">${escapeHtml(poolNote())}</span></h2>
       <p class="shint">Keys you add join the shared pool as yours${admin ? '' : ' — only you and admins see they exist'}. Changes apply live: kept keys keep their rate windows, disabled keys re-enable warm.</p>
       <div>${keyRows || '<div class="empty">No NIM keys yet — add one below</div>'}</div>
       <div class="addrow">
@@ -2143,7 +2159,7 @@ function renderAccess() {
       <div class="congrid">
         <div class="conbox">
           <div class="slabel">Point your client's base URL at</div>
-          <div style="display:flex;align-items:center;gap:10px"><span class="kmask" style="flex:1;overflow:hidden;text-overflow:ellipsis">${esc(location.origin + '/v1')}</span><button class="gbtn" id="copy-base">copy</button></div>
+          <div style="display:flex;align-items:center;gap:10px"><span class="kmask" style="flex:1;overflow:hidden;text-overflow:ellipsis">${escapeHtml(location.origin + '/v1')}</span><button class="gbtn" id="copy-base">copy</button></div>
         </div>
         <div class="conbox">
           <div class="slabel">API access mode</div>
@@ -2238,7 +2254,7 @@ function renderServer() {
     <div class="card mb">
       <h2>Upstream &amp; limits <button class="pbtn" id="save-limits" style="margin-left:auto">Save</button></h2>
       <div class="slabel">Upstream base URL · saving clears the model-catalog cache</div>
-      <input id="sv-base" class="sin" style="width:100%" value="${esc(sv.base_url)}" spellcheck="false">
+      <input id="sv-base" class="sin" style="width:100%" value="${escapeHtml(sv.base_url)}" spellcheck="false">
       <div class="limgrid">
         ${num('sv-maxwait', 'Max wait', L.max_wait_secs, 's')}
         ${num('sv-heartbeat', 'Heartbeat', L.heartbeat_secs, 's')}
@@ -2259,7 +2275,7 @@ function renderServer() {
         <button class="tog" role="switch" id="gov-tog" aria-checked="${!!sv.governor.enabled}"></button></span></h2>
       <p class="shint">Absorbs NIM worker-exhaustion per model without cooling down keys. Each model self-tunes: engages on the first exhaustion, climbs while stable, dissolves after a long clean stretch. Set an override only if you know a model's ceiling.</p>
       <div>${ovr.map(([m, cap], i) =>
-        `<span class="ochip"><span title="${esc(m)}">${esc(m)}</span><b>${+cap} max</b><button data-govdel="${i}" title="Remove override">×</button></span>`).join('')
+        `<span class="ochip"><span title="${escapeHtml(m)}">${escapeHtml(m)}</span><b>${+cap} max</b><button data-govdel="${i}" title="Remove override">×</button></span>`).join('')
         || '<span class="kmeta">No overrides set</span>'}</div>
       <div class="addrow">
         <input id="gov-model" class="sin" style="flex:1;min-width:200px" placeholder="model id, e.g. moonshotai/kimi-k2.5" autocomplete="off" spellcheck="false">
@@ -2279,8 +2295,8 @@ function renderServer() {
           <span class="rpmwrap" style="display:flex"><input id="sv-slo" class="sin" style="width:100%;text-align:right" type="number" min="0.1" max="100" step="0.1" value="${+sv.dashboard.slo_target_percent}"><span class="unitl">%</span></span></div>
       </div>
       <div class="congrid" style="margin-top:16px">
-        <div class="conbox"><div class="slabel">Oldest data point</div><div class="kmeta" style="display:block">${esc(retainedFrom)}</div></div>
-        <div class="conbox"><div class="slabel">Data file</div><div class="kmeta" style="display:block">${esc(historyBytes)} bytes</div></div>
+        <div class="conbox"><div class="slabel">Oldest data point</div><div class="kmeta" style="display:block">${escapeHtml(retainedFrom)}</div></div>
+        <div class="conbox"><div class="slabel">Data file</div><div class="kmeta" style="display:block">${escapeHtml(historyBytes)} bytes</div></div>
       </div>
       ${sv.history.compaction_pending ? '<p class="shint" style="color:var(--amber-lt)">compaction pending</p>' : ''}
       <div class="serr" id="history-err"></div>
@@ -2350,12 +2366,12 @@ function renderServer() {
 function renderUsers() {
   const RCLS = { superuser: 'superuser', admin: 'admin', user: 'user' };
   const rows = SET.users.map((u, i) => `<div class="krow">
-    <span class="umono">${esc((u.username[0] || '?').toUpperCase())}</span>
+    <span class="umono">${escapeHtml((u.username[0] || '?').toUpperCase())}</span>
     <div style="min-width:0">
-      <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(u.username)}</div>
+      <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(u.username)}</div>
       <div class="kmeta">${+u.nim_keys} NIM · ${+u.client_keys} client</div>
     </div>
-    <span class="rbadge ${RCLS[u.role] || 'user'}" style="margin-left:auto">${esc(String(u.role).toUpperCase())}</span>
+    <span class="rbadge ${RCLS[u.role] || 'user'}" style="margin-left:auto">${escapeHtml(String(u.role).toUpperCase())}</span>
     ${u.role !== 'superuser' ? `<button class="gbtn" data-urp="${i}">Reset password</button>
       <select class="sin" data-urole="${i}" title="Role">
         <option value="admin"${u.role === 'admin' ? ' selected' : ''}>admin</option>
@@ -2415,7 +2431,7 @@ function renderAccount() {
   $('setbody').innerHTML = `<div class="card" style="max-width:560px">
     <h2>Account</h2>
     <div class="slabel">Username</div>
-    <input class="sin" style="width:100%" value="${esc(SET.username)}" disabled>
+    <input class="sin" style="width:100%" value="${escapeHtml(SET.username)}" disabled>
     <div class="slabel" style="margin-top:14px">Current password</div>
     <input id="a-cur" class="sin" style="width:100%" type="password" autocomplete="current-password">
     <div class="slabel" style="margin-top:14px">New password · at least 10 characters</div>
@@ -2540,12 +2556,13 @@ function updateScope() {
 function syncFollowControl(offline = false) {
   if (offline) {
     $('live').className = 'live down';
-    $('liveText').textContent = tRaw('dashboard.nav.live.disconnected');
+    setMessageText($('liveText'), 'dashboard.nav.live.disconnected');
     return;
   }
   const following = mode.kind === 'following' && !mode.paused;
   $('live').className = following ? 'live' : 'live idle';
-  $('liveText').textContent = following ? tRaw('dashboard.nav.live.following') : tRaw('dashboard.nav.live.frozen');
+  if (following) setMessageText($('liveText'), 'dashboard.nav.live.following');
+  else setMessageText($('liveText'), 'dashboard.nav.live.frozen');
 }
 
 function rebuildSamples() {
@@ -2679,7 +2696,7 @@ for (const b of document.querySelectorAll('#side nav button')) {
     for (const o of document.querySelectorAll('#side nav button')) o.setAttribute('aria-selected', o === b);
     for (const s of document.querySelectorAll('main > section')) s.hidden = s.id !== 'tab-' + b.dataset.tab;
     activeTab = b.dataset.tab;
-    $('pagetitle').textContent = TITLES[activeTab];
+    setMessageText($('pagetitle'), TITLES[activeTab]);
     // Settings is config-driven: hide the metrics range picker and (re)fetch.
     document.body.classList.toggle('on-settings', activeTab === 'settings');
     if (activeTab === 'settings') loadSettings();

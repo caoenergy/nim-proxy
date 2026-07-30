@@ -41,14 +41,33 @@ not substitute, which would make the pseudolocale test itself instead of the
 layout.
 
 **`locale-v1` validator.** Completeness, orphans, placeholder parity, formatter
-syntax, no raw markup, inline balance, source-hash freshness, opt-in length
-caps. The hash is what makes a regenerate-on-drift pipeline possible: it records
-which English text a translation was made from, so "still valid, no longer
-correct" is detectable.
+syntax, separate raw-markup and entity-encoded-markup checks, exact inline
+marker structure, source-hash freshness, opt-in length caps. Exact inline
+structure keeps the runtime and accepted locale shapes aligned: emphasis
+markers may surround translated text, but cannot be removed, duplicated, or
+reordered. The hash is what makes a
+regenerate-on-drift pipeline possible: it records which English text a
+translation was made from, so "still valid, no longer correct" is detectable.
 
-**Untagged-string lint.** Fails on a display literal that bypasses `t()`,
+**Untagged-string lint.** Fails on a display literal that bypasses `message()`,
 covering attributes as well as text. Without it, English creeps back within two
 PRs, because a hardcoded label looks exactly like the code beside it.
+
+**Contextual-sink lint.** Page code passes ids to native DOM helpers and inert
+descriptors to fixed-markup HTML builders. Named self-tests independently
+reject URL, style, event, script, CSS, raw-SVG, native-attribute, raw-HTML,
+alias, string-spoof, ASI, and structured-message-HTML mutations. Descriptor
+tests cover direct text, URL, style, native-attribute, and SVG sinks. Expected
+check ids must match exactly. See
+[message-catalog-and-escaping](message-catalog-and-escaping.md).
+The normal source pass blanks only the lexical resolver declaration and exact
+canonical raw-lookup helper bodies; every remaining bare `message` identifier
+fails. This bounded convention does not infer JavaScript owners. Text and
+structured helpers reject script/style/SVG destinations and replacements, and
+HTML builders must resolve descriptors through `escapeHtml()`. This is a
+direct-convention regression guard, not a verifier for deliberately obfuscated
+trusted JavaScript; runtime resolver isolation, descriptor coercion refusal,
+and replacement validation are the accidental-misuse boundary.
 
 **Every check has a negative fixture, and the fixtures came first.** They are
 committed in a separate commit before the validator exists, and `--selftest`
