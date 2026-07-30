@@ -32,9 +32,11 @@ true:
   response carries the `npk_` secret exactly once, so a fresh keyed-mode proxy
   serves `/v1` with no Settings detour.
 
-Post-setup the setup routes 404 (gated on the AtomicBool). Boot logs a loud
-`SETUP REQUIRED — the FIRST VISITOR becomes the superuser` line — the claim
-window is [accepted risk](../decisions/ui-managed-config-store.md).
+Post-setup `GET /setup` is a bare 404 (gated on the AtomicBool), while
+`POST /setup` and `POST /setup/validate-key` return the typed
+`409 setup_complete` conflict before inspecting their JSON request bodies.
+Boot logs a loud `SETUP REQUIRED — the FIRST VISITOR becomes the superuser`
+line — the claim window is [accepted risk](../decisions/ui-managed-config-store.md).
 
 ## API gate — `/v1/*` (`src/proxy.rs`)
 

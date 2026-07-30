@@ -71,8 +71,9 @@ for a `user`, so the type says what the security posture already required.
   undocumented would not make them less reachable. They sit outside the
   `route_layer` because no user exists yet, so they carry an explicit empty
   `security: []` — the document-level requirement (session cookie *or* header
-  credentials) applies to everything else. Both 404 the moment a superuser
-  exists, so the window is exactly one claim wide.
+  credentials) applies to everything else. Once a superuser exists, the page
+  `GET /setup` is a bare 404 while either setup POST is a typed 409
+  `setup_complete` conflict, so the claim window is exactly one claim wide.
 - **Out of scope, deliberately:** the OpenAI-compatible `/v1` passthrough (that
   contract is the upstream's, not ours), the HTML page routes, the
   form-encoded `/login`/`/logout` browser flow, plain-text `/health`, and the
@@ -93,7 +94,8 @@ so these framework-level rejections serialize as `ApiError` too.
 
 This boundary is intentionally narrow: setup **GET** retains its HTML/bare-404
 contract, and login/form, health, metrics, and `/v1` retain their existing
-contracts. After a claim, setup POSTs answer the typed `409 setup_complete`
+contracts. After a claim, setup POSTs check that phase before inspecting JSON
+headers or buffering the body and answer the typed `409 setup_complete`
 conflict; the page GET remains a bare 404. The generated spec documents each
 non-success dashboard/setup response with the `ApiError` schema, and its test
 rejects an untyped non-2xx response.

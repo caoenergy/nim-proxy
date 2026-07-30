@@ -6,6 +6,30 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-30] lint — bound raw setup-rejection proof and cover open extraction
+
+The raw `Expect: 100-continue` setup body-limit proof now caps its response
+read at 4 KiB plus a sentinel byte while retaining its two-second completion
+bound. The test also now covers the manual setup extraction path while setup
+is open, including malformed/media/body-limit rejections and no config-store
+creation. The all-row JSON rejection collector records an absent Content-Type
+as a row failure rather than panicking. See [test strategy](testing/test-strategy.md).
+
+## [2026-07-30] lint — complete the typed control-plane rejection gate
+
+Independent review found and the task proof now closes three boundary holes:
+the whole nested `/api` router, including its not-found fallback, is inside the
+session/setup gate; closed setup POSTs perform their phase check before JSON
+extraction or body buffering; and both the normal and racing claim-loser paths
+share `409 setup_complete`. The architecture and typed-response decision now
+also distinguish bare setup GET 404 from typed setup POST conflict.
+
+The new real-binary E2E proof holds an over-limit setup request at
+`Expect: 100-continue`, asserting the 409 response before 64 MiB can be sent;
+it also covers malformed and media-type request variants, fallback gating, and
+the persisted race outcome. See [test strategy](testing/test-strategy.md) and
+[typed responses](decisions/typed-responses-and-generated-openapi.md).
+
 ## [2026-07-30] decision — typed JSON control-plane rejections
 
 The JSON control-plane and setup POST boundary now translates Axum extractor,

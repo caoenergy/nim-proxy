@@ -111,6 +111,20 @@ Two tests exist purely so the JSON contract cannot move by accident (see
   setup POSTs. It asserts status, `application/json`, exact `ApiError` bytes,
   and unchanged `config.json` bytes. Run it with `cargo test --test e2e
   control_plane_rejections_are_typed -- --exact`.
+- `unknown_control_plane_paths_are_gated_before_fallback` proves that the
+  control-plane fallback remains inside the setup/auth gate: a fresh install
+  returns `503 setup_required`, an anonymous configured install returns 401,
+  and an authenticated caller receives typed `404 not_found`.
+- `closed_setup_posts_win_before_body_rejections` proves both setup POSTs
+  answer `409 setup_complete` before malformed, missing/wrong-media, or
+  oversized bodies are parsed. Its oversized request sends only an over-limit
+  `Content-Length` with `Expect: 100-continue`, proving the route answers
+  before buffering 64 MiB. `setup_double_claim_is_rejected_with_409` also
+  checks the race loser emits that exact envelope.
+- `open_setup_posts_keep_typed_extractor_rejections` covers both manual setup
+  extractors while setup is still open: malformed JSON, missing/wrong media
+  types, and the bounded body limit retain the exact `ApiError` bytes and do
+  not create a config store.
 
 ## 3. Load — `scripts/loadtest.py` vs `scripts/mock_nim.py --enforce`
 

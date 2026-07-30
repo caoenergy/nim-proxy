@@ -6,7 +6,7 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use axum::extract::State;
+use axum::extract::{FromRequest, Request, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
@@ -54,6 +54,14 @@ fn json_error(status: StatusCode, code: &str, message: impl Into<String>) -> Res
 
 fn not_found() -> Response {
     StatusCode::NOT_FOUND.into_response()
+}
+
+fn setup_complete() -> Response {
+    json_error(
+        StatusCode::CONFLICT,
+        "setup_complete",
+        "setup is already complete",
+    )
 }
 
 /// `GET /setup` — the first-run wizard (404 once setup is complete).
@@ -110,18 +118,15 @@ pub struct SetupKey {
             proxy first", body = ApiError),
     ),
 )]
-pub async fn setup_submit(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    ApiJson(req): ApiJson<SetupReq>,
-) -> Response {
+pub async fn setup_submit(State(state): State<Arc<AppState>>, req: Request) -> Response {
     if !state.setup_required.load(Ordering::SeqCst) {
-        return json_error(
-            StatusCode::CONFLICT,
-            "setup_complete",
-            "setup is already complete",
-        );
+        return setup_complete();
     }
+    let headers = req.headers().clone();
+    let ApiJson(req) = match ApiJson::<SetupReq>::from_request(req, &state).await {
+        Ok(req) => req,
+        Err(response) => return response,
+    };
     if req.password.len() < 10 {
         return json_error(
             StatusCode::BAD_REQUEST,
@@ -139,11 +144,7 @@ pub async fn setup_submit(
         let mut guard = state.store.lock().unwrap();
         if guard.superuser().is_some() {
             // Two claimers raced; the store lock made the first win whole.
-            return json_error(
-                StatusCode::CONFLICT,
-                "already_configured",
-                "setup was just completed by someone else",
-            );
+            return setup_complete();
         }
         let mut cand = guard.clone();
         cand.users = vec![User {
@@ -236,17 +237,14 @@ pub struct ValidateKeyReq {
             body = ApiError),
     ),
 )]
-pub async fn setup_validate_key(
-    State(state): State<Arc<AppState>>,
-    ApiJson(req): ApiJson<ValidateKeyReq>,
-) -> Response {
+pub async fn setup_validate_key(State(state): State<Arc<AppState>>, req: Request) -> Response {
     if !state.setup_required.load(Ordering::SeqCst) {
-        return json_error(
-            StatusCode::CONFLICT,
-            "setup_complete",
-            "setup is already complete",
-        );
+        return setup_complete();
     }
+    let ApiJson(req) = match ApiJson::<ValidateKeyReq>::from_request(req, &state).await {
+        Ok(req) => req,
+        Err(response) => return response,
+    };
     if state.admin.is_throttled() {
         return json_error(
             StatusCode::TOO_MANY_REQUESTS,

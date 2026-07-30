@@ -550,17 +550,21 @@ pub async fn run() {
         .route("/settings/account", post(settings::account))
         .route("/settings/validate-key", post(settings::validate_key))
         .fallback(api::api_not_found)
-        .method_not_allowed_fallback(api::api_method_not_allowed);
+        .method_not_allowed_fallback(api::api_method_not_allowed)
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_session,
+        ));
 
     let protected = Router::new()
         .route("/", get(dash))
         .route("/dash", get(dash))
-        .nest("/api", control_plane)
         .route("/metrics", get(metrics_text))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_session,
-        ));
+        ))
+        .nest("/api", control_plane);
 
     // Public surface: health probe, login flow, the first-run wizard (404
     // once setup completes), and the API (its own key gate + setup gate).

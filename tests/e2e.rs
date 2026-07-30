@@ -9,6 +9,9 @@ mod support;
 use std::os::unix::fs::PermissionsExt;
 use std::time::{Duration, Instant};
 
+use reqwest::header::CONTENT_TYPE;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
 use support::{
     chat_body, complete_setup, expect_refuses_to_start, login, login_as, metrics, read_sse,
     restart, scratch_data_dir, start_mock, start_proxy, start_proxy_fresh, start_proxy_in,
@@ -34,11 +37,55 @@ async fn assert_exact_api_error(
     message: &str,
 ) {
     assert_eq!(response.status(), status);
-    assert_eq!(response.headers()["content-type"], "application/json");
+    assert_eq!(
+        response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|content_type| content_type.to_str().ok()),
+        Some("application/json")
+    );
     assert_eq!(
         response.bytes().await.unwrap().as_ref(),
         format!(r#"{{"error":{{"code":"{code}","message":"{message}","type":"proxy_error"}}}}"#)
             .as_bytes()
+    );
+}
+
+/// Send only headers for an over-limit body. `Expect: 100-continue` keeps the
+/// client from streaming 64 MiB into a setup route that must reject its closed
+/// phase before body buffering; the request limit still sees the declared size.
+async fn assert_closed_setup_rejects_oversized_body(proxy: &support::Proxy, path: &str) {
+    const MAX_RESPONSE_BYTES: u64 = 4 * 1024;
+
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", proxy.port))
+        .await
+        .unwrap();
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n",
+        64 * 1024 * 1024 + 1,
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+
+    let mut response = Vec::new();
+    let mut bounded = stream.take(MAX_RESPONSE_BYTES + 1);
+    tokio::time::timeout(Duration::from_secs(2), bounded.read_to_end(&mut response))
+        .await
+        .expect("closed setup route should respond without the oversized body")
+        .unwrap();
+    assert!(
+        response.len() <= MAX_RESPONSE_BYTES as usize,
+        "closed setup response exceeded {MAX_RESPONSE_BYTES} bytes"
+    );
+    let response = String::from_utf8(response).unwrap();
+    let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+    assert!(headers.starts_with("HTTP/1.1 409"), "{headers}");
+    assert!(
+        headers.contains("content-type: application/json"),
+        "{headers}"
+    );
+    assert_eq!(
+        body,
+        r#"{"error":{"code":"setup_complete","message":"setup is already complete","type":"proxy_error"}}"#
     );
 }
 
@@ -2010,11 +2057,10 @@ async fn control_plane_rejections_are_typed() {
         if response.status() != case.status {
             errors.push(format!("status {:?}", response.status()));
         }
-        if response.headers()["content-type"] != "application/json" {
-            errors.push(format!(
-                "content-type {:?}",
-                response.headers()["content-type"]
-            ));
+        match response.headers().get(CONTENT_TYPE) {
+            Some(content_type) if content_type == "application/json" => {}
+            Some(content_type) => errors.push(format!("content-type {content_type:?}")),
+            None => errors.push("content-type missing".to_owned()),
         }
         let body = response.bytes().await.unwrap();
         let expected = format!(
@@ -2041,6 +2087,82 @@ async fn control_plane_rejections_are_typed() {
         "rejection failures:\n{}",
         failures.join("\n")
     );
+}
+
+/// The raw-request setup handlers phase-check first, but while setup remains
+/// open their manual `ApiJson` call must preserve the typed extractor errors.
+#[tokio::test]
+async fn open_setup_posts_keep_typed_extractor_rejections() {
+    struct OpenCase {
+        content_type: Option<&'static str>,
+        body: &'static str,
+        status: reqwest::StatusCode,
+        code: &'static str,
+        message: &'static str,
+        oversized: bool,
+    }
+
+    let proxy = start_proxy_fresh().await;
+    let before = std::fs::read(proxy.data_dir.join("config.json")).ok();
+    let cases = [
+        OpenCase {
+            content_type: Some("application/json"),
+            body: "{",
+            status: reqwest::StatusCode::BAD_REQUEST,
+            code: "invalid_json",
+            message: "invalid JSON",
+            oversized: false,
+        },
+        OpenCase {
+            content_type: None,
+            body: r#"{"key":"k"}"#,
+            status: reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            code: "unsupported_media_type",
+            message: "Content-Type must be application/json",
+            oversized: false,
+        },
+        OpenCase {
+            content_type: Some("text/plain"),
+            body: r#"{"key":"k"}"#,
+            status: reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            code: "unsupported_media_type",
+            message: "Content-Type must be application/json",
+            oversized: false,
+        },
+        OpenCase {
+            content_type: Some("application/json"),
+            body: "",
+            status: reqwest::StatusCode::PAYLOAD_TOO_LARGE,
+            code: "body_too_large",
+            message: "request body is too large",
+            oversized: true,
+        },
+    ];
+
+    for path in ["/setup", "/setup/validate-key"] {
+        for case in &cases {
+            let body = if case.oversized {
+                "x".repeat(64 * 1024 * 1024 + 1)
+            } else {
+                case.body.to_owned()
+            };
+            let mut request = client().post(proxy.url(path)).body(body);
+            if let Some(content_type) = case.content_type {
+                request = request.header(CONTENT_TYPE, content_type);
+            }
+            assert_exact_api_error(
+                request.send().await.unwrap(),
+                case.status,
+                case.code,
+                case.message,
+            )
+            .await;
+            assert_eq!(
+                std::fs::read(proxy.data_dir.join("config.json")).ok(),
+                before
+            );
+        }
+    }
 }
 
 /// An unknown `/api/*` path is still an operator-surface request: it must not
@@ -2110,7 +2232,6 @@ async fn closed_setup_posts_win_before_body_rejections() {
     struct ClosedCase {
         content_type: Option<&'static str>,
         body: &'static str,
-        oversized: bool,
     }
 
     let mock = start_mock().await;
@@ -2120,33 +2241,20 @@ async fn closed_setup_posts_win_before_body_rejections() {
         ClosedCase {
             content_type: Some("application/json"),
             body: "{",
-            oversized: false,
         },
         ClosedCase {
             content_type: None,
             body: r#"{"key":"k"}"#,
-            oversized: false,
         },
         ClosedCase {
             content_type: Some("text/plain"),
             body: r#"{"key":"k"}"#,
-            oversized: false,
-        },
-        ClosedCase {
-            content_type: Some("application/json"),
-            body: "",
-            oversized: true,
         },
     ];
 
     for path in ["/setup", "/setup/validate-key"] {
         for case in &cases {
-            let body = if case.oversized {
-                "x".repeat(64 * 1024 * 1024 + 1)
-            } else {
-                case.body.to_owned()
-            };
-            let mut request = client().post(proxy.url(path)).body(body);
+            let mut request = client().post(proxy.url(path)).body(case.body);
             if let Some(content_type) = case.content_type {
                 request = request.header("content-type", content_type);
             }
@@ -2162,6 +2270,11 @@ async fn closed_setup_posts_win_before_body_rejections() {
                 before
             );
         }
+        assert_closed_setup_rejects_oversized_body(&proxy, path).await;
+        assert_eq!(
+            std::fs::read(proxy.data_dir.join("config.json")).unwrap(),
+            before
+        );
     }
 }
 
