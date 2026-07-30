@@ -87,6 +87,10 @@ impl ContractActor {
             Self::BeforeSetup | Self::Anonymous | Self::Superuser => support::TEST_USER,
         }
     }
+
+    fn ordinal(self) -> usize {
+        self.index() + 1
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -162,7 +166,26 @@ fn configured_contract_expectations(
 }
 
 fn contract_config_bytes(proxy: &support::Proxy) -> Option<Vec<u8>> {
-    std::fs::read(proxy.data_dir.join("config.json")).ok()
+    match std::fs::read(proxy.data_dir.join("config.json")) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => panic!("route-contract:durable-read: config.json: {error}"),
+    }
+}
+
+fn assert_contract_durable_change(
+    before: &Option<Vec<u8>>,
+    after: &Option<Vec<u8>>,
+    context: &str,
+) {
+    assert!(
+        after.is_some(),
+        "route-contract:durable-bytes: successful {context} removed config.json"
+    );
+    assert_ne!(
+        after, before,
+        "route-contract:durable-bytes: successful {context} did not change config.json"
+    );
 }
 
 fn contract_upstream_calls(mock: &support::MockNim) -> usize {
@@ -190,7 +213,7 @@ fn contract_body(
         }
         "api-settings-limits" => serde_json::json!({
             "heartbeat_secs": 1,
-            "max_inflight": 513,
+            "max_inflight": 512 + actor.ordinal(),
             "max_wait_secs": 31,
             "models_ttl_secs": 300,
             "request_timeout_secs": 300,
@@ -198,11 +221,13 @@ fn contract_body(
             "strict_passthrough": false
         }),
         "api-settings-history" => serde_json::json!({
-            "days": 60,
+            "days": 60 + actor.ordinal(),
             "default_window_days": 30,
             "slo_target_percent": 99.8
         }),
-        "api-settings-governor" => serde_json::json!({"enabled": false}),
+        "api-settings-governor" => {
+            serde_json::json!({"enabled": matches!(actor, ContractActor::Superuser)})
+        }
         "api-settings-users" => serde_json::json!({
             "add": {
                 "password": "matrix-password-1",
@@ -252,8 +277,8 @@ async fn send_contract_request(
     mock: &support::MockNim,
 ) -> reqwest::Response {
     let mut request = match row.method {
-        "GET" => client().get(proxy.url(row.path)),
-        "POST" => client().post(proxy.url(row.path)),
+        "GET" => no_redirect_client().get(proxy.url(row.path)),
+        "POST" => no_redirect_client().post(proxy.url(row.path)),
         other => panic!("route-contract:request: unsupported method {other}"),
     };
     if row.accept_html {
@@ -286,10 +311,8 @@ async fn route_contract_behavior_matrix() {
         RouteBehavior {
             access: ContractAccess::Public,
             accept_html: false,
-            // Intentionally wrong for the committed red proof. /health is
-            // phase-independent and really returns 200 before setup.
             expectations: [
-                contract_expectation(503, Some("setup_required")),
+                contract_expectation(200, None),
                 contract_expectation(200, None),
                 contract_expectation(200, None),
                 contract_expectation(200, None),
@@ -297,7 +320,7 @@ async fn route_contract_behavior_matrix() {
             ],
             method: "GET",
             name: "health",
-            phase: ContractPhase::PostSetup,
+            phase: ContractPhase::Always,
             request: ContractRequest::None,
             side_effect: ContractSideEffect::None,
             success_content_type: Some("text/plain; charset=utf-8"),
@@ -518,19 +541,6 @@ async fn route_contract_behavior_matrix() {
             path: "/api/settings/upstream",
         },
         RouteBehavior {
-            access: ContractAccess::OperatorAny,
-            accept_html: false,
-            expectations: configured_contract_expectations(200, 200),
-            method: "POST",
-            name: "api-settings-account",
-            phase: ContractPhase::PostSetup,
-            request: ContractRequest::Json,
-            side_effect: ContractSideEffect::DurableConfigAndSession,
-            success_content_type: Some("application/json"),
-            success_status: 200,
-            path: "/api/settings/account",
-        },
-        RouteBehavior {
             access: ContractAccess::Public,
             accept_html: true,
             expectations: [
@@ -625,6 +635,21 @@ async fn route_contract_behavior_matrix() {
             success_status: 200,
             path: "/setup/validate-key",
         },
+        // Password rotation invalidates every prior cookie for that actor, so
+        // keep this after all other authenticated probes.
+        RouteBehavior {
+            access: ContractAccess::OperatorAny,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 200),
+            method: "POST",
+            name: "api-settings-account",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::Json,
+            side_effect: ContractSideEffect::DurableConfigAndSession,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/api/settings/account",
+        },
         // Keep the successful claim last: it intentionally closes the
         // before-setup fixture for every subsequent request.
         RouteBehavior {
@@ -704,9 +729,21 @@ async fn route_contract_behavior_matrix() {
                 }
             }
 
+            let response_content_type = response
+                .headers()
+                .get(CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned);
             let has_session_cookie = response.headers().contains_key("set-cookie");
             let body = response.bytes().await.unwrap();
             if let Some(error) = expected.error {
+                assert_eq!(
+                    response_content_type.as_deref(),
+                    Some("application/json"),
+                    "route-contract:error-content-type: {} {} actor={actor:?}",
+                    row.method,
+                    row.path
+                );
                 let value: serde_json::Value = serde_json::from_slice(&body).unwrap_or_else(|e| {
                     panic!(
                         "route-contract:error: {} {} actor={actor:?} was not JSON: {e}",
@@ -746,13 +783,18 @@ async fn route_contract_behavior_matrix() {
                         "route-contract:session: {} {} actor={actor:?}",
                         row.method, row.path
                     );
+                    assert_eq!(
+                        upstream_after, upstream_before,
+                        "route-contract:side-effect: {} {} actor={actor:?}",
+                        row.method, row.path
+                    );
                 }
                 ContractSideEffect::DurableConfig => {
                     if succeeded {
-                        assert_ne!(
-                            config_after, config_before,
-                            "route-contract:durable-bytes: {} {} actor={actor:?}",
-                            row.method, row.path
+                        assert_contract_durable_change(
+                            &config_before,
+                            &config_after,
+                            &format!("{} {} actor={actor:?}", row.method, row.path),
                         );
                     } else {
                         assert_eq!(
@@ -761,13 +803,18 @@ async fn route_contract_behavior_matrix() {
                             row.method, row.path
                         );
                     }
+                    assert_eq!(
+                        upstream_after, upstream_before,
+                        "route-contract:side-effect: {} {} actor={actor:?}",
+                        row.method, row.path
+                    );
                 }
                 ContractSideEffect::DurableConfigAndSession => {
                     if succeeded {
-                        assert_ne!(
-                            config_after, config_before,
-                            "route-contract:durable-bytes: {} {} actor={actor:?}",
-                            row.method, row.path
+                        assert_contract_durable_change(
+                            &config_before,
+                            &config_after,
+                            &format!("{} {} actor={actor:?}", row.method, row.path),
                         );
                     } else {
                         assert_eq!(
@@ -781,11 +828,16 @@ async fn route_contract_behavior_matrix() {
                         "route-contract:session: {} {} actor={actor:?}",
                         row.method, row.path
                     );
+                    assert_eq!(
+                        upstream_after, upstream_before,
+                        "route-contract:side-effect: {} {} actor={actor:?}",
+                        row.method, row.path
+                    );
                 }
                 ContractSideEffect::Upstream => {
                     assert_eq!(
-                        upstream_after > upstream_before,
-                        succeeded,
+                        upstream_after,
+                        upstream_before + usize::from(succeeded),
                         "route-contract:side-effect: {} {} actor={actor:?}",
                         row.method,
                         row.path
@@ -798,6 +850,111 @@ async fn route_contract_behavior_matrix() {
                 }
             }
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ClientAuthBehavior {
+    bearer: Option<&'static str>,
+    error: Option<&'static str>,
+    status: u16,
+    upstream: bool,
+}
+
+#[tokio::test]
+async fn route_contract_client_auth_matrix() {
+    let mock = start_mock().await;
+    let before_setup = start_proxy_fresh().await;
+    let keyed_proxy = start_proxy_with(
+        &mock.url,
+        StoreOpts {
+            clients: vec![("matrix-client".into(), "matrix-secret".into())],
+            open: false,
+            ..Default::default()
+        },
+        &[],
+    )
+    .await;
+    let rows = [
+        (
+            &before_setup,
+            ClientAuthBehavior {
+                bearer: None,
+                error: Some("setup_required"),
+                status: 503,
+                upstream: false,
+            },
+        ),
+        (
+            &keyed_proxy,
+            ClientAuthBehavior {
+                bearer: None,
+                error: Some("unauthorized"),
+                status: 401,
+                upstream: false,
+            },
+        ),
+        (
+            &keyed_proxy,
+            ClientAuthBehavior {
+                bearer: Some("wrong-secret"),
+                error: Some("unauthorized"),
+                status: 401,
+                upstream: false,
+            },
+        ),
+        (
+            &keyed_proxy,
+            ClientAuthBehavior {
+                bearer: Some("matrix-secret"),
+                error: None,
+                status: 200,
+                upstream: true,
+            },
+        ),
+    ];
+
+    for (proxy, row) in rows {
+        let config_before = contract_config_bytes(proxy);
+        let upstream_before = contract_upstream_calls(&mock);
+        let mut request = no_redirect_client()
+            .post(proxy.url("/v1/chat/completions"))
+            .header(CONTENT_TYPE, "application/json")
+            .body(serde_json::to_vec(&chat_body("route-contract-client-auth", false)).unwrap());
+        if let Some(bearer) = row.bearer {
+            request = request.bearer_auth(bearer);
+        }
+        let response = request.send().await.unwrap();
+        assert_eq!(
+            response.status().as_u16(),
+            row.status,
+            "route-contract:client-auth: {row:?}"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("application/json"),
+            "route-contract:client-auth-content-type: {row:?}"
+        );
+        let body: serde_json::Value = response.json().await.unwrap();
+        if let Some(error) = row.error {
+            assert_eq!(
+                body["error"]["code"], error,
+                "route-contract:client-auth: {row:?}"
+            );
+        }
+        assert_eq!(
+            contract_upstream_calls(&mock),
+            upstream_before + usize::from(row.upstream),
+            "route-contract:client-auth-side-effect: {row:?}"
+        );
+        assert_eq!(
+            contract_config_bytes(proxy),
+            config_before,
+            "route-contract:client-auth-durable-bytes: {row:?}"
+        );
     }
 }
 
@@ -904,10 +1061,10 @@ async fn route_contract_ownership_matrix() {
         );
         let after = contract_config_bytes(&proxy);
         if row.durable_change {
-            assert_ne!(
-                after, before,
-                "route-contract:durable-bytes: {:?} {}",
-                row.ownership, row.path
+            assert_contract_durable_change(
+                &before,
+                &after,
+                &format!("{:?} {}", row.ownership, row.path),
             );
         } else {
             assert_eq!(
@@ -922,6 +1079,16 @@ async fn route_contract_ownership_matrix() {
             );
         }
     }
+}
+
+#[test]
+#[should_panic(expected = "route-contract:durable-bytes")]
+fn route_contract_durable_self_test_names_missing_post_write_file() {
+    assert_contract_durable_change(
+        &Some(b"before".to_vec()),
+        &None,
+        "self-test configured writer",
+    );
 }
 
 /// Send only headers for an over-limit body. `Expect: 100-continue` keeps the

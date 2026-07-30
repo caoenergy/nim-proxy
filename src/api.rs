@@ -817,35 +817,4 @@ mod tests {
             r#"{"error":{"code":"invalid_json","message":"invalid JSON","type":"proxy_error"}}"#
         );
     }
-
-    /// The spec must actually describe every route the router serves.
-    #[test]
-    fn spec_covers_every_documented_route() {
-        let spec: serde_json::Value = serde_json::from_str(&openapi_json()).unwrap();
-        let paths = spec["paths"].as_object().expect("paths");
-        let mut got: Vec<&str> = paths.keys().map(String::as_str).collect();
-        got.sort_unstable();
-        assert_eq!(
-            got,
-            [
-                "/api/config",
-                "/api/dashboard",
-                "/api/dashboard/now",
-                "/api/settings/account",
-                "/api/settings/clients",
-                "/api/settings/governor",
-                "/api/settings/history",
-                "/api/settings/limits",
-                "/api/settings/nim-keys",
-                "/api/settings/upstream",
-                "/api/settings/users",
-                "/api/settings/validate-key",
-                "/setup",
-                "/setup/validate-key",
-            ]
-        );
-        // The 12 `/api/*` routes are exactly the ones behind the session
-        // guard; the two `/setup` routes are documented as unauthenticated.
-        assert_eq!(got.iter().filter(|p| p.starts_with("/api/")).count(), 12);
-    }
 }

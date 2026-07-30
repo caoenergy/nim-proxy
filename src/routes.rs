@@ -180,14 +180,12 @@ const ROUTES: &[RouteContract] = &[
         phase: Phase::PostSetup,
         probe_path: "/api/settings/account",
     },
-    // Intentionally wrong for the committed red proof: /health is reachable
-    // in both phases, so the E2E matrix must report route-contract:phase.
     RouteContract {
         access: Access::Public,
         method: "GET",
         openapi: false,
         path: HEALTH,
-        phase: Phase::PostSetup,
+        phase: Phase::Always,
         probe_path: HEALTH,
     },
     RouteContract {
@@ -244,7 +242,7 @@ const ROUTES: &[RouteContract] = &[
         openapi: false,
         path: V1_WILDCARD,
         phase: Phase::PostSetup,
-        probe_path: "/v1/models",
+        probe_path: "/v1/chat/completions",
     },
 ];
 
@@ -256,6 +254,47 @@ const ASSET_ROUTES: &[RouteContract] = &[];
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
+    const REGISTERED_API_PATHS: [&str; 12] = [
+        API_DASHBOARD,
+        API_DASHBOARD_NOW,
+        API_CONFIG,
+        API_SETTINGS_NIM_KEYS,
+        API_SETTINGS_CLIENTS,
+        API_SETTINGS_UPSTREAM,
+        API_SETTINGS_LIMITS,
+        API_SETTINGS_HISTORY,
+        API_SETTINGS_GOVERNOR,
+        API_SETTINGS_USERS,
+        API_SETTINGS_ACCOUNT,
+        API_SETTINGS_VALIDATE_KEY,
+    ];
+
+    fn assert_registered_api_paths(registered_api_paths: &[&str]) {
+        assert_eq!(
+            registered_api_paths.len(),
+            12,
+            "route-contract:registration: every nested /api registration must be reconciled"
+        );
+        for registered_path in registered_api_paths {
+            let full_path = format!("{API_PREFIX}{registered_path}");
+            assert!(
+                ROUTES
+                    .iter()
+                    .any(|route| route.path == full_path && route.openapi),
+                "route-contract:registration: {API_PREFIX} + {registered_path} is absent from the inventory"
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "route-contract:registration")]
+    fn registration_self_test_names_relative_path_drift() {
+        let mut drifted = REGISTERED_API_PATHS;
+        drifted[0] = "/drifted-dashboard";
+        assert_registered_api_paths(&drifted);
+    }
 
     #[test]
     fn inventory_agrees_with_generated_openapi() {
@@ -265,6 +304,47 @@ mod tests {
 
         assert_eq!(ROUTES.len(), 23, "route-contract:inventory");
         assert!(ASSET_ROUTES.is_empty(), "route-contract:assets");
+        assert_registered_api_paths(&REGISTERED_API_PATHS);
+        let mut method_paths = HashSet::new();
+        let mut probes = HashSet::new();
+        for route in ROUTES {
+            assert!(
+                method_paths.insert((route.method, route.path)),
+                "route-contract:inventory: duplicate {} {}",
+                route.method,
+                route.path
+            );
+            assert!(
+                probes.insert((route.method, route.probe_path)),
+                "route-contract:probe: duplicate {} {}",
+                route.method,
+                route.probe_path
+            );
+        }
+        assert_eq!(
+            ROUTES
+                .iter()
+                .filter(|route| route.phase == Phase::Always)
+                .count(),
+            4,
+            "route-contract:phase: health, both login methods, and logout are phase-independent"
+        );
+        assert_eq!(
+            ROUTES
+                .iter()
+                .filter(|route| route.phase == Phase::PreSetup)
+                .count(),
+            3,
+            "route-contract:phase: setup GET and both setup POST routes"
+        );
+        assert_eq!(
+            ROUTES
+                .iter()
+                .filter(|route| route.phase == Phase::PostSetup)
+                .count(),
+            16,
+            "route-contract:phase: operator and client routes"
+        );
         assert!(
             !ROUTES
                 .iter()

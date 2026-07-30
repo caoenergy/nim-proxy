@@ -14,6 +14,18 @@
 
 use std::path::PathBuf;
 
+fn assert_global_security(spec: &serde_json::Value) {
+    let global = spec["security"].as_array().expect("document security");
+    assert_eq!(
+        global,
+        &[
+            serde_json::json!({"session_cookie": []}),
+            serde_json::json!({"basic_auth": []}),
+        ],
+        "route-contract:openapi-security: the /api/* routes inherit exactly session-cookie or Basic credentials"
+    );
+}
+
 fn spec_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("openapi.json")
 }
@@ -53,6 +65,20 @@ fn spec_is_usable() {
 
     let paths = spec["paths"].as_object().expect("paths");
     assert_eq!(paths.len(), 14, "12 /api/* routes + the 2 setup routes");
+    for omitted in [
+        "/",
+        "/dash",
+        "/health",
+        "/login",
+        "/logout",
+        "/metrics",
+        "/v1/{*path}",
+    ] {
+        assert!(
+            !paths.contains_key(omitted),
+            "{omitted}: non-control-plane or upstream-owned route must stay outside this spec"
+        );
+    }
 
     for (path, item) in paths {
         for (method, op) in item.as_object().expect("path item") {
@@ -99,8 +125,7 @@ fn spec_is_usable() {
     }
 
     // The document-level requirement the /api/* routes inherit.
-    let global = spec["security"].as_array().expect("document security");
-    assert_eq!(global.len(), 2, "session cookie or header credentials");
+    assert_global_security(&spec);
 
     // Every schema a response references must actually be in components.
     let schemas = spec["components"]["schemas"]
@@ -117,5 +142,18 @@ fn spec_is_usable() {
     let security = spec["components"]["securitySchemes"]
         .as_object()
         .expect("securitySchemes");
-    assert!(security.contains_key("session_cookie") && security.contains_key("basic_auth"));
+    assert_eq!(security["session_cookie"]["type"], "apiKey");
+    assert_eq!(security["session_cookie"]["in"], "cookie");
+    assert_eq!(security["session_cookie"]["name"], "nimproxy_session");
+    assert_eq!(security["basic_auth"]["type"], "http");
+    assert_eq!(security["basic_auth"]["scheme"], "basic");
+}
+
+#[test]
+#[should_panic(expected = "route-contract:openapi-security")]
+fn global_security_self_test_names_wrong_requirement() {
+    let mut spec: serde_json::Value =
+        serde_json::from_str(&nim_proxy::openapi_json()).expect("generated OpenAPI");
+    spec["security"] = serde_json::json!([{"wrong_scheme": []}]);
+    assert_global_security(&spec);
 }
