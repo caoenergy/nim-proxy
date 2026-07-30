@@ -63,8 +63,12 @@ that proof.
   catalog resolution, request-stage stylesheet loss on all three pages, and a
   later operator application-script loss. They require failed CSS to leave the
   page hard-hidden with no bootstrap/catalog/API work, bootstrap before
-  catalog, catalog before reveal or API work, and later dependency failure to
-  reveal only the emergency message with no subsequent application request.
+  catalog, catalog before reveal or application-data work, and later
+  dependency failure to reveal only the emergency message with no subsequent
+  application request. The authenticated operator `/api/config` read is a
+  catalog-selection prerequisite, not application-data work; startup probes
+  allow exactly that read between bootstrap and catalog while continuing to
+  reject dashboard/history requests before catalog resolution.
   Every behavior mode treats browser/proxy shutdown and run-directory removal
   as part of the result; cleanup failure is a failing check.
   Locale-precedence mode additionally requires the operator sequence

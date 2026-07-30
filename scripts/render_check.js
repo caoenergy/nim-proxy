@@ -363,6 +363,30 @@ function servedPageSelftest() {
 
 if (args.includes('--served-page-selftest')) process.exit(servedPageSelftest());
 
+function operatorConfigStartupFailures({
+  isDashboard,
+  startupProbe,
+  requestTimeline,
+  catalogPath,
+}) {
+  const configIndexes = requestTimeline
+    .map((row, index) => row.path === '/api/config' ? index : -1)
+    .filter(index => index >= 0);
+  const configRequired = isDashboard
+    && !['bootstrap-failure', 'css-failure'].includes(startupProbe);
+  if (!configRequired) {
+    return configIndexes.length ? ['operator-config-forbidden'] : [];
+  }
+  if (configIndexes.length !== 1) return ['operator-config-count'];
+  const bootstrapIndex = requestTimeline.findIndex(row =>
+    row.path === '/api/locale-bootstrap');
+  const catalogIndex = requestTimeline.findIndex(row =>
+    row.path === catalogPath);
+  return bootstrapIndex < configIndexes[0] && configIndexes[0] < catalogIndex
+    ? []
+    : ['operator-config-order'];
+}
+
 function catalogStartupSelftest() {
   const failures = [];
   const runSource = String(main);
@@ -396,6 +420,60 @@ function catalogStartupSelftest() {
   ];
   for (const [name, observed] of required) {
     if (!observed) failures.push(`${name}: startup proof is missing`);
+  }
+  if (typeof operatorConfigStartupFailures !== 'function') {
+    failures.push('operator-config-order: executable startup-order proof is missing');
+  } else {
+    const configOrderCases = [
+      {
+        name: 'valid-delayed-catalog',
+        input: ['dashboard', 'delayed-catalog', ['bootstrap', 'config', 'catalog']],
+        expected: [],
+      },
+      {
+        name: 'duplicate-config',
+        input: ['dashboard', 'delayed-catalog', ['bootstrap', 'config', 'config', 'catalog']],
+        expected: ['operator-config-count'],
+      },
+      {
+        name: 'config-before-bootstrap',
+        input: ['dashboard', 'delayed-catalog', ['config', 'bootstrap', 'catalog']],
+        expected: ['operator-config-order'],
+      },
+      {
+        name: 'bootstrap-failure-config',
+        input: ['dashboard', 'bootstrap-failure', ['bootstrap', 'config']],
+        expected: ['operator-config-forbidden'],
+      },
+      {
+        name: 'css-failure-config',
+        input: ['dashboard', 'css-failure', ['config']],
+        expected: ['operator-config-forbidden'],
+      },
+      {
+        name: 'public-page-config',
+        input: ['login', 'delayed-catalog', ['bootstrap', 'config', 'catalog']],
+        expected: ['operator-config-forbidden'],
+      },
+    ];
+    for (const { name, input: [page, probe, order], expected } of configOrderCases) {
+      const paths = {
+        bootstrap: '/api/locale-bootstrap',
+        config: '/api/config',
+        catalog: '/assets/operator/locales/en-US.json',
+      };
+      const observed = operatorConfigStartupFailures({
+        isDashboard: page === 'dashboard',
+        startupProbe: probe,
+        requestTimeline: order.map((item, at) => ({ at, path: paths[item] })),
+        catalogPath: paths.catalog,
+      });
+      if (JSON.stringify(observed) !== JSON.stringify(expected)) {
+        failures.push(
+          `operator-config-order:${name}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(observed)}`,
+        );
+      }
+    }
   }
   if (typeof probeCatalogHtml === 'function') {
     failures.push('catalog-probe-response-stage: inline-HTML catalog mutator survives');
@@ -1666,6 +1744,21 @@ async function main() {
       row.path === catalogPath);
     const configIndex = requestTimeline.findIndex(row =>
       row.path === '/api/config');
+    const operatorConfigRequired = IS_DASHBOARD
+      && !['bootstrap-failure', 'css-failure'].includes(startupProbe);
+    for (const failure of operatorConfigStartupFailures({
+      isDashboard: IS_DASHBOARD,
+      startupProbe,
+      requestTimeline,
+      catalogPath,
+    })) {
+      const detail = {
+        'operator-config-forbidden': 'config read is forbidden for this startup path',
+        'operator-config-count': 'expected exactly one config read',
+        'operator-config-order': 'expected bootstrap < config < catalog',
+      }[failure];
+      startupFailures.push(`${failure}: ${detail}`);
+    }
     if (startupProbe === 'css-failure') {
       if (!requestTimeline.some(row => row.path === stylesheetPath)) {
         startupFailures.push('css-before-bootstrap: stylesheet failure was not forced');
@@ -1760,7 +1853,7 @@ async function main() {
       );
     }
     const beforeCatalog = appRequests.filter(row =>
-      !(startupProbe === 'locale-precedence' && row.path === '/api/config')
+      !(operatorConfigRequired && row.path === '/api/config')
       && (!startupState.catalogReleasedAt || row.at < startupState.catalogReleasedAt));
     if (beforeCatalog.length) {
       startupFailures.push(
