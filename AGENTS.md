@@ -90,8 +90,10 @@ never claim independence that did not occur.
   `Decision`, `Research Finding`, `Component`, and `Runbook`. Update affected
   pages with the behavior they explain.
 - **Index and chronology:** update `knowledge/index.md` when adding, moving, or
-  retiring a concept, and append `knowledge/log.md` for every ingest. Never
-  leave a durable fact only in the log.
+  retiring a concept, and add every new `knowledge/log.md` entry as the newest
+  entry at the top. Append-only means existing log entries are never rewritten;
+  because the file is reverse chronological, new entries are inserted at the
+  top. Never leave a durable fact only in the log.
 - **Lint:** search for contradictions, stale claims, duplicate or orphan
   concepts, missing cross-links, broken local links, and log-only facts.
   Investigate a code/knowledge mismatch as a possible code defect or stale

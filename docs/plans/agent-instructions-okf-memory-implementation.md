@@ -688,16 +688,17 @@ Write an ADR with:
 - **References:** the OKF resource above and Karpathy's LLM Wiki gist at
   `https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f`.
 
-Add the decision to the Decisions section of `knowledge/index.md`. Append:
+Add the decision to the Decisions section of `knowledge/index.md`. Add the
+following entry as the newest entry at the top of `knowledge/log.md` without
+rewriting prior entries:
 
 ```markdown
 ## [2026-07-30] decision — make agent instructions an OKF memory router
 ```
 
-to `knowledge/log.md`, followed by the decision, migration boundary, and
-validator evidence. Do not copy the entire guide into the log. The schema now
-has a durable destination before the next step removes its detailed copy from
-`AGENTS.md`.
+Follow it with the decision, migration boundary, and validator evidence. Do not
+copy the entire guide into the log. The schema now has a durable destination
+before the next step removes its detailed copy from `AGENTS.md`.
 
 - [x] **Step 3: Replace `AGENTS.md` with the stable router**
 
@@ -955,13 +956,14 @@ CI and the proof router now call the same committed syntax check.
 - [x] **Step 2: Reconcile testing memory and chronology**
 
 Update `knowledge/testing/test-strategy.md` to state that PR CI calls both
-agent-guide modes. Append:
+agent-guide modes. Add the following entry as the newest entry at the top of
+`knowledge/log.md` without rewriting prior entries:
 
 ```markdown
 ## [2026-07-30] lint — enforce the agent-guide memory contract in CI
 ```
 
-to `knowledge/log.md`, naming the two commands and what they reject.
+Name the two commands and what they reject.
 
 - [x] **Step 3: Run final local non-Rust verification**
 
@@ -1058,3 +1060,11 @@ external CI check, and the next approved v0.6.6 work item.
   status --short --branch` printed only `## work/v0.6.6-okf-agent-guide`.
   Both agent-guide and embedded-page syntax modes exited 0 with the same green
   output recorded above. No Rust/Cargo command was required for Task 4.
+
+**Final-review fix wave (2026-07-30):** Correct the Task 4 log placement and
+make every Task 3/Task 4 chronology instruction explicit: add new entries at
+the top without rewriting prior entries, preserving reverse-chronological
+order. The pre-fix date parser rejected the trailing `2026-07-30` entry and
+the placement assertion rejected Task 3 as the first dated heading; after the
+fix, both focused assertions plus the guide self-test, normal validator, and
+`git diff --check` passed. Independent review found no findings.

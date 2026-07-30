@@ -53,7 +53,10 @@ The operating loop is:
    completely, inspect relevant chronology, then follow links and file history.
 2. **Ingest** — promote reproduced, measured, authoritatively referenced, or
    approved knowledge into the concept page that owns it. Update the semantic
-   index for concept lifecycle changes and append chronology for every ingest.
+   index for concept lifecycle changes and add every new chronology entry as
+   the newest entry at the top. Append-only means existing log entries are
+   never rewritten; because the file is reverse chronological, new entries are
+   inserted at the top.
 3. **Lint** — search for contradictions, stale claims, duplicates, orphans,
    missing cross-links, broken local links, and durable facts left only in the
    log. A code/knowledge mismatch is investigated rather than silently resolved
