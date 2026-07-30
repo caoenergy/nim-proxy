@@ -456,13 +456,84 @@ async function cleanupSelftest() {
   for (const dir of leaked) {
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
-  fs.rmSync(probeRoot, { recursive: true, force: true });
 
   const failures = [];
   if (result.timedOut) failures.push('render process stayed alive after reporting its result');
   else if (result.code !== 0) failures.push(`render process exited ${result.code}`);
   if (leaked.length) failures.push(`left ${leaked.length} nimproxy-render temp director${leaked.length === 1 ? 'y' : 'ies'}`);
   if (/note: left .*nimproxy-render-/.test(stderr)) failures.push('cleanup failure was downgraded to a note');
+
+  const startupMarker = path.join(probeRoot, 'proxy-exit.json');
+  const startupBefore = renderTempdirs();
+  let startupStderr = '';
+  const startup = spawn(process.execPath, [__filename, '--page', 'setup'], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      CHROME: realChrome,
+      NIMPROXY_RENDER_HEALTH_PATH: '/cleanup-selftest-never-ready',
+      NIMPROXY_RENDER_HEALTH_TIMEOUT_MS: '200',
+      NIMPROXY_RENDER_PROXY_EXIT_MARKER: startupMarker,
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  startup.stderr.on('data', chunk => { startupStderr += chunk.toString(); });
+  const startupResult = await Promise.race([
+    new Promise(resolve => startup.once('exit', code => resolve({ code, timedOut: false }))),
+    sleep(10000).then(() => ({ code: null, timedOut: true })),
+  ]);
+  if (startupResult.timedOut) startup.kill('SIGKILL');
+  await sleep(100);
+  const startupLeaked = [...renderTempdirs()].filter(dir => !startupBefore.has(dir));
+  let startupExit = null;
+  try {
+    startupExit = JSON.parse(fs.readFileSync(startupMarker, 'utf8'));
+  } catch (_) {}
+  if (startupResult.timedOut) failures.push('startup-timeout render process stayed alive');
+  else if (startupResult.code !== 2) failures.push(`startup-timeout render process exited ${startupResult.code}`);
+  if (!startupStderr.includes('proxy did not become healthy')) {
+    failures.push('startup-timeout did not report the health failure');
+  }
+  if (!startupExit?.runDirectoryExisted) {
+    failures.push('startup-timeout removed the run directory before the proxy exit was observed');
+  }
+  if (startupLeaked.length) {
+    failures.push(`startup-timeout left ${startupLeaked.length} nimproxy-render temp director${startupLeaked.length === 1 ? 'y' : 'ies'}`);
+  }
+
+  const localeBefore = renderTempdirs();
+  let localeStderr = '';
+  const locale = spawn(
+    process.execPath,
+    [__filename, '--locale', 'cleanup-selftest-missing'],
+    {
+      cwd: ROOT,
+      env: { ...process.env, CHROME: realChrome },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    },
+  );
+  locale.stderr.on('data', chunk => { localeStderr += chunk.toString(); });
+  const localeResult = await Promise.race([
+    new Promise(resolve => locale.once('exit', code => resolve({ code, timedOut: false }))),
+    sleep(30000).then(() => ({ code: null, timedOut: true })),
+  ]);
+  if (localeResult.timedOut) locale.kill('SIGKILL');
+  await sleep(100);
+  const localeLeaked = [...renderTempdirs()].filter(dir => !localeBefore.has(dir));
+  if (localeResult.timedOut) failures.push('missing-locale render process stayed alive');
+  else if (localeResult.code !== 1) failures.push(`missing-locale render process exited ${localeResult.code}`);
+  if (!localeStderr.includes('missing locale locales/cleanup-selftest-missing.json')) {
+    failures.push('missing-locale failure hid its originating diagnostic');
+  }
+  if (localeLeaked.length) {
+    failures.push(`missing-locale left ${localeLeaked.length} nimproxy-render temp director${localeLeaked.length === 1 ? 'y' : 'ies'}`);
+  }
+
+  for (const dir of [...startupLeaked, ...localeLeaked]) {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+  fs.rmSync(probeRoot, { recursive: true, force: true });
+
   if (failures.length) {
     for (const failure of failures) console.error(`[cleanup] ${failure}`);
     if (stderr.trim()) console.error(stderr.trim());
@@ -700,14 +771,27 @@ async function startProxy(tmpdir) {
     },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
+  if (process.env.NIMPROXY_RENDER_PROXY_EXIT_MARKER) {
+    proc.once('exit', () => {
+      fs.writeFileSync(
+        process.env.NIMPROXY_RENDER_PROXY_EXIT_MARKER,
+        JSON.stringify({
+          pid: proc.pid,
+          runDirectoryExisted: fs.existsSync(tmpdir),
+        }),
+      );
+    });
+  }
   const origin = `http://127.0.0.1:${port}`;
   let stderr = '';
   proc.stderr.on('data', chunk => { stderr += chunk.toString(); });
-  const deadline = Date.now() + 20000;
+  const healthPath = process.env.NIMPROXY_RENDER_HEALTH_PATH || '/health';
+  const healthTimeoutMs = Number(process.env.NIMPROXY_RENDER_HEALTH_TIMEOUT_MS || 20000);
+  const deadline = Date.now() + healthTimeoutMs;
   while (Date.now() < deadline) {
     if (proc.exitCode !== null) throw new Error(`proxy exited early: ${proc.exitCode}\n${stderr}`);
     try {
-      const response = await fetch(origin + '/health');
+      const response = await fetch(origin + healthPath);
       if (response.ok) return { proc, origin };
     } catch (_) {}
     await sleep(50);
