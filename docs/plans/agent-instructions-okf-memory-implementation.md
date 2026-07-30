@@ -21,6 +21,10 @@ own checks can fail, and is reused by CI.
 ## Global Constraints
 
 - Work from `release/v0.6.6`; do not push or modify `main`.
+- Repository work has standing consent to create isolated worktrees and task
+  branches. Each task branch starts from the integration branch named by the
+  active plan, and each work-item PR targets that integration branch. Only the
+  final integration PR targets `main`.
 - The approved design is
   `docs/plans/v0.6.6-v0.6.7-stabilization-design.md`, section
   **OKF-native agent instructions**.
@@ -124,6 +128,13 @@ REQUIRED = {
         "red → green",
         "independent review",
     ),
+    "contract:repository": (
+        "## Repository operations",
+        "isolated worktree",
+        "integration branch named by the active plan",
+        "work-item PR",
+        "Only the final integration PR targets `main`",
+    ),
     "contract:memory": (
         "## Memory: Query → Ingest → Lint",
         "Query",
@@ -209,6 +220,12 @@ CASES = {
         "AGENTS.md",
         "independent review",
         "self review",
+    ),
+    "missing-repository": (
+        "contract:repository",
+        "AGENTS.md",
+        "## Repository operations",
+        "## Git operations",
     ),
     "missing-proof-route": (
         "contract:proof-route",
@@ -651,6 +668,7 @@ Use this exact top-level structure:
 
 ## Start here
 ## Invariants
+## Repository operations
 ## Work loop
 ## Memory: Query → Ingest → Lint
 ## Verification and review
@@ -691,6 +709,21 @@ Required content by section:
   release note.
 - Clarify that identifier freezing applies to label-only work; deliberate
   contract rationalization is separate work.
+
+**Repository operations**
+
+- Treat worktree and task-branch creation as standing repository
+  authorization; do not ask the owner for repeated consent.
+- Resolve the current integration branch from the active plan rather than
+  hard-coding a release name.
+- Create every independently reviewable work item in an isolated worktree on
+  a task branch based on that integration branch. Prefer native worktree
+  support; otherwise use Git's worktree support and verify the project-local
+  worktree directory is ignored before creation.
+- Open each work-item PR against the integration branch. Keep `main`
+  untouched; only the final integration PR targets `main`.
+- Preserve unrelated changes. Remove a worktree only after its branch is
+  safely integrated and retain the branch/PR evidence required by the plan.
 
 **Work loop**
 
