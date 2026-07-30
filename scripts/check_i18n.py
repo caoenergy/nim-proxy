@@ -235,12 +235,77 @@ def lint_runtime_helpers(name: str, raw: str) -> list:
     if not body:
         return []
     js = strip_comments(body.group(1))
-    called = set(re.findall(r"\b(t|tRaw|tHtml|applyStatic|rawMsg|fill)\s*\(", js))
-    defined = set(re.findall(r"(?:const|let|var|function)\s+(t|tRaw|tHtml|applyStatic|rawMsg|fill)\b", js))
+    helpers = (
+        r"message|setMessageText|setMessageAttr|applyStatic|"
+        r"t|tRaw|tHtml|rawMsg|fill"
+    )
+    called = set(re.findall(rf"\b({helpers})\s*\(", js))
+    defined = set(
+        re.findall(rf"(?:const|let|var|function)\s+({helpers})\b", js)
+    )
     return [
         f"{name}: calls {fn}() but never defines it — the page will not localize"
         for fn in sorted(called - defined)
     ]
+
+
+I18N_TEXT_ATTRS = {"title", "placeholder", "aria-label", "alt"}
+
+
+def lint_catalog_sinks(name: str, raw: str) -> list:
+    """Return ``(check id, detail)`` for catalog values in unsafe contexts.
+
+    This is deliberately a narrow source contract, not a JavaScript parser.
+    The runtime exposes one plain ``message()`` value type, and every permitted
+    call shape is explicit enough to identify mechanically. Browser probes
+    separately prove the helpers' actual DOM behavior.
+    """
+    problems = []
+    source = strip_comments(raw)
+
+    if re.search(r'data-i18n-html=|\btHtml\s*\(', source):
+        problems.append((
+            "structured-message-html",
+            f"{name}: structured catalog message uses an HTML-producing path",
+        ))
+
+    for match in re.finditer(
+        r"\bsetMessageAttr\s*\([^,]+,\s*['\"]([^'\"]+)['\"]", source
+    ):
+        attr = match.group(1)
+        if attr not in I18N_TEXT_ATTRS:
+            problems.append((
+                "forbidden-catalog-context",
+                f"{name}: catalog value targets forbidden attribute {attr!r}",
+            ))
+
+    forbidden_patterns = (
+        r"\.(?:href|src|onclick)\s*=\s*message\s*\(",
+        r"\.style(?:\.[A-Za-z_$][\w$]*)?\s*=\s*message\s*\(",
+        r"\b(?:script|scriptNode)\.textContent\s*=\s*message\s*\(",
+        r"\b(?:style|styleNode)\.textContent\s*=\s*message\s*\(",
+        r"\b(?:svg|svgNode)\.(?:innerHTML|textContent)\s*=\s*message\s*\(",
+        r"(?:href|src|style|onclick)=[\"'][^\"']*\$\{message\s*\(",
+    )
+    for pattern in forbidden_patterns:
+        if re.search(pattern, source):
+            problems.append((
+                "forbidden-catalog-context",
+                f"{name}: catalog value enters URL/style/event/script/CSS/SVG context",
+            ))
+
+    if re.search(r"\.innerHTML\s*=\s*message\s*\(", source):
+        problems.append((
+            "sink-context",
+            f"{name}: plain catalog value reaches an HTML parser without escaping",
+        ))
+    if re.search(r"\$\{message\s*\(", source):
+        problems.append((
+            "sink-context",
+            f"{name}: plain catalog value is interpolated into an HTML string",
+        ))
+
+    return problems
 
 
 def lint_untagged(name: str, raw: str) -> list:
@@ -448,6 +513,38 @@ SELFTEST_CASES = [
     ("lowercase-token", "const z = 'sticky';", None),
 ]
 
+SINK_SELFTEST_CASES = [
+    # Allowed plain-text contexts.
+    ("element-text", "setMessageText(el, 'probe');", None),
+    ("attr-title", "setMessageAttr(el, 'title', 'probe');", None),
+    ("attr-placeholder", "setMessageAttr(el, 'placeholder', 'probe');", None),
+    ("attr-aria-label", "setMessageAttr(el, 'aria-label', 'probe');", None),
+    ("attr-alt", "setMessageAttr(el, 'alt', 'probe');", None),
+    # Forbidden contexts are independent so a broad check cannot hide a hole.
+    ("attr-href", "setMessageAttr(el, 'href', 'probe');", "forbidden-catalog-context"),
+    ("attr-src", "setMessageAttr(el, 'src', 'probe');", "forbidden-catalog-context"),
+    ("attr-style", "setMessageAttr(el, 'style', 'probe');", "forbidden-catalog-context"),
+    ("attr-onclick", "setMessageAttr(el, 'onclick', 'probe');", "forbidden-catalog-context"),
+    ("property-href", "el.href = message('probe');", "forbidden-catalog-context"),
+    ("property-src", "el.src = message('probe');", "forbidden-catalog-context"),
+    ("property-style", "el.style.cssText = message('probe');", "forbidden-catalog-context"),
+    ("property-onclick", "el.onclick = message('probe');", "forbidden-catalog-context"),
+    ("script-text", "scriptNode.textContent = message('probe');", "forbidden-catalog-context"),
+    ("css-text", "styleNode.textContent = message('probe');", "forbidden-catalog-context"),
+    ("raw-svg", "svgNode.innerHTML = message('probe');", "forbidden-catalog-context"),
+    ("html-string", "el.innerHTML = message('probe');", "sink-context"),
+    (
+        "escaped-html-string",
+        "el.innerHTML = '<span>' + esc(message('probe')) + '</span>';",
+        None,
+    ),
+    (
+        "structured-html",
+        '<span data-i18n-html="probe"></span>',
+        "structured-message-html",
+    ),
+]
+
 SELFTEST_PAGE = """<!doctype html><html><body>
 <script type="application/json" id="i18n-catalog">{"locale":"en-US","messages":{}}</script>
 <script>
@@ -479,12 +576,28 @@ def selftest() -> int:
         else:
             print(f"  ok  {label:24} trips {want}")
 
+    for label, snippet, want in SINK_SELFTEST_CASES:
+        page = SELFTEST_PAGE % snippet
+        found = {check for check, _ in lint_catalog_sinks("selftest", page)}
+        if want is None:
+            if found:
+                failures.append(f"{label}: expected to pass, tripped {sorted(found)}")
+            else:
+                print(f"  ok  {label:24} passes")
+        elif want not in found:
+            failures.append(
+                f"{label}: expected {want!r}, tripped {sorted(found) or 'nothing'}"
+            )
+        else:
+            print(f"  ok  {label:24} trips {want}")
+
     if failures:
         print("\nselftest FAILED:")
         for f in failures:
             print("  -", f)
         return 1
-    print(f"\nselftest ok — {len(SELFTEST_CASES)} cases, every check observed to fail")
+    total = len(SELFTEST_CASES) + len(SINK_SELFTEST_CASES)
+    print(f"\nselftest ok — {total} cases, every check observed to fail")
     return 0
 
 
@@ -550,9 +663,13 @@ def main() -> int:
         # any that is added later.
         for mid, msg in catalog.items():
             if "<" in msg["en"] or ">" in msg["en"]:
-                errors.append(f"{name}: {mid} contains raw markup")
-            if re.search(r"&(?:[a-zA-Z]+|#\d+);", msg["en"]):
-                errors.append(f"{name}: {mid} contains an HTML entity; store plain text")
+                errors.append(f"[catalog-markup] {name}: {mid} contains raw markup")
+            decoded = htmlmod.unescape(msg["en"])
+            if decoded != msg["en"] and ("<" in decoded or ">" in decoded):
+                errors.append(
+                    f"[catalog-entity-markup] {name}: {mid} contains "
+                    "entity-encoded markup"
+                )
 
         # Only text-bearing attributes are localizable; the runtime enforces
         # the same set, so a mismatch here is a bug in one of the two.
@@ -619,6 +736,10 @@ def main() -> int:
     for name in ("src/dashboard.html", "src/setup.html"):
         page = (ROOT / name).read_text()
         errors += lint_runtime_helpers(name, page)
+        errors += [
+            f"[{check}] {detail}"
+            for check, detail in lint_catalog_sinks(name, page)
+        ]
         errors += lint_untagged(name, page)
         if 'id="i18n-catalog"' in page:
             errors += lint_retired_vocabulary(name, page)

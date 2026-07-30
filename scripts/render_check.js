@@ -115,10 +115,9 @@ const localeArg = (() => {
   const i = args.indexOf('--locale');
   return i >= 0 ? args[i + 1] : null;
 })();
-// Catalog values are escaped once at load, so no render helper may escape its
-// label argument again (knowledge/decisions/message-catalog-and-escaping.md).
-// English labels contain no escapable character, so a second escape is
-// invisible until a real locale ships. This makes it visible now.
+// Catalog values are plain Unicode text. The probe proves ordinary text and
+// allowed attributes render literally, while fixed-markup HTML builders
+// perform their one context-appropriate escape at the sink.
 const escapeProbe = args.includes('--escape-probe');
 // Appended to every catalog value under --escape-probe. See the mutation below.
 const PROBE_MARKER = 'Ampersand';
@@ -572,43 +571,60 @@ async function main() {
     return r.result.value;
   };
 
-  /* Both runtimes must refuse to localize an attribute outside the allowlist.
-     This was asserted by two knowledge pages and a lint comment while only ONE
-     of the two pages actually enforced it, and the wizard shipped without the
-     guard. Reasoning found that; nothing re-checks it, so assert it in-page on
-     a synthetic element rather than trusting either description. */
-  const attrGuard = await evaluate(`
+  /* Exercise the page's real plain-message runtime. Static self-tests cover
+     source-level forbidden contexts; this probe proves the helpers use native
+     DOM sinks, preserve literal Unicode/entities/markup, and reject every
+     non-text attribute. */
+  const sinkContext = await evaluate(`
     (() => {
-      if (typeof applyStatic !== 'function') return 'applyStatic is not reachable';
-      if (typeof I18N_ATTRS === 'undefined') return 'I18N_ATTRS is not defined';
+      const required = ['message', 'setMessageText', 'setMessageAttr'];
+      for (const name of required) {
+        if (typeof globalThis[name] !== 'function') return name + ' is not reachable';
+      }
+      if (typeof I18N_TEXT_ATTRS === 'undefined') return 'I18N_TEXT_ATTRS is not defined';
+      for (const old of ['rawMsg', 'tRaw', 'tHtml']) {
+        if (typeof globalThis[old] !== 'undefined') return old + ' escaped/plain compatibility helper survives';
+      }
+      const ids = Object.keys(MSG);
+      if (!ids.length) return 'catalog has no probe id';
+      const id = ids[0];
+      const expected = message(id);
+      if (!expected.includes(${JSON.stringify(PROBE_MARKER)})) return 'message() did not return the hostile probe';
+      if (!expected.includes('<b>${PROBE_TAG_TEXT}</b>')) return 'message() did not return literal markup text';
+
       const host = document.createElement('div');
-      // A localizable attribute must be set; a scripting one must be refused.
-      host.innerHTML =
-        '<span id="__probe_ok" data-i18n-attr="title:__missing_id"></span>' +
-        '<span id="__probe_bad" data-i18n-attr="onclick:__missing_id"></span>' +
-        '<span id="__probe_style" data-i18n-attr="style:__missing_id"></span>';
       document.body.appendChild(host);
-      // The guard reports refusals with console.error, which this gate treats
-      // as a failure — correctly, in general. Silence it for the duration of
-      // the probe only: those two refusals are the behaviour under test, and
-      // the page must keep logging them for real operators.
-      const realError = console.error;
-      console.error = () => {};
-      try { applyStatic(host); }
-      catch (e) { console.error = realError; return 'applyStatic threw: ' + e.message; }
-      finally { console.error = realError; }
-      const ok = host.querySelector('#__probe_ok');
-      const bad = host.querySelector('#__probe_bad');
-      const sty = host.querySelector('#__probe_style');
       const problems = [];
-      if (!ok.hasAttribute('title')) problems.push('refused an allowlisted attribute (title)');
-      if (bad.hasAttribute('onclick')) problems.push('set onclick= from a catalog id');
-      if (sty.hasAttribute('style')) problems.push('set style= from a catalog id');
+
+      const text = document.createElement('span');
+      host.appendChild(text);
+      setMessageText(text, id);
+      if (text.textContent !== expected) problems.push('element text changed catalog bytes');
+      if (text.children.length) problems.push('element text parsed catalog markup');
+
+      for (const attr of ['title', 'placeholder', 'aria-label', 'alt']) {
+        const node = document.createElement(attr === 'alt' ? 'img' : 'input');
+        host.appendChild(node);
+        try { setMessageAttr(node, attr, id); }
+        catch (e) { problems.push('refused allowlisted attribute ' + attr + ': ' + e.message); continue; }
+        if (node.getAttribute(attr) !== expected) problems.push(attr + ' changed catalog bytes');
+      }
+
+      for (const attr of ['href', 'src', 'style', 'onclick']) {
+        const node = document.createElement('a');
+        host.appendChild(node);
+        let error = '';
+        try { setMessageAttr(node, attr, id); }
+        catch (e) { error = e.message; }
+        if (error !== 'forbidden catalog attribute: ' + attr)
+          problems.push(attr + ' did not throw the stable refusal');
+        if (node.hasAttribute(attr)) problems.push(attr + ' was set from a catalog id');
+      }
       host.remove();
       return problems.length ? problems.join('; ') : '';
     })()`);
-  if (attrGuard) {
-    console.error(`FAIL — ${PAGE_REL} attribute allowlist: ${attrGuard}`);
+  if (sinkContext) {
+    console.error(`[sink-context] FAIL — ${PAGE_REL}: ${sinkContext}`);
     proc.kill('SIGKILL');
     process.exit(1);
   }
