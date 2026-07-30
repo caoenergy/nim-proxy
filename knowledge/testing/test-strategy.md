@@ -19,6 +19,45 @@ push + weekly), a weekly **cargo-deny advisories** audit (`audit.yml`), a
 weekly **fuzz** smoke (`fuzz.yml`, layer 4 below), and the weekly **OpenSSF
 Scorecard** scan.
 
+## Proof routing
+
+Use the proof that exercises the changed surface, and preserve the limits of
+that proof.
+
+- **Rust logic:** `cargo test` and `cargo clippy --all-targets -- -D warnings`.
+- **Handlers or wire types:** `UPDATE_OPENAPI=1 cargo test --test openapi`,
+  then verify that `openapi.json` has only the deliberate diff.
+- **Embedded pages:** `node scripts/render_check.js --syntax-selftest` proves
+  the syntax gate can reject its fixtures. `node scripts/render_check.js
+  --syntax-only` parses the real dashboard and setup scripts without launching
+  Chromium. Syntax-only mode proves parsing, not behavior. For behavior, run
+  `node scripts/render_check.js`,
+  `node scripts/render_check.js --escape-probe`,
+  `node scripts/render_check.js --page setup`, and
+  `node scripts/render_check.js --page setup --escape-probe`.
+- **Number, date, and duration formatting:**
+  `TZ=UTC LC_ALL=en_US.UTF-8 node scripts/formatter_fixture.js --check`.
+- **Catalog and UI text:** `python3 scripts/check_i18n.py --selftest`, then
+  `python3 scripts/check_i18n.py`; when English changes, also run
+  `python3 scripts/gen_pseudolocale.py --check`.
+- **Locale files:** `python3 scripts/locale_v1.py --selftest` and
+  `python3 scripts/locale_v1.py --all`.
+- **Pacing, pool, dispatch, and affinity:** use the enforcing mock and load
+  harness; one upstream violation is failure. Follow the setup prerequisites
+  in the [load section](#3-load--scriptsloadtestpy-vs-scriptsmock_nimpy---enforce).
+- **Layout:** use mechanical overflow probes where available plus explicit
+  human review under rendered data and supported widths. Behavior passing does
+  not prove fit.
+- **Before push:** `cargo fmt --check`.
+
+CI runs the automated checks configured in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml);
+it does not perform human layout review or the strict load scenario. `cargo test`
+does not execute embedded-page JavaScript. `render_check.js` proves only its
+covered fixtures and interactions; it is not evidence that every page path,
+locale, or layout is covered. A relevant missing reusable proof is a work
+item. A scratch reproduction may demonstrate a problem but does not become the
+regression gate.
+
 ## 1. Unit — `cargo test` (in `src/`)
 
 Pool semantics (window spread, least-loaded, sticky/spill flags, penalize,

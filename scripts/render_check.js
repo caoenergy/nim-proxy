@@ -25,12 +25,76 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const vm = require('vm');
 const { spawn, execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const FIXTURES = path.join(ROOT, 'tests', 'fixtures', 'api');
 
 const args = process.argv.slice(2);
+
+const SYNTAX_CASES = [
+  { name: 'valid', html: '<script>const ok = 1;</script>', want: null },
+  { name: 'invalid', html: '<script>const = ;</script>', want: 'syntax' },
+  { name: 'missing', html: '<main></main>', want: 'script-block' },
+  {
+    name: 'multiple',
+    html: '<script>const a = 1;</script><script>const b = 2;</script>',
+    want: 'script-block',
+  },
+];
+
+function syntaxProblems(html, filename) {
+  const blocks = [...html.matchAll(/<script>(?:\r?\n)?([\s\S]*?)<\/script>/g)];
+  if (blocks.length !== 1) {
+    return [{
+      check: 'script-block',
+      detail: `${filename}: expected one plain <script>, found ${blocks.length}`,
+    }];
+  }
+  try {
+    new vm.Script(blocks[0][1], { filename });
+    return [];
+  } catch (err) {
+    return [{ check: 'syntax', detail: `${filename}: ${err.message}` }];
+  }
+}
+
+function syntaxSelftest() {
+  const failures = [];
+  for (const { name, html, want } of SYNTAX_CASES) {
+    const problems = syntaxProblems(html, `${name}.html`);
+    const got = problems[0] ? problems[0].check : null;
+    if (got !== want) {
+      failures.push(`${name}: expected check ${want || 'nothing'}, got ${got || 'nothing'}`);
+    } else {
+      console.log(`  ok  ${name}: ${got || 'no problem'}`);
+    }
+  }
+  if (failures.length) {
+    for (const failure of failures) console.error(failure);
+    return 1;
+  }
+  console.log('syntax selftest ok — every check observed');
+  return 0;
+}
+
+if (args.includes('--syntax-selftest')) process.exit(syntaxSelftest());
+
+function syntaxOnly() {
+  const problems = ['dashboard', 'setup'].flatMap((page) => {
+    const filename = path.join('src', `${page}.html`);
+    return syntaxProblems(fs.readFileSync(path.join(ROOT, filename), 'utf8'), filename);
+  });
+  if (problems.length) {
+    for (const { check, detail } of problems) console.error(`[${check}] ${detail}`);
+    return 1;
+  }
+  console.log('embedded page syntax OK — dashboard and setup parse');
+  return 0;
+}
+
+if (args.includes('--syntax-only')) process.exit(syntaxOnly());
 // Which embedded page to drive. The dashboard renders from captured payloads;
 // the wizard has no payloads and is driven by filling and clicking instead.
 // Both were being proved by hand-built one-off harnesses, which is more work

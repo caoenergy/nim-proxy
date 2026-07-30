@@ -422,7 +422,7 @@ marking it complete.
   `node scripts/render_check.js --syntax-selftest` and
   `node scripts/render_check.js --syntax-only`.
 
-- [ ] **Step 1: Capture the baseline before editing**
+- [x] **Step 1: Capture the baseline before editing**
 
 Run:
 
@@ -435,7 +435,7 @@ sed -n '1,220p' knowledge/testing/test-strategy.md
 Save the command output in the task handoff to the reviewer. Do not copy it
 into another repository file.
 
-- [ ] **Step 2: Write the failing embedded-script syntax self-test**
+- [x] **Step 2: Write the failing embedded-script syntax self-test**
 
 Add `node:vm` and syntax-mode argument handling to `scripts/render_check.js`.
 Before implementing extraction, make `syntaxProblems()` return `[]` and add
@@ -457,7 +457,7 @@ const SYNTAX_CASES = [
 `syntaxSelftest()` asserts the exact returned check id. `--syntax-selftest`
 runs it and exits before browser discovery or fixture loading.
 
-- [ ] **Step 3: Observe the syntax self-test fail**
+- [x] **Step 3: Observe the syntax self-test fail**
 
 Run:
 
@@ -472,7 +472,7 @@ invalid: expected check syntax, got nothing
 missing: expected check script-block, got nothing
 ```
 
-- [ ] **Step 4: Implement the reusable syntax mode**
+- [x] **Step 4: Implement the reusable syntax mode**
 
 Implement the standard-library parser:
 
@@ -513,7 +513,7 @@ node scripts/render_check.js --syntax-only
 
 Expected: both exit 0; the self-test names each observed check id.
 
-- [ ] **Step 5: Add an authoritative proof-routing section**
+- [x] **Step 5: Add an authoritative proof-routing section**
 
 Add `## Proof routing` near the top of
 `knowledge/testing/test-strategy.md`. It must contain these accurate routes:
@@ -560,7 +560,7 @@ State the boundaries truthfully:
 - A relevant missing reusable proof is a work item. A scratch reproduction may
   demonstrate a problem but does not become the regression gate.
 
-- [ ] **Step 6: Prove the migration is structurally available**
+- [x] **Step 6: Prove the migration is structurally available**
 
 Run:
 
@@ -580,7 +580,7 @@ Expected:
 - the validator still exits 1 because `AGENTS.md` has not been rewritten, but
   no failure may claim the proof-route destination is absent.
 
-- [ ] **Step 7: Independent losslessness review**
+- [x] **Step 7: Independent losslessness review**
 
 Give the reviewer the baseline output from Step 1, the changed test-strategy
 page, current CI, `scripts/render_check.js`, and the approved design. Require a
@@ -588,7 +588,7 @@ one-to-one accounting of every displaced proof rule, confirmation that the
 syntax self-test observes both failure ids, and an explicit check that the CI
 claims match the workflow. Any missing or overstated rule blocks the commit.
 
-- [ ] **Step 8: Commit the reusable proof and destination**
+- [x] **Step 8: Commit the reusable proof and destination**
 
 ```sh
 git add scripts/render_check.js knowledge/testing/test-strategy.md
@@ -597,6 +597,29 @@ git commit -m "checks: centralize embedded-page proof routing"
 
 Record the structural command and reviewer result beneath Task 2 before
 marking it complete.
+
+**Proof record (2026-07-30):**
+
+- Baseline: captured the old guide proof matrix, CI's first 130 lines, and the
+  test-strategy opening before editing; the Task 2 handoff preserves the
+  commands and migration accounting.
+- RED: `node scripts/render_check.js --syntax-selftest` exited 1 while
+  `syntaxProblems()` returned no problems. The intended fixtures reported
+  `invalid: expected check syntax, got nothing`, `missing: expected check
+  script-block, got nothing`, and `multiple: expected check script-block, got
+  nothing`.
+- GREEN: `node scripts/render_check.js --syntax-selftest` exited 0 and
+  observed exact check ids `syntax` for invalid and `script-block` for missing
+  and multiple; `node scripts/render_check.js --syntax-only` exited 0 and
+  printed `embedded page syntax OK — dashboard and setup parse`.
+- Structural: the required `rg` command located every proof family,
+  `git diff --check` exited 0, and `python3 scripts/check_agent_guide.py`
+  exited 1 only for the intentionally unreplaced AGENTS contract headings;
+  it did not report `[proof-route]`.
+- Independent review: approved with no Critical, Important, or Minor
+  findings. The reviewer confirmed one-to-one proof accounting, exact syntax
+  self-test ids, early syntax-mode exits before Chrome/fixtures, and CI-claim
+  accuracy against `.github/workflows/ci.yml`.
 
 ---
 
