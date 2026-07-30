@@ -104,10 +104,70 @@ applyDynamicStyles(document);
    Catalog values remain plain Unicode text. Native DOM sinks own ordinary
    element and text-bearing attribute contexts. A branded catalog descriptor
    is inert until the fixed-markup HTML sink resolves and escapes it. */
-const I18N = JSON.parse($('i18n-catalog').textContent);
-const MSG = I18N.messages;
+const EMERGENCY_MESSAGE = 'NIM Proxy interface failed to load.';
+let I18N;
+let MSG;
+function failInterface() {
+  document.body.replaceChildren(document.createTextNode(EMERGENCY_MESSAGE));
+  document.body.hidden = false;
+}
+function presentationStylesheetReady() {
+  const sheet = document.getElementById('presentation-stylesheet')?.sheet;
+  try { return Boolean(sheet?.cssRules.length); }
+  catch { return false; }
+}
+function validBootstrap(value) {
+  return value
+    && Object.keys(value).sort().join(',') === 'installed_locales,server_default'
+    && Array.isArray(value.installed_locales)
+    && value.installed_locales.length > 0
+    && value.installed_locales.every(locale => typeof locale === 'string')
+    && typeof value.server_default === 'string'
+    && value.installed_locales.includes(value.server_default);
+}
+function validCatalog(value, locale) {
+  return value
+    && Object.keys(value).sort().join(',') === 'locale,messages'
+    && value.locale === locale
+    && value.messages
+    && !Array.isArray(value.messages)
+    && typeof value.messages === 'object'
+    && Object.values(value.messages).every(value => typeof value === 'string');
+}
+async function responseJson(path) {
+  const response = await fetch(path, { headers: { Accept: 'application/json' } });
+  if (!response.ok) throw new Error('startup request failed');
+  return response.json();
+}
+function loadScript(path) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = path;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error('application asset failed'));
+    document.body.appendChild(script);
+  });
+}
+const catalogReady = (async () => {
+  if (!presentationStylesheetReady()) return;
+  const bootstrap = await responseJson('/api/locale-bootstrap');
+  if (!validBootstrap(bootstrap)) throw new Error('invalid locale bootstrap');
+  const locale = bootstrap.server_default;
+  const catalog = await responseJson(
+    `/assets/operator/locales/${encodeURIComponent(locale)}.json`,
+  );
+  if (!validCatalog(catalog, locale)) throw new Error('invalid locale catalog');
+  I18N = catalog;
+  MSG = catalog.messages;
+  document.documentElement.lang = locale;
+  initializeFormatters();
+  await loadScript('/assets/operator/settings.js');
+  await loadScript('/assets/operator/dashboard.js');
+})().catch(() => {
+  failInterface();
+});
 const message = (id, params = {}) => {
-  let text = MSG[id] === undefined ? id : MSG[id].en;
+  let text = MSG[id] === undefined ? id : MSG[id];
   for (const key in params)
     text = text.split('{' + key + '}').join(String(params[key]));
   return text;
@@ -189,65 +249,122 @@ const MED = '#A7D65A', P95 = '#6F7767';   // quantile pair: filled median, muted
    own compact notation would kick in at 1,000 ("1K"); this dashboard shows
    exact counts up to 10,000 because request counts in the hundreds are
    meaningful and "1.2K" is not. */
-/* A malformed tag (e.g. the POSIX spelling "en_US") makes every Intl
-   constructor below throw at module scope, which would leave the page dead
-   rather than mis-formatted. Fall back loudly instead. */
-const LOCALE = (() => {
-  const tag = I18N.locale || 'en-US';
-  try { new Intl.NumberFormat(tag); return tag; }
-  catch { console.error('invalid catalog locale', tag, '- falling back to en-US'); return 'en-US'; }
-})();
+/* A malformed tag (e.g. the POSIX spelling "en_US") makes Intl constructors
+   throw. Fail catalog startup instead of formatting under the wrong locale. */
+let LOCALE;
 const NF = (opts) => new Intl.NumberFormat(LOCALE, opts);
-const NUM_COMPACT = NF({ notation: 'compact', maximumFractionDigits: 1 });
-const NUM_GROUPED = NF({ maximumFractionDigits: 0 });
-const NUM_1DP = NF({ maximumFractionDigits: 1 });
-const NUM_2DP = NF({ maximumFractionDigits: 2 });
-const DUR_MS = NF({ style: 'unit', unit: 'millisecond', unitDisplay: 'short', maximumFractionDigits: 0 });
-const DUR_S = NF({ style: 'unit', unit: 'second', unitDisplay: 'short', minimumFractionDigits: 1, maximumFractionDigits: 1 });
-const DUR_MIN = NF({ style: 'unit', unit: 'minute', unitDisplay: 'short', maximumFractionDigits: 0 });
-const AGO_D = NF({ style: 'unit', unit: 'day', unitDisplay: 'narrow', maximumFractionDigits: 0 });
-const AGO_H = NF({ style: 'unit', unit: 'hour', unitDisplay: 'narrow', maximumFractionDigits: 0 });
-const AGO_M = NF({ style: 'unit', unit: 'minute', unitDisplay: 'narrow', maximumFractionDigits: 0 });
-const AGO_S = NF({ style: 'unit', unit: 'second', unitDisplay: 'narrow', maximumFractionDigits: 0 });
 const DTF = (opts) => new Intl.DateTimeFormat(LOCALE, opts);
-const DAY_SHORT = DTF({ month: 'short', day: 'numeric' });
-const TIME_HM = DTF({ hour: '2-digit', minute: '2-digit' });
+let NUM_COMPACT;
+let NUM_GROUPED;
+let NUM_1DP;
+let NUM_2DP;
+let DUR_MS;
+let DUR_S;
+let DUR_MIN;
+let AGO_D;
+let AGO_H;
+let AGO_M;
+let AGO_S;
+let DAY_SHORT;
+let TIME_HM;
 /* Weekday names and the hour axis are CLDR DATA, not labels: putting them in
    the catalog would ask a translator to re-key what the platform already has
    correct for 200+ locales. Formatted in UTC against a reference week so a
    timezone offset cannot shift which day a name belongs to. */
-const WEEKDAY_SHORT = DTF({ weekday: 'short', timeZone: 'UTC' });
-const HOUR_ONLY = DTF({ hour: 'numeric', timeZone: 'UTC' });
+let WEEKDAY_SHORT;
+let HOUR_ONLY;
 /* CLDR first day of week: 1=Mon .. 7=Sun. en-US, ja-JP and pt-BR start Sunday;
    ar-EG and fa-IR start Saturday. getWeekInfo is a method in Chrome and a
    getter in Firefox; neither exists in older Safari, hence the fallback. */
-const FIRST_DAY = (() => {
-  try {
-    const l = new Intl.Locale(LOCALE);
-    return (typeof l.getWeekInfo === 'function' ? l.getWeekInfo() : l.weekInfo)?.firstDay ?? 1;
-  } catch { return 1; }
-})();
+let FIRST_DAY;
 /* JS getDay() is 0=Sun..6=Sat; CLDR is 1=Mon..7=Sun. One conversion, used by
    BOTH the axis labels and the row bucketing so they cannot drift apart. */
-const FIRST_DAY_JS = FIRST_DAY % 7;
+let FIRST_DAY_JS;
 const dayRow = jsDay => (jsDay - FIRST_DAY_JS + 7) % 7;
 /* Explicit components rather than dateStyle:'short', which abbreviates the
    year to two digits — ambiguous on a dashboard that retains 30+ days. */
-const STAMP = DTF({ year: 'numeric', month: 'numeric', day: 'numeric',
-  hour: 'numeric', minute: '2-digit', second: '2-digit' });
-const SCOPE_TIME = DTF({ month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+let STAMP;
+let SCOPE_TIME;
 /* Percentages shown to the operator. NOT for CSS: `data-style="width:12.3%"` must
    stay locale-independent, because a comma-decimal locale would emit
    `width:12,3%`, which is invalid CSS and silently collapses the element.
    Every toFixed() that remains is either inside a data-style= attribute or SVG
    path/geometry — both machine formats, never read by a human. */
-const PCT_0 = NF({ style: 'percent', maximumFractionDigits: 0 });
-const PCT_1 = NF({ style: 'percent', maximumFractionDigits: 1 });
-const PCT_2 = NF({ style: 'percent', maximumFractionDigits: 2 });
-const PCT_3 = NF({ style: 'percent', maximumFractionDigits: 3 });
+let PCT_0;
+let PCT_1;
+let PCT_2;
+let PCT_3;
 /* Trend chips carry an explicit sign; Intl places it per locale. */
-const PCT_SIGNED_0 = NF({ style: 'percent', maximumFractionDigits: 0, signDisplay: 'exceptZero' });
-const PCT_SIGNED_1 = NF({ style: 'percent', maximumFractionDigits: 1, signDisplay: 'exceptZero' });
+let PCT_SIGNED_0;
+let PCT_SIGNED_1;
+let DAYS;
+function initializeFormatters() {
+  const tag = I18N.locale || 'en-US';
+  try {
+    new Intl.NumberFormat(tag);
+    LOCALE = tag;
+  } catch {
+    throw new Error('invalid catalog locale');
+  }
+  NUM_COMPACT = NF({ notation: 'compact', maximumFractionDigits: 1 });
+  NUM_GROUPED = NF({ maximumFractionDigits: 0 });
+  NUM_1DP = NF({ maximumFractionDigits: 1 });
+  NUM_2DP = NF({ maximumFractionDigits: 2 });
+  DUR_MS = NF({ style: 'unit', unit: 'millisecond', unitDisplay: 'short', maximumFractionDigits: 0 });
+  DUR_S = NF({ style: 'unit', unit: 'second', unitDisplay: 'short', minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  DUR_MIN = NF({ style: 'unit', unit: 'minute', unitDisplay: 'short', maximumFractionDigits: 0 });
+  AGO_D = NF({ style: 'unit', unit: 'day', unitDisplay: 'narrow', maximumFractionDigits: 0 });
+  AGO_H = NF({ style: 'unit', unit: 'hour', unitDisplay: 'narrow', maximumFractionDigits: 0 });
+  AGO_M = NF({ style: 'unit', unit: 'minute', unitDisplay: 'narrow', maximumFractionDigits: 0 });
+  AGO_S = NF({ style: 'unit', unit: 'second', unitDisplay: 'narrow', maximumFractionDigits: 0 });
+  DAY_SHORT = DTF({ month: 'short', day: 'numeric' });
+  TIME_HM = DTF({ hour: '2-digit', minute: '2-digit' });
+  WEEKDAY_SHORT = DTF({ weekday: 'short', timeZone: 'UTC' });
+  HOUR_ONLY = DTF({ hour: 'numeric', timeZone: 'UTC' });
+  try {
+    const locale = new Intl.Locale(LOCALE);
+    FIRST_DAY = (
+      typeof locale.getWeekInfo === 'function'
+        ? locale.getWeekInfo()
+        : locale.weekInfo
+    )?.firstDay ?? 1;
+  } catch {
+    FIRST_DAY = 1;
+  }
+  FIRST_DAY_JS = FIRST_DAY % 7;
+  STAMP = DTF({
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  SCOPE_TIME = DTF({
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  PCT_0 = NF({ style: 'percent', maximumFractionDigits: 0 });
+  PCT_1 = NF({ style: 'percent', maximumFractionDigits: 1 });
+  PCT_2 = NF({ style: 'percent', maximumFractionDigits: 2 });
+  PCT_3 = NF({ style: 'percent', maximumFractionDigits: 3 });
+  PCT_SIGNED_0 = NF({
+    style: 'percent',
+    maximumFractionDigits: 0,
+    signDisplay: 'exceptZero',
+  });
+  PCT_SIGNED_1 = NF({
+    style: 'percent',
+    maximumFractionDigits: 1,
+    signDisplay: 'exceptZero',
+  });
+  DAYS = Array.from({ length: 7 }, (_, i) =>
+    WEEKDAY_SHORT.format(
+      Date.UTC(2024, 0, 1 + ((FIRST_DAY - 1 + i) % 7)),
+    ));
+}
 /* ratio in 0..1 */
 const pctOf = (r, digits) => (digits >= 3 ? PCT_3 : digits === 2 ? PCT_2 : digits === 1 ? PCT_1 : PCT_0).format(r);
 const NO_VALUE = '–';
@@ -727,9 +844,6 @@ function kpiCards(el, defs, hero) {
 const metricRow = (l, v, tone) => `<div class="kv${tone ? ' ' + tone : ''}"><span>${escapeHtml(l)}</span><b>${escapeHtml(v)}</b></div>`;
 
 /* ---------- activity heatmap: weekday x hour, sequential green ramp ---------- */
-/* 2024-01-01 was a Monday, so offset 0 of the reference week is ISO Monday. */
-const DAYS = Array.from({ length: 7 }, (_, i) =>
-  WEEKDAY_SHORT.format(Date.UTC(2024, 0, 1 + ((FIRST_DAY - 1 + i) % 7))));
 function heatmap(el, matrix, vmax) {
   if (!vmax) { el.innerHTML = `<div class="empty">${escapeHtml(catalogMessage('dashboard.common.empty.no_data_in_range'))}</div>`; return; }
   const CW = 26, CH = 18, GAP = 3, PL = 36, PT = 18;

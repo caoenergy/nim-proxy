@@ -70,10 +70,10 @@ days of history.
   what `Intl` considers correct for en-US and it matches the `ms`/`min` forms,
   which already used a space and an abbreviation.
 - The fixture harness reads formatter bodies straight out of
-  `src/web/shared.js` and `src/web/dashboard.js`, plus the locale from the real
-  dashboard page, so it cannot drift from the code it pins, and it refuses
-  to run unless `TZ=UTC`. An unpinned fixture would encode whichever machine
-  last wrote it.
+  `src/web/shared.js` and `src/web/dashboard.js`, plus the locale from the one
+  canonical rich English catalog, so it cannot drift from the code and source
+  locale it pins. It refuses to run unless `TZ=UTC`. An unpinned fixture would
+  encode whichever machine last wrote it.
 - Verified in a second locale: `de-DE` yields `1,2 Mio.`, `1,5 Sek.`, `50 %`
   with the non-breaking space German uses. Note the compact tiers are CLDR's,
   not ours: German has no thousands abbreviation (`12345` → `12.345`) and
@@ -82,7 +82,9 @@ days of history.
 - The catalog's `locale` is validated before any formatter is constructed. A
   malformed tag — the POSIX `en_US` spelling, say — would otherwise throw at
   module scope, before a single function was defined, leaving the page
-  completely dead rather than mis-formatted. It falls back to `en-US` and logs.
+  completely dead rather than mis-formatted. Startup now rejects the catalog
+  and reveals the dependency-free emergency message instead of silently
+  formatting under a different locale.
 - `Intl.DateTimeFormat` throws `RangeError` on a non-finite time where
   `toLocaleString()` returned `"Invalid Date"`. Every date call site goes
   through a guard, because a throw escapes the template it sits in and blanks a

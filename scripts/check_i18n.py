@@ -30,6 +30,7 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+EMERGENCY_TEXT = "NIM Proxy interface failed to load."
 PAGE_SOURCES = {
     "src/web/dashboard.html": (
         "src/web/shared.js",
@@ -37,6 +38,7 @@ PAGE_SOURCES = {
         "src/web/settings.js",
     ),
     "src/web/setup.html": ("src/web/setup.js",),
+    "src/web/login.html": ("src/web/login.js",),
 }
 
 
@@ -326,6 +328,17 @@ CANONICAL_LOOKUPS = {
     throw new Error\("forbidden catalog text target"\);
   const text = message\(id\);""",
     ),
+    "src/web/login.html": (
+        r"""function setMessageText\(node, id, params = \{\}\) \{
+  assertMessageTextTarget\(node\);
+  node\.textContent = message\(id, params\);
+\}""",
+        r"""function setMessageAttr\(node, attr, id, params = \{\}\) \{
+  if \(!I18N_TEXT_ATTRS\.has\(attr\)\)
+    throw new Error\(`forbidden catalog attribute: \$\{attr\}`\);
+  node\.setAttribute\(attr, message\(id, params\)\);
+\}""",
+    ),
 }
 
 
@@ -515,9 +528,13 @@ def lint_untagged(name: str, raw: str) -> list:
     body = re.search(r"<script>(.*?)</script>", raw, re.S)
     js = body.group(1) if body else ""
 
-    # The settings surface is out of scope until 0.6.7.
+    # The settings surface is owned by foundation Task 7.
     cut = SETTINGS_START.search(js)
     scanned = js[: cut.start()] if cut else js
+    # The startup failure has one deliberately unlocalized, dependency-free
+    # string. It is useful precisely when no catalog is available.
+    scanned = scanned.replace(repr(EMERGENCY_TEXT), "''")
+    scanned = scanned.replace(json.dumps(EMERGENCY_TEXT), '""')
 
     # PUBLISHERS maps a model namespace to its vendor's brand name. Brand
     # names are DATA — they arrive from the model id and are never translated,
@@ -628,7 +645,7 @@ RETIRED = {
 }
 
 
-def lint_retired_vocabulary(name: str, raw: str) -> list:
+def lint_retired_vocabulary(name: str, raw: str, catalog=None) -> list:
     """No shipped text may reintroduce a retired term.
 
     Scanning only catalog values was not enough: the whole point of the
@@ -637,13 +654,14 @@ def lint_retired_vocabulary(name: str, raw: str) -> list:
     setup.html's review panel through exactly that hole, with CI green.
     """
     out = []
-    catalog = load_catalog(raw)
+    if catalog is None:
+        catalog = load_catalog(raw)
     for mid, msg in sorted(catalog.items()):
         text = msg["en"] if isinstance(msg, dict) else msg
         for old, new in RETIRED.items():
             if old in text:
                 out.append(
-                    f"{name}: {mid} uses retired term {old!r} — "
+                    f"[noncanonical-vocabulary] {name}: {mid} uses retired term {old!r} — "
                     f"standard vocabulary says {new!r}"
                 )
     # Everything outside the catalog block: markup, template literals, quoted
@@ -673,7 +691,8 @@ def lint_retired_vocabulary(name: str, raw: str) -> list:
             word_index = flat.count(" ", 0, m.start())
             src_pos = offsets[word_index] if word_index < len(offsets) else 0
             out.append(
-                f"{name}:{outside.count(chr(10), 0, src_pos) + 1}: retired term "
+                f"[noncanonical-vocabulary] {name}:"
+                f"{outside.count(chr(10), 0, src_pos) + 1}: retired term "
                 f"{old!r} outside the catalog — standard vocabulary says {new!r}"
             )
     return out
@@ -1016,6 +1035,18 @@ def selftest() -> int:
         else:
             print(f"  ok  {label:24} trips {want}")
 
+    vocabulary = lint_retired_vocabulary(
+        "selftest",
+        SELFTEST_PAGE % "const label = '<span>Harnesses</span>';",
+    )
+    if not any("[noncanonical-vocabulary]" in problem for problem in vocabulary):
+        failures.append(
+            "noncanonical-vocabulary: retired vocabulary was found without "
+            "the required named check id"
+        )
+    else:
+        print("  ok  noncanonical-vocabulary  trips noncanonical-vocabulary")
+
     if failures:
         print("\nselftest FAILED:")
         for f in failures:
@@ -1031,13 +1062,14 @@ def main() -> int:
         return selftest()
     errors = []
     referenced = set()
+    catalog_path = ROOT / "src/web/locales/en-US.json"
+    catalog = json.loads(catalog_path.read_text())["messages"]
 
     for name in PAGE_SOURCES:
         path = ROOT / name
         raw = bundled_page(name)
-        if 'id="i18n-catalog"' not in raw:
-            continue
-        catalog = load_catalog(raw)
+        if 'id="i18n-catalog"' in raw:
+            errors.append(f"[inline-catalog] {name}: inline catalog must be removed")
         source = strip_scripts(raw)
 
         for mid, inner in tagged(source, "data-i18n"):
@@ -1066,17 +1098,17 @@ def main() -> int:
                     f"{name}: {mid} text node {first[:50]!r} != catalog {want[:50]!r}"
                 )
 
-        # No value anywhere may carry raw or entity-encoded markup. Catalog
-        # values are plain text; an HTML parser never owns their meaning.
-        for mid, msg in catalog.items():
-            if "<" in msg["en"] or ">" in msg["en"]:
-                errors.append(f"[catalog-markup] {name}: {mid} contains raw markup")
-            decoded = htmlmod.unescape(msg["en"])
-            if decoded != msg["en"] and ("<" in decoded or ">" in decoded):
-                errors.append(
-                    f"[catalog-entity-markup] {name}: {mid} contains "
-                    "entity-encoded markup"
-                )
+        if name == next(iter(PAGE_SOURCES)):
+            # No value anywhere may carry raw or entity-encoded markup.
+            for mid, msg in catalog.items():
+                if "<" in msg["en"] or ">" in msg["en"]:
+                    errors.append(f"[catalog-markup] {catalog_path}: {mid} contains raw markup")
+                decoded = htmlmod.unescape(msg["en"])
+                if decoded != msg["en"] and ("<" in decoded or ">" in decoded):
+                    errors.append(
+                        f"[catalog-entity-markup] {catalog_path}: {mid} contains "
+                        "entity-encoded markup"
+                    )
 
         # Only text-bearing attributes are localizable; the runtime enforces
         # the same set, so a mismatch here is a bug in one of the two.
@@ -1100,47 +1132,29 @@ def main() -> int:
                         f"!= catalog {catalog[mid]['en'][:40]!r}"
                     )
 
-        for mid, msg in catalog.items():
-            got = hashlib.sha256(msg["en"].encode()).hexdigest()[:8]
-            if msg.get("hash") != got:
-                errors.append(
-                    f"{name}: {mid} hash {msg.get('hash')} stale, text hashes to {got}"
-                )
+        if name == next(iter(PAGE_SOURCES)):
+            for mid, msg in catalog.items():
+                got = hashlib.sha256(msg["en"].encode()).hexdigest()[:8]
+                if msg.get("hash") != got:
+                    errors.append(
+                        f"{catalog_path}: {mid} hash {msg.get('hash')} stale, text hashes to {got}"
+                    )
 
         # Executable page code carries catalog ids as quoted values passed to
         # ID-taking sinks or catalogMessage(). The application/json catalog is
         # deliberately excluded, or every orphan would appear referenced.
         js = strip_comments("".join(re.findall(r"<script>(.*?)</script>", raw, re.S)))
-        for m in re.finditer(r"""['"]((?:dashboard|setup)\.[a-z0-9_.]+)['"]""", js):
+        for m in re.finditer(r"""['"]((?:dashboard|setup|login)\.[a-z0-9_.]+)['"]""", js):
             mid = m.group(1)
             referenced.add(mid)
             if mid not in catalog:
                 errors.append(f"{name}: message id {mid!r} has no catalog entry")
 
-        for mid in catalog:
-            if mid not in referenced:
-                errors.append(f"{name}: catalog id {mid} is never referenced (orphan)")
+    for mid in catalog:
+        if mid not in referenced:
+            errors.append(f"{catalog_path}: catalog id {mid} is never referenced (orphan)")
 
-    # The standalone locale files are what translators and the PR 6 pipeline
-    # edit; the inline block is what ships. They must not drift.
-    for page, standalone in (
-        ("src/web/dashboard.html", "locales/en-US.json"),
-        ("src/web/setup.html", "locales/setup-en-US.json"),
-    ):
-        inline = load_catalog((ROOT / page).read_text())
-        disk = json.loads((ROOT / standalone).read_text())["messages"]
-        if inline != disk:
-            only_inline = set(inline) - set(disk)
-            only_disk = set(disk) - set(inline)
-            for mid in sorted(only_inline):
-                errors.append(f"{standalone}: missing {mid} (present inline in {page})")
-            for mid in sorted(only_disk):
-                errors.append(f"{standalone}: has {mid}, absent from {page}")
-            for mid in sorted(set(inline) & set(disk)):
-                if inline[mid] != disk[mid]:
-                    errors.append(f"{standalone}: {mid} differs from the inline catalog")
-
-    for name in PAGE_SOURCES:
+    for index, name in enumerate(PAGE_SOURCES):
         page = bundled_page(name)
         errors += lint_runtime_helpers(name, page)
         errors += [
@@ -1148,8 +1162,11 @@ def main() -> int:
             for check, detail in lint_catalog_sinks(name, page)
         ]
         errors += lint_untagged(name, page)
-        if 'id="i18n-catalog"' in page:
-            errors += lint_retired_vocabulary(name, page)
+        errors += lint_retired_vocabulary(
+            name,
+            page,
+            catalog if index == 0 else {},
+        )
 
     if errors:
         print(f"{len(errors)} problem(s):")

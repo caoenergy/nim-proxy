@@ -385,6 +385,44 @@ async fn route_contract_behavior_matrix() {
             path: "/assets/public/login.js",
         },
         RouteBehavior {
+            access: ContractAccess::Public,
+            accept_html: false,
+            expectations: [
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+            ],
+            method: "GET",
+            name: "asset-public-locale",
+            phase: ContractPhase::Always,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/assets/public/locales/en-US.json",
+        },
+        RouteBehavior {
+            access: ContractAccess::Public,
+            accept_html: false,
+            expectations: [
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+            ],
+            method: "GET",
+            name: "api-locale-bootstrap",
+            phase: ContractPhase::Always,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/api/locale-bootstrap",
+        },
+        RouteBehavior {
             access: ContractAccess::OperatorAny,
             accept_html: false,
             expectations: configured_contract_expectations(200, 200),
@@ -435,6 +473,19 @@ async fn route_contract_behavior_matrix() {
             success_content_type: Some("text/javascript; charset=utf-8"),
             success_status: 200,
             path: "/assets/operator/settings.js",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAny,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 200),
+            method: "GET",
+            name: "asset-operator-locale",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/assets/operator/locales/en-US.json",
         },
         RouteBehavior {
             access: ContractAccess::OperatorAny,
@@ -782,7 +833,7 @@ async fn route_contract_behavior_matrix() {
         },
     ];
 
-    assert_eq!(rows.len(), 30, "route-contract:inventory");
+    assert_eq!(rows.len(), 33, "route-contract:inventory");
 
     let mock = start_mock().await;
     let before_setup = start_proxy_fresh().await;
@@ -2147,7 +2198,19 @@ async fn login_handles_malformed_urlencoded_without_panic() {
         .text()
         .await
         .unwrap();
-    assert!(login_js.contains("Incorrect username or password."));
+    assert!(login_js.contains("login.error.invalid_credentials"));
+    let catalog: serde_json::Value = client()
+        .get(proxy.url("/assets/public/locales/en-US.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        catalog["messages"]["login.error.invalid_credentials"],
+        "Incorrect username or password."
+    );
 }
 
 /// Repeated failed logins trip the throttle: a burst past the failure cap
@@ -2908,20 +2971,42 @@ async fn dashboard_capacity_history_has_no_guessed_key_size() {
     let proxy = start_proxy(&mock.url, &[]).await;
     let cookie = login(&proxy).await;
 
-    let html = client()
-        .get(proxy.url("/"))
-        .header("cookie", cookie)
+    let catalog: serde_json::Value = client()
+        .get(proxy.url("/assets/operator/locales/en-US.json"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        catalog["messages"]["dashboard.capacity.history.shortfall"],
+        "Peak shortfall · rpm"
+    );
+    assert!(
+        catalog["messages"]["dashboard.capacity.history.utilization"]
+            .as_str()
+            .unwrap()
+            .contains("of capacity at the time")
+    );
+    assert!(
+        catalog["messages"]["dashboard.capacity.history.no_data.other"]
+            .as_str()
+            .unwrap()
+            .contains("with no capacity data")
+    );
+    let dashboard_js = client()
+        .get(proxy.url("/assets/operator/dashboard.js"))
+        .header("cookie", &cookie)
         .send()
         .await
         .unwrap()
         .text()
         .await
         .unwrap();
-    assert!(html.contains("Peak shortfall"));
-    assert!(html.contains("of capacity at the time"));
-    assert!(html.contains("with no capacity data"));
-    assert!(!html.contains("const moreKeys"));
-    assert!(!html.contains("MORE KEY"));
+    assert!(!dashboard_js.contains("const moreKeys"));
+    assert!(!dashboard_js.contains("MORE KEY"));
 }
 
 #[tokio::test]
@@ -3955,6 +4040,162 @@ async fn presentation_assets_are_gated() {
                         !text.contains(forbidden),
                         "presentation-assets:public-byte-isolation: GET {} contains {forbidden:?}",
                         route.path
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn locale_catalog_routes_are_gated() {
+    const CSP: &str = "default-src 'none'; img-src 'self' data:; style-src 'self'; \
+        script-src 'self'; connect-src 'self'; frame-ancestors 'none'; \
+        base-uri 'none'; form-action 'self'";
+    const ROUTES: &[PresentationRoute] = &[
+        PresentationRoute {
+            content_type: Some("application/json"),
+            path: "/api/locale-bootstrap",
+            statuses: [200, 200, 200],
+        },
+        PresentationRoute {
+            content_type: Some("application/json"),
+            path: "/assets/public/locales/en-US.json",
+            statuses: [200, 200, 200],
+        },
+        PresentationRoute {
+            content_type: Some("application/json"),
+            path: "/assets/operator/locales/en-US.json",
+            statuses: [503, 401, 200],
+        },
+        PresentationRoute {
+            content_type: None,
+            path: "/assets/public/locales/en-XA.json",
+            statuses: [404, 404, 404],
+        },
+        PresentationRoute {
+            content_type: None,
+            path: "/assets/operator/locales/en-XA.json",
+            statuses: [503, 401, 404],
+        },
+        PresentationRoute {
+            content_type: None,
+            path: "/assets/public/locales/fr-FR.json",
+            statuses: [404, 404, 404],
+        },
+        PresentationRoute {
+            content_type: None,
+            path: "/assets/operator/locales/fr-FR.json",
+            statuses: [503, 401, 404],
+        },
+    ];
+
+    let before_setup = start_proxy_fresh().await;
+    let mock = start_mock().await;
+    let configured = start_proxy(&mock.url, &[]).await;
+    let cookie = login(&configured).await;
+    let actors = [
+        (PresentationActor::BeforeSetup, &before_setup, None),
+        (PresentationActor::Anonymous, &configured, None),
+        (
+            PresentationActor::Authenticated,
+            &configured,
+            Some(cookie.as_str()),
+        ),
+    ];
+    let public_catalog = include_str!("fixtures/locales/public-en-US.json");
+    let source: serde_json::Value =
+        serde_json::from_str(include_str!("../src/web/locales/en-US.json"))
+            .expect("canonical authoring catalog");
+    let operator_messages: std::collections::BTreeMap<String, String> = source["messages"]
+        .as_object()
+        .expect("authoring messages")
+        .iter()
+        .map(|(id, message)| {
+            (
+                id.clone(),
+                message["en"]
+                    .as_str()
+                    .expect("authoring message text")
+                    .to_owned(),
+            )
+        })
+        .collect();
+    let operator_catalog = serde_json::to_string(&serde_json::json!({
+        "locale": "en-US",
+        "messages": operator_messages,
+    }))
+    .expect("operator projection");
+
+    for route in ROUTES {
+        for (actor_index, (actor, proxy, cookie)) in actors.iter().enumerate() {
+            let mut request = no_redirect_client().get(proxy.url(route.path));
+            if let Some(cookie) = cookie {
+                request = request.header("cookie", *cookie);
+            }
+            let response = request.send().await.unwrap();
+            assert_eq!(
+                response.status().as_u16(),
+                route.statuses[actor_index],
+                "locale-routes:status: GET {} actor={actor:?}",
+                route.path
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get("cache-control")
+                    .and_then(|value| value.to_str().ok()),
+                Some("no-store"),
+                "locale-routes:no-store: GET {} actor={actor:?}",
+                route.path
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get("content-security-policy")
+                    .and_then(|value| value.to_str().ok()),
+                Some(CSP),
+                "locale-routes:csp: GET {} actor={actor:?}",
+                route.path
+            );
+            if response.status().is_success() {
+                assert_eq!(
+                    response
+                        .headers()
+                        .get(CONTENT_TYPE)
+                        .and_then(|value| value.to_str().ok()),
+                    route.content_type,
+                    "locale-routes:content-type: GET {} actor={actor:?}",
+                    route.path
+                );
+                let body = response.text().await.unwrap();
+                if route.path == "/api/locale-bootstrap" {
+                    assert_eq!(
+                        body, r#"{"installed_locales":["en-US"],"server_default":"en-US"}"#,
+                        "locale-routes:bootstrap-bytes"
+                    );
+                } else {
+                    let expected = if route.path.contains("/public/") {
+                        public_catalog
+                    } else {
+                        operator_catalog.as_str()
+                    };
+                    assert_eq!(
+                        body, expected,
+                        "locale-routes:exact-projection: GET {}",
+                        route.path
+                    );
+                    let catalog: serde_json::Value =
+                        serde_json::from_str(&body).expect("catalog JSON");
+                    assert_eq!(catalog["locale"], "en-US");
+                    let messages = catalog["messages"].as_object().expect("plain messages");
+                    assert_eq!(
+                        messages.get("common.app_name"),
+                        Some(&serde_json::Value::String("NIM Proxy".into()))
+                    );
+                    assert!(
+                        messages.values().all(serde_json::Value::is_string),
+                        "locale-routes:plain-strings"
                     );
                 }
             }

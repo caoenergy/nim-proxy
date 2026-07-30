@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
@@ -302,6 +302,29 @@ async fn metrics_text(State(state): State<Arc<AppState>>) -> String {
     state.prometheus.render()
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/locale-bootstrap",
+    tag = "localization",
+    security(),
+    responses(
+        (status = 200, description = "Installed locales and the server default", body = api::LocaleBootstrap),
+    ),
+)]
+async fn api_locale_bootstrap() -> Response {
+    (
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        axum::Json(api::LocaleBootstrap {
+            installed_locales: presentation::INSTALLED_LOCALES
+                .iter()
+                .map(|locale| (*locale).to_owned())
+                .collect(),
+            server_default: presentation::DEFAULT_LOCALE.to_owned(),
+        }),
+    )
+        .into_response()
+}
+
 fn page_response(page: presentation::Page) -> Response {
     (
         [
@@ -319,6 +342,22 @@ async fn public_asset(uri: Uri) -> Response {
 
 async fn operator_asset(uri: Uri) -> Response {
     asset_response(presentation::operator_asset(uri.path()))
+}
+
+async fn public_catalog(Path(locale_file): Path<String>) -> Response {
+    asset_response(
+        locale_file
+            .strip_suffix(".json")
+            .and_then(presentation::public_catalog),
+    )
+}
+
+async fn operator_catalog(Path(locale_file): Path<String>) -> Response {
+    asset_response(
+        locale_file
+            .strip_suffix(".json")
+            .and_then(presentation::operator_catalog),
+    )
 }
 
 fn asset_response(asset: Option<presentation::Asset>) -> Response {
@@ -606,6 +645,7 @@ pub async fn run() {
         .route(routes::ASSET_OPERATOR_SHARED_JS, get(operator_asset))
         .route(routes::ASSET_OPERATOR_DASHBOARD_JS, get(operator_asset))
         .route(routes::ASSET_OPERATOR_SETTINGS_JS, get(operator_asset))
+        .route(routes::ASSET_OPERATOR_LOCALE, get(operator_catalog))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_session,
@@ -620,6 +660,11 @@ pub async fn run() {
         .route(routes::ASSET_PUBLIC_CSS, get(public_asset))
         .route(routes::ASSET_PUBLIC_SETUP_JS, get(public_asset))
         .route(routes::ASSET_PUBLIC_LOGIN_JS, get(public_asset))
+        .route(routes::ASSET_PUBLIC_LOCALE, get(public_catalog))
+        .nest(
+            routes::API_PREFIX,
+            Router::new().route(routes::API_LOCALE_BOOTSTRAP, get(api_locale_bootstrap)),
+        )
         .route(
             routes::LOGIN,
             get(auth::login_page).post(auth::login_submit),

@@ -123,6 +123,19 @@ Note `TTFT` (abbreviation, raw) and `Time to first token` (expanded,
 translated) both exist and both belong in the catalog. That is not an
 inconsistency.
 
+### Canonical English inventory
+
+`src/web/locales/en-US.json` is the sole rich authoring source. Each id records
+its canonical English value, UI intent in `desc`, placeholders and plural
+shape, and source hash; public membership is structural rather than separately
+authored: every `setup.*`, every `login.*`, and only `common.app_name`.
+Task 5 reconciled the setup wording to ordinary operational language:
+“Complete setup,” “NIM API keys,” the durable-key warning, “API key required,”
+and “immediate access.” Login adds only the expected title, prompt, field
+labels/placeholders, submit label, and invalid-credentials message. These are
+repository-owned labels; model ids, client/publisher names, persisted values,
+and metric identifiers remain raw.
+
 ## Consequences
 
 - **Two checks, no new script.** `locale_v1.py` gains `frozen`: for every
@@ -139,7 +152,8 @@ inconsistency.
 - **The `frozen` check found a defect immediately.**
   `gen_pseudolocale.py` was accenting the frozen tokens, so `en-XA` rendered
   `NÎM` and `ŦŦƑŦ` — a string no real locale would produce, in the one locale
-  we ship to prove layout. The generator now protects them.
+  generated to prove layout. The generator now protects them and emits it only
+  to test consumers; production ships only `en-US`.
 - **What is still not checkable:** whether a *new* label is standard. That
   needs a person, and this page is what they check against.
 - **The context bundle mostly disappears.** A per-message translator glossary

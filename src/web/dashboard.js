@@ -941,6 +941,7 @@ for (const b of document.querySelectorAll('#side nav button')) {
   });
   if (location.hash === '#' + b.dataset.tab) b.click();
 }
+document.body.hidden = false;
 
 /* ---------- boot ---------- */
 (async () => {

@@ -89,10 +89,14 @@ client keys, own NIM keys). Dashboards are identical for all roles; only
 Settings differs, and `GET /api/config` is filtered **server-side** per role
 (hidden sections absent from the payload, not CSS-hidden — the response type
 makes `server`/`users` `Option`s that are simply not built for a `user`).
-`openapi.json` records which routes need a session: the 12 `/api/*` operations
-inherit the document-level requirement (session cookie **or** header
-credentials), and the two `/setup` operations carry an explicit empty
-`security` list because they run before any user exists. Partial lockout:
+`openapi.json` records which routes need a session: 12 protected `/api/*`
+operations inherit the document-level requirement (session cookie **or**
+header credentials), while public `GET /api/locale-bootstrap` and the two
+`/setup` operations carry explicit empty `security` lists. The operator locale
+catalog is not an OpenAPI operation; it sits behind the post-setup session gate,
+which runs before locale lookup. The public setup/login catalog is always
+available and contains only `setup.*`, `login.*`, and `common.app_name`.
+Partial lockout:
 any admin resets any password. Total lockout: the documented
 [volume edit](../ops/configure-env.md).
 

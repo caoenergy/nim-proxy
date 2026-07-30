@@ -6,6 +6,21 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-30] component — canonical English and gated catalog startup
+
+The presentation layer now parses one rich `en-US` source and deterministically
+projects a complete operator catalog plus the public setup/login subset.
+Production no longer commits or serves `en-XA`; render tests generate it in
+memory and mutate real catalog-route responses. A public typed locale bootstrap
+and two catalog assets bring the route inventory to 33 and generated OpenAPI to
+15 operations. Dashboard, Setup, and Login remain hidden until bootstrap and
+catalog validation, and response-stage probes pin emergency-only failure and no
+later application work. See the [presentation component](architecture/presentation-layer.md),
+[locale guards](decisions/locale-guards.md),
+[standard vocabulary](decisions/standard-vocabulary.md),
+[HTTP trust-boundary map](architecture/http-trust-boundary-map.md), and
+[test strategy](testing/test-strategy.md).
+
 ## [2026-07-30] fix — close render failure lifecycle gaps
 
 The render gate now uses the same bounded child-stop primitive when proxy

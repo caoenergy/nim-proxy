@@ -149,6 +149,27 @@
         }
       }
     },
+    "/api/locale-bootstrap": {
+      "get": {
+        "tags": [
+          "localization"
+        ],
+        "operationId": "api_locale_bootstrap",
+        "responses": {
+          "200": {
+            "description": "Installed locales and the server default",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocaleBootstrap"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
     "/api/settings/account": {
       "post": {
         "tags": [
@@ -1559,6 +1580,25 @@
           },
           "strict_passthrough": {
             "type": "boolean"
+          }
+        }
+      },
+      "LocaleBootstrap": {
+        "type": "object",
+        "description": "The installed presentation locales and the server-wide default used before\nper-user locale preferences are introduced.",
+        "required": [
+          "installed_locales",
+          "server_default"
+        ],
+        "properties": {
+          "installed_locales": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "server_default": {
+            "type": "string"
           }
         }
       },
