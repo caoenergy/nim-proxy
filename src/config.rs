@@ -806,6 +806,76 @@ mod tests {
     }
 
     #[test]
+    fn locale_current_store_migrates_on_read_and_persists_defaults() {
+        let dir = TestDir::new();
+        // This is a current-version store from before locale preferences. It
+        // is hand-authored so the current serializer cannot smuggle the new
+        // fields into the migration input.
+        let raw = r#"{
+          "version": 1,
+          "upstream": {
+            "base_url": "https://integrate.api.nvidia.com",
+            "nim_keys": [{"key":"nvapi-one","owner":"root","enabled":true,"rpm":40}]
+          },
+          "client_auth": {"mode":"keyed","keys":[]},
+          "users": [
+            {"username":"root","password_hash":"pbkdf2-sha256$1000$aa$bb","role":"superuser"}
+          ]
+        }"#;
+        fs::write(store_path(&dir.0), raw).unwrap();
+
+        let sc = load(&dir.0)
+            .expect("current-version store must load")
+            .expect("store exists");
+        save(&dir.0, &sc).expect("ordinary save persists additive defaults");
+
+        let persisted = fs::read_to_string(store_path(&dir.0)).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&persisted).unwrap();
+        assert_eq!(
+            value.get("default_locale"),
+            Some(&serde_json::Value::String("en-US".into())),
+            "locale-store:migration: a current v1 store defaults and persists server locale"
+        );
+        assert_eq!(
+            value["users"][0].get("locale"),
+            None,
+            "locale-store:migration: absent user preference stays absent"
+        );
+
+        let version_at = persisted.find("\"version\"").expect("version field");
+        let default_at = persisted
+            .find("\"default_locale\"")
+            .expect("default_locale field");
+        let upstream_at = persisted.find("\"upstream\"").expect("upstream field");
+        assert!(
+            version_at < default_at && default_at < upstream_at,
+            "locale-store:serialization-order: expected version, default_locale, upstream; got {persisted}"
+        );
+    }
+
+    #[test]
+    fn locale_store_migration_refuses_corrupt_and_future_bytes_without_mutation() {
+        for (label, raw) in [
+            ("corrupt", b"{ not json".as_slice()),
+            ("future", br#"{"version":2}"#.as_slice()),
+        ] {
+            let dir = TestDir::new();
+            fs::write(store_path(&dir.0), raw).unwrap();
+            let before = fs::read(store_path(&dir.0)).unwrap();
+
+            assert!(
+                load(&dir.0).is_err(),
+                "locale-store:fail-closed: {label} store loaded"
+            );
+            assert_eq!(
+                fs::read(store_path(&dir.0)).unwrap(),
+                before,
+                "locale-store:non-mutation: {label} load changed durable bytes"
+            );
+        }
+    }
+
+    #[test]
     fn future_version_refuses_to_load() {
         let dir = TestDir::new();
         fs::write(store_path(&dir.0), r#"{"version": 2}"#).unwrap();

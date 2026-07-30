@@ -658,6 +658,7 @@ const STARTUP_PROBES = new Set([
   'bootstrap-failure',
   'catalog-failure',
   'css-failure',
+  'locale-precedence',
   'malformed-catalog',
 ]);
 if (startupProbe && !STARTUP_PROBES.has(startupProbe)) {
@@ -896,6 +897,10 @@ async function handleCatalogResponseForStartupProbe({
     catalog.messages[probeId] = startupState.readyText;
     body = JSON.stringify(catalog);
   }
+  if (pathname === catalogPath && startupProbe === 'locale-precedence') {
+    const catalog = JSON.parse(body);
+    startupState.readyText = catalog.messages['dashboard.nav.tab.overview'];
+  }
   if (pathname === catalogPath && startupProbe === 'catalog-failure') {
     statusCode = 503;
     body = startupState.secret;
@@ -930,6 +935,7 @@ async function handleApplicationScriptResponseForStartupProbe({
 function configuredStore() {
   return {
     version: 1,
+    default_locale: 'en-US',
     upstream: {
       base_url: 'http://127.0.0.1:9',
       nim_keys: [{ key: 'render-fixture-key', owner: 'root', enabled: true, rpm: 40 }],
@@ -938,6 +944,7 @@ function configuredStore() {
     limits: { heartbeat_secs: 1 },
     users: [{
       username: 'root',
+      locale: 'en-US',
       password_hash: 'pbkdf2-sha256$1000$00000000000000000000000000000000$dd5fe0be04ca7f9e24642561a5d4635c52c40be82cbd7587b5eddc913ad3c7a7',
       role: 'superuser',
     }],
@@ -1409,7 +1416,8 @@ async function main() {
       return;
     }
     let body = null;
-    if (url.pathname === '/api/config') body = fixtures['config.json'];
+    if (url.pathname === '/api/config' && startupProbe !== 'locale-precedence')
+      body = fixtures['config.json'];
     else if (url.pathname === '/api/dashboard/now') body = fixtures['dashboard-now.json'];
     else if (url.pathname === '/api/dashboard') body = fixtures['dashboard.json'];
     else if (url.pathname === '/setup/validate-key' && request.method === 'POST')
@@ -1570,6 +1578,8 @@ async function main() {
       row.path === '/api/locale-bootstrap');
     const catalogIndex = requestTimeline.findIndex(row =>
       row.path === catalogPath);
+    const configIndex = requestTimeline.findIndex(row =>
+      row.path === '/api/config');
     if (startupProbe === 'css-failure') {
       if (!requestTimeline.some(row => row.path === stylesheetPath)) {
         startupFailures.push('css-before-bootstrap: stylesheet failure was not forced');
@@ -1600,6 +1610,22 @@ async function main() {
         'bootstrap-before-catalog: catalog was not requested after bootstrap',
       );
     }
+    if (startupProbe === 'locale-precedence') {
+      if (configIndex < 0) {
+        startupFailures.push(
+          'locale-precedence: authenticated /api/config was not requested',
+        );
+      } else if (!(bootstrapIndex < configIndex && configIndex < catalogIndex)) {
+        startupFailures.push(
+          `locale-precedence: expected bootstrap < config < catalog, got ${bootstrapIndex} < ${configIndex} < ${catalogIndex}`,
+        );
+      }
+      if (fetched.includes('/api/config')) {
+        startupFailures.push(
+          'locale-precedence: /api/config used a hand-authored fixture instead of the real server response',
+        );
+      }
+    }
     if (startupProbe === 'delayed-catalog') {
       if (!startupState.catalogHeldState?.hidden) {
         startupFailures.push(
@@ -1621,7 +1647,8 @@ async function main() {
       );
     }
     const beforeCatalog = appRequests.filter(row =>
-      !startupState.catalogReleasedAt || row.at < startupState.catalogReleasedAt);
+      !(startupProbe === 'locale-precedence' && row.path === '/api/config')
+      && (!startupState.catalogReleasedAt || row.at < startupState.catalogReleasedAt));
     if (beforeCatalog.length) {
       startupFailures.push(
         `catalog-before-api: ${beforeCatalog.map(row => row.path).join(', ')} requested before the catalog resolved`,
@@ -1629,7 +1656,7 @@ async function main() {
     }
 
     const hardHiddenExpected = startupProbe === 'css-failure';
-    const emergencyExpected = startupProbe !== 'delayed-catalog'
+    const emergencyExpected = !['delayed-catalog', 'locale-precedence'].includes(startupProbe)
       && !hardHiddenExpected;
     const deadline = Date.now() + 3000;
     let visible = null;

@@ -344,7 +344,7 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    const REGISTERED_API_PATHS: [&str; 13] = [
+    const REGISTERED_API_PATHS: [&str; 14] = [
         API_LOCALE_BOOTSTRAP,
         API_DASHBOARD,
         API_DASHBOARD_NOW,
@@ -357,13 +357,14 @@ mod tests {
         API_SETTINGS_GOVERNOR,
         API_SETTINGS_USERS,
         API_SETTINGS_ACCOUNT,
+        "/settings/locale",
         API_SETTINGS_VALIDATE_KEY,
     ];
 
     fn assert_registered_api_paths(registered_api_paths: &[&str]) {
         assert_eq!(
             registered_api_paths.len(),
-            13,
+            14,
             "route-contract:registration: every nested /api registration must be reconciled"
         );
         for registered_path in registered_api_paths {
@@ -391,7 +392,7 @@ mod tests {
             serde_json::from_str(&crate::api::openapi_json()).expect("generated OpenAPI JSON");
         let paths = spec["paths"].as_object().expect("OpenAPI paths");
 
-        assert_eq!(ROUTES.len(), 33, "route-contract:inventory");
+        assert_eq!(ROUTES.len(), 34, "route-contract:inventory");
         assert_eq!(
             ROUTES
                 .iter()
@@ -438,7 +439,7 @@ mod tests {
                 .iter()
                 .filter(|route| route.phase == Phase::PostSetup)
                 .count(),
-            21,
+            22,
             "route-contract:phase: operator, operator assets, and client routes"
         );
         assert!(
@@ -500,5 +501,30 @@ mod tests {
                 .all(|route| { !route.path.contains('{') || !route.probe_path.contains('{') }),
             "route-contract:probe: parameterized routes need fixture-backed probe paths"
         );
+    }
+
+    #[test]
+    fn locale_preference_routes_have_the_locked_boundaries() {
+        let server_default = ROUTES
+            .iter()
+            .find(|route| route.method == "POST" && route.path == "/api/settings/locale");
+        let server_default =
+            server_default.expect("route-contract:locale: missing POST /api/settings/locale");
+        assert_eq!(
+            server_default.access,
+            Access::OperatorAdmin,
+            "route-contract:locale: server default must be admin-only"
+        );
+        assert_eq!(server_default.phase, Phase::PostSetup);
+        assert!(server_default.openapi);
+
+        let own_preference = ROUTES
+            .iter()
+            .find(|route| route.method == "POST" && route.path == "/api/settings/account");
+        let own_preference =
+            own_preference.expect("route-contract:locale: missing account preference route");
+        assert_eq!(own_preference.access, Access::OperatorAny);
+        assert_eq!(own_preference.phase, Phase::PostSetup);
+        assert!(own_preference.openapi);
     }
 }
