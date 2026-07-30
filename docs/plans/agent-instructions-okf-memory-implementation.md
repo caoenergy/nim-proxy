@@ -963,7 +963,7 @@ agent-guide modes. Append:
 
 to `knowledge/log.md`, naming the two commands and what they reject.
 
-- [x] **Step 3: Run final local verification**
+- [x] **Step 3: Run final local non-Rust verification**
 
 Run fresh:
 
@@ -974,11 +974,12 @@ python3 -m py_compile scripts/check_agent_guide.py
 node scripts/render_check.js --syntax-selftest
 node scripts/render_check.js --syntax-only
 git diff --check
-cargo fmt --check
 ```
 
-Expected: every command exits 0. Record each command and actual result in the
-pre-step section of
+Expected: every listed command exits 0. Task 4 changes only agent guidance,
+documentation, validator/syntax scripts, and CI wiring; by owner ruling, Rust
+build, test, and formatting commands are not Task 4 proof. Record each command
+and actual result in the pre-step section of
 `docs/plans/v0.6.6-presentation-layer-rationalization.md`, then change its
 status from implementation pending to complete.
 
@@ -1014,7 +1015,6 @@ python3 scripts/check_agent_guide.py --selftest
 python3 scripts/check_agent_guide.py
 node scripts/render_check.js --syntax-selftest
 node scripts/render_check.js --syntax-only
-cargo fmt --check
 ```
 
 Expected:
@@ -1022,7 +1022,10 @@ Expected:
 - the commit check reports no whitespace errors;
 - the working tree is clean on the isolated task branch based on
   `release/v0.6.6`;
-- both validator modes and formatting exit 0.
+- both validator modes and both embedded-page syntax modes exit 0.
+
+Task 4's documented scope excludes Rust build, test, and formatting proof by
+owner ruling; no `cargo` command is an acceptance requirement for this task.
 
 Do not push. Report the commit ids, exact verification output, any skipped
 external CI check, and the next approved v0.6.6 work item.
@@ -1037,23 +1040,21 @@ external CI check, and the next approved v0.6.6 work item.
   scripts/check_agent_guide.py`, `python3 -m py_compile
   scripts/check_agent_guide.py`, `node scripts/render_check.js
   --syntax-selftest`, `node scripts/render_check.js --syntax-only`, and `git
-  diff --check` each exited 0. Their complete output and the formatter
-  environment exception are recorded in the v0.6.6 pre-step above.
-- Formatter environment exception: host Cargo 1.93.1 lacked `cargo fmt`,
-  `rustup`, and `rustfmt`; no host tooling changed. A login-shell disposable
-  container attempt exited 127 (`sh: 1: rustup: not found`). The corrected
-  read-only container command `docker run --rm -v "$PWD:/work:ro" -w /work
-  rust:1.93 sh -c 'rustup component add rustfmt && cargo fmt --check'` exited
-  0 after the repository selected stable 1.97.1 and installed Rustfmt.
+  diff --check` each exited 0. Their complete output is recorded in the
+  v0.6.6 pre-step above.
+- Scope amendment: the owner ruled that Task 4 changes no Rust/Cargo source,
+  so Rust build, test, and formatting commands are not acceptance proof. The
+  prior host/container formatter diagnostics are historical environment facts,
+  not a requirement used to close this task.
 - Step 4: independent review of the prospective `b025602..HEAD` plus
   uncommitted Task 4 diff returned APPROVE with 0 Critical, 0 Important, and 0
   Minor findings. It independently re-ran the non-formatter commands and
   `git diff --check`, confirmed the read-only formatter substitute, and found
   only the approved workflow, testing-memory, chronology, proof/status, and
   task-branch-expectation scope.
-- Steps 5–6: commit `79bffea ci: enforce the agent guide contract` passed
+- Steps 5–6: implementation commit `8296117 ci: enforce the agent guide
+  contract` passed
   `git show --check --stat --oneline HEAD` with no whitespace errors. `git
   status --short --branch` printed only `## work/v0.6.6-okf-agent-guide`.
   Both agent-guide and embedded-page syntax modes exited 0 with the same green
-  output recorded above; the read-only disposable formatter command again
-  exited 0 after stable 1.97.1 installed Rustfmt.
+  output recorded above. No Rust/Cargo command was required for Task 4.
