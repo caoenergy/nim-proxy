@@ -64,7 +64,14 @@ fn spec_is_usable() {
     assert_eq!(spec["info"]["version"], env!("CARGO_PKG_VERSION"));
 
     let paths = spec["paths"].as_object().expect("paths");
-    assert_eq!(paths.len(), 15, "13 /api/* routes + the 2 setup routes");
+    let operation_count: usize = paths
+        .values()
+        .map(|item| item.as_object().expect("path item").len())
+        .sum();
+    assert_eq!(
+        operation_count, 16,
+        "14 /api/* operations + the 2 setup operations"
+    );
     assert_eq!(
         paths["/api/locale-bootstrap"]["get"]["security"]
             .as_array()

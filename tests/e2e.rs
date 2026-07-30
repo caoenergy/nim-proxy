@@ -4382,6 +4382,11 @@ fn locale_response_type(bytes: &[u8]) -> Option<String> {
     value["error"]["type"].as_str().map(str::to_owned)
 }
 
+fn locale_response_message(bytes: &[u8]) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    value["error"]["message"].as_str().map(str::to_owned)
+}
+
 fn record_locale_response(
     failures: &mut Vec<String>,
     label: &str,
@@ -4440,6 +4445,55 @@ async fn locale_config_body(proxy: &support::Proxy, cookie: &str) -> (u16, Strin
     (status, body)
 }
 
+fn record_only_user_locale_changed(
+    failures: &mut Vec<String>,
+    label: &str,
+    before_bytes: &[u8],
+    after_bytes: &[u8],
+    username: &str,
+    expected_locale: Option<&str>,
+) {
+    let before: serde_json::Value =
+        serde_json::from_slice(before_bytes).expect("locale-preferences: before store JSON");
+    let after: serde_json::Value =
+        serde_json::from_slice(after_bytes).expect("locale-preferences: after store JSON");
+    let mut expected = before.clone();
+    let users = expected["users"]
+        .as_array_mut()
+        .expect("locale-preferences: users array");
+    let caller = users
+        .iter_mut()
+        .find(|entry| entry["username"] == username)
+        .unwrap_or_else(|| panic!("locale-preferences: missing caller {username}"));
+    match expected_locale {
+        Some(locale) => {
+            caller
+                .as_object_mut()
+                .expect("locale-preferences: user object")
+                .insert("locale".into(), serde_json::json!(locale));
+        }
+        None => {
+            caller
+                .as_object_mut()
+                .expect("locale-preferences: user object")
+                .remove("locale");
+        }
+    }
+    if after["users"] != expected["users"] {
+        failures.push(format!(
+            "{label}: complete users array changed outside authenticated caller; before={} after={} expected={}",
+            before["users"], after["users"], expected["users"]
+        ));
+    }
+    if after != expected {
+        failures.push(format!(
+            "{label}: persisted store changed outside the caller locale; before={} after={} expected={expected}",
+            String::from_utf8_lossy(before_bytes),
+            String::from_utf8_lossy(after_bytes),
+        ));
+    }
+}
+
 #[tokio::test]
 async fn locale_preferences_are_fail_closed() {
     let mock = start_mock().await;
@@ -4466,6 +4520,7 @@ async fn locale_preferences_are_fail_closed() {
     let admin = login_as(&proxy, "locale-admin").await;
     let user = login_as(&proxy, "locale-user").await;
     let mut failures = Vec::new();
+    let mut rejection_byte_checks = 0;
 
     // GET /api/config is real server output, not a test-side Rust-wire copy.
     let (super_status, super_body) = locale_config_body(&proxy, &superuser).await;
@@ -4572,17 +4627,46 @@ async fn locale_preferences_are_fail_closed() {
         if locale_store_bytes(&proxy) != before {
             failures.push(format!("{label}: rejected mutation changed config.json"));
         }
+        rejection_byte_checks += 1;
     }
+    let before = locale_store_bytes(&proxy);
+    let (status, content_type, body) = locale_post(
+        &proxy,
+        None,
+        "/api/settings/account",
+        &serde_json::json!({"action": "locale", "locale": "en-US"}),
+    )
+    .await;
+    record_locale_response(
+        &mut failures,
+        "anonymous-user-override",
+        status,
+        content_type.as_deref(),
+        &body,
+        reqwest::StatusCode::UNAUTHORIZED,
+        Some("unauthorized"),
+    );
+    if locale_store_bytes(&proxy) != before {
+        failures.push("anonymous-user-override: rejected mutation changed config.json".into());
+    }
+    rejection_byte_checks += 1;
 
     // Every boundary row goes through each real mutation endpoint. Valid but
     // uninstalled tags are distinguished from syntactically invalid tags.
     let syntax_rows = [
         ("empty", ""),
         ("whitespace", " "),
+        ("one-letter-language", "e"),
         ("underscore", "en_US"),
         ("trailing-separator", "en-"),
         ("private-use", "x-private"),
         ("four-letter-language", "abcd"),
+        ("three-letter-script", "zh-Abc"),
+        ("five-letter-script", "zh-Abcde"),
+        ("three-letter-alpha-region", "en-USA"),
+        ("one-digit-region", "en-1"),
+        ("two-digit-region", "en-12"),
+        ("four-digit-region", "en-1234"),
         ("extension", "en-u-ca"),
         ("padded", " en-US "),
         ("non-ascii", "fr-ÉR"),
@@ -4590,12 +4674,13 @@ async fn locale_preferences_are_fail_closed() {
         ("extra-subtag", "zh-Hans-CN-extra"),
     ];
     let uninstalled_rows = [
-        ("language", "en"),
-        ("script", "zh-Hans"),
-        ("alpha-region", "pt-BR"),
-        ("numeric-region", "es-419"),
-        ("script-region", "zh-Hans-CN"),
-        ("test-pseudolocale", "en-XA"),
+        ("two-letter-language", "eN", "en"),
+        ("three-letter-language", "eNg", "eng"),
+        ("script", "zH-hAnS", "zh-Hans"),
+        ("alpha-region", "pT-bR", "pt-BR"),
+        ("numeric-region", "eS-419", "es-419"),
+        ("script-region", "zH-hAnS-cN", "zh-Hans-CN"),
+        ("test-pseudolocale", "eN-xA", "en-XA"),
     ];
     for (path, cookie, surface) in [
         ("/api/settings/locale", superuser.as_str(), "server-default"),
@@ -4623,8 +4708,9 @@ async fn locale_preferences_are_fail_closed() {
             if locale_store_bytes(&proxy) != before {
                 failures.push(format!("{label}: rejected mutation changed config.json"));
             }
+            rejection_byte_checks += 1;
         }
-        for (row, locale) in uninstalled_rows {
+        for (row, locale, canonical) in uninstalled_rows {
             let before = locale_store_bytes(&proxy);
             let request = if path.ends_with("/account") {
                 serde_json::json!({"action": "locale", "locale": locale})
@@ -4643,9 +4729,17 @@ async fn locale_preferences_are_fail_closed() {
                 reqwest::StatusCode::BAD_REQUEST,
                 Some("locale_not_installed"),
             );
+            let expected_message = format!("locale {canonical} is not installed");
+            if locale_response_message(&body).as_deref() != Some(expected_message.as_str()) {
+                failures.push(format!(
+                    "{label}: canonical locale message {:?}, expected {expected_message:?}",
+                    locale_response_message(&body)
+                ));
+            }
             if locale_store_bytes(&proxy) != before {
                 failures.push(format!("{label}: rejected mutation changed config.json"));
             }
+            rejection_byte_checks += 1;
         }
     }
 
@@ -4669,6 +4763,7 @@ async fn locale_preferences_are_fail_closed() {
     if locale_store_bytes(&proxy) != before {
         failures.push("user-override-invalid-action: changed config.json".into());
     }
+    rejection_byte_checks += 1;
 
     // Both existing admin roles may set the default. Mixed case is
     // canonicalized before the durable write.
@@ -4701,83 +4796,107 @@ async fn locale_preferences_are_fail_closed() {
         }
     }
 
-    // Any authenticated user may set and clear only their own preference,
-    // without supplying a password.
-    let (status, content_type, body) = locale_post(
-        &proxy,
-        Some(&user),
-        "/api/settings/account",
-        &serde_json::json!({"action": "locale", "locale": "EN-us"}),
-    )
-    .await;
-    record_locale_response(
-        &mut failures,
-        "user-override-set",
-        status,
-        content_type.as_deref(),
-        &body,
-        reqwest::StatusCode::OK,
-        None,
-    );
-    let stored: serde_json::Value = serde_json::from_slice(&locale_store_bytes(&proxy)).unwrap();
-    let stored_user = stored["users"].as_array().and_then(|users| {
-        users
-            .iter()
-            .find(|entry| entry["username"] == "locale-user")
-    });
-    if stored_user.and_then(|entry| entry["locale"].as_str()) != Some("en-US") {
-        failures.push(format!(
-            "user-override-set: canonical durable locale missing: {stored}"
-        ));
-    }
-    let (_, configured_user_body) = locale_config_body(&proxy, &user).await;
-    let configured_user: serde_json::Value =
-        serde_json::from_str(&configured_user_body).unwrap_or_default();
-    if configured_user["locale"] != "en-US" {
-        failures.push(format!(
-            "user-override-set: /api/config did not expose en-US: {configured_user_body}"
-        ));
+    // Every authenticated role may set and clear only its own preference,
+    // without supplying a password. Compare the complete persisted document,
+    // including the full users array, after each caller-scoped mutation.
+    for (actor, username, cookie, is_admin) in [
+        ("ordinary-user", "locale-user", user.as_str(), false),
+        ("admin", "locale-admin", admin.as_str(), true),
+        ("superuser", "root", superuser.as_str(), true),
+    ] {
+        let set_label = format!("{actor}-override-set");
+        let before_set = locale_store_bytes(&proxy);
+        let (status, content_type, body) = locale_post(
+            &proxy,
+            Some(cookie),
+            "/api/settings/account",
+            &serde_json::json!({"action": "locale", "locale": "EN-us"}),
+        )
+        .await;
+        record_locale_response(
+            &mut failures,
+            &set_label,
+            status,
+            content_type.as_deref(),
+            &body,
+            reqwest::StatusCode::OK,
+            None,
+        );
+        let after_set = locale_store_bytes(&proxy);
+        record_only_user_locale_changed(
+            &mut failures,
+            &set_label,
+            &before_set,
+            &after_set,
+            username,
+            Some("en-US"),
+        );
+
+        let (configured_status, configured_body) = locale_config_body(&proxy, cookie).await;
+        let configured: serde_json::Value =
+            serde_json::from_str(&configured_body).unwrap_or_default();
+        if configured_status != 200 || configured["locale"] != "en-US" {
+            failures.push(format!(
+                "{set_label}: caller /api/config did not expose canonical en-US: status={configured_status} body={configured_body}"
+            ));
+        }
+        if is_admin && configured["server"]["default_locale"] != "en-US" {
+            failures.push(format!(
+                "{set_label}: admin /api/config must expose server.default_locale plus its own locale: {configured_body}"
+            ));
+        }
+
+        let clear_label = format!("{actor}-override-clear");
+        let before_clear = locale_store_bytes(&proxy);
+        let (status, content_type, body) = locale_post(
+            &proxy,
+            Some(cookie),
+            "/api/settings/account",
+            &serde_json::json!({"action": "locale", "locale": null}),
+        )
+        .await;
+        record_locale_response(
+            &mut failures,
+            &clear_label,
+            status,
+            content_type.as_deref(),
+            &body,
+            reqwest::StatusCode::OK,
+            None,
+        );
+        let after_clear = locale_store_bytes(&proxy);
+        record_only_user_locale_changed(
+            &mut failures,
+            &clear_label,
+            &before_clear,
+            &after_clear,
+            username,
+            None,
+        );
+
+        let (configured_status, configured_body) = locale_config_body(&proxy, cookie).await;
+        let configured: serde_json::Value =
+            serde_json::from_str(&configured_body).unwrap_or_default();
+        if configured_status != 200 || configured.get("locale") != Some(&serde_json::Value::Null) {
+            failures.push(format!(
+                "{clear_label}: caller /api/config locale is not null: status={configured_status} body={configured_body}"
+            ));
+        }
+        if is_admin && configured["server"]["default_locale"] != "en-US" {
+            failures.push(format!(
+                "{clear_label}: admin /api/config lost server.default_locale: {configured_body}"
+            ));
+        }
     }
 
-    let (status, content_type, body) = locale_post(
-        &proxy,
-        Some(&user),
-        "/api/settings/account",
-        &serde_json::json!({"action": "locale", "locale": null}),
-    )
-    .await;
-    record_locale_response(
-        &mut failures,
-        "user-override-clear",
-        status,
-        content_type.as_deref(),
-        &body,
-        reqwest::StatusCode::OK,
-        None,
-    );
-    let stored: serde_json::Value = serde_json::from_slice(&locale_store_bytes(&proxy)).unwrap();
-    let stored_user = stored["users"].as_array().and_then(|users| {
-        users
-            .iter()
-            .find(|entry| entry["username"] == "locale-user")
-    });
-    if stored_user.is_some_and(|entry| entry.get("locale").is_some()) {
+    if rejection_byte_checks != 54 {
         failures.push(format!(
-            "user-override-clear: durable locale field was not removed: {stored}"
+            "locale-preferences: executed {rejection_byte_checks} rejection byte checks, expected 54"
         ));
     }
-    let (_, cleared_user_body) = locale_config_body(&proxy, &user).await;
-    let cleared_user: serde_json::Value =
-        serde_json::from_str(&cleared_user_body).unwrap_or_default();
-    if cleared_user.get("locale") != Some(&serde_json::Value::Null) {
-        failures.push(format!(
-            "user-override-clear: /api/config locale is not null: {cleared_user_body}"
-        ));
-    }
-
     assert!(
         failures.is_empty(),
-        "locale-preferences failures ({}):\n{}",
+        "locale-preferences failures ({}) after {rejection_byte_checks} rejection byte checks:\n{}",
         failures.len(),
         failures.join("\n")
     );
