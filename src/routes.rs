@@ -10,12 +10,15 @@ pub const METRICS: &str = "/metrics";
 pub const ASSET_PUBLIC_CSS: &str = "/assets/public/public.css";
 pub const ASSET_PUBLIC_SETUP_JS: &str = "/assets/public/setup.js";
 pub const ASSET_PUBLIC_LOGIN_JS: &str = "/assets/public/login.js";
-pub const ASSET_PUBLIC_LOCALE: &str = "/assets/public/locales/{locale}.json";
+// Axum does not support a parameter plus a suffix in one segment; the handler
+// accepts only `{locale}.json`, so the externally visible contract remains
+// `/assets/public/locales/{locale}.json`.
+pub const ASSET_PUBLIC_LOCALE: &str = "/assets/public/locales/{locale_file}";
 pub const ASSET_OPERATOR_CSS: &str = "/assets/operator/operator.css";
 pub const ASSET_OPERATOR_SHARED_JS: &str = "/assets/operator/shared.js";
 pub const ASSET_OPERATOR_DASHBOARD_JS: &str = "/assets/operator/dashboard.js";
 pub const ASSET_OPERATOR_SETTINGS_JS: &str = "/assets/operator/settings.js";
-pub const ASSET_OPERATOR_LOCALE: &str = "/assets/operator/locales/{locale}.json";
+pub const ASSET_OPERATOR_LOCALE: &str = "/assets/operator/locales/{locale_file}";
 
 pub const API_PREFIX: &str = "/api";
 pub const API_LOCALE_BOOTSTRAP: &str = "/locale-bootstrap";
@@ -98,7 +101,7 @@ const ROUTES: &[RouteContract] = &[
         access: Access::Public,
         method: "GET",
         openapi: false,
-        path: ASSET_PUBLIC_LOCALE,
+        path: "/assets/public/locales/{locale}.json",
         phase: Phase::Always,
         probe_path: "/assets/public/locales/en-US.json",
     },
@@ -138,7 +141,7 @@ const ROUTES: &[RouteContract] = &[
         access: Access::OperatorAny,
         method: "GET",
         openapi: false,
-        path: ASSET_OPERATOR_LOCALE,
+        path: "/assets/operator/locales/{locale}.json",
         phase: Phase::PostSetup,
         probe_path: "/assets/operator/locales/en-US.json",
     },

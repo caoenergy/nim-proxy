@@ -331,16 +331,24 @@ if (args.includes('--syntax-only')) process.exit(syntaxOnly());
 function servedPageSelftest() {
   const failures = [];
   const runSource = String(main);
-  if (typeof probeCatalogHtml !== 'function') {
-    failures.push('catalog probe does not accept server-owned HTML');
-  } else if (/readFileSync\s*\(\s*PAGE\b/.test(String(probeCatalogHtml))) {
-    failures.push('catalog probe still reads a private page source');
-  }
-  if (!runSource.includes("'Fetch.getResponseBody'")) {
+  const catalogResponseSource = typeof handleCatalogResponseForProbe === 'function'
+    ? String(handleCatalogResponseForProbe)
+    : '';
+  const responseSources = `${runSource}\n${catalogResponseSource}\n${String(responseBody)}`;
+  if (!responseSources.includes("'Fetch.getResponseBody'")) {
     failures.push('probe does not read the real response body');
   }
   if (!runSource.includes('serverPageResponses.add')) {
     failures.push('probe does not record server response provenance');
+  }
+  if (!catalogResponseSource.includes('serverCatalogResponses.add')) {
+    failures.push('probe does not record server catalog response provenance');
+  }
+  if (typeof handleCatalogResponseForProbe !== 'function') {
+    failures.push('catalog probe does not mutate a server response');
+  }
+  if (typeof probeCatalogHtml === 'function') {
+    failures.push('catalog probe still mutates server HTML');
   }
   if (runSource.includes('probePageHtml()')) {
     failures.push('test-only page assembly remains reachable');
@@ -359,19 +367,38 @@ function catalogStartupSelftest() {
   const failures = [];
   const runSource = String(main);
   const pausedSource = String(handleCatalogResponseForStartupProbe);
+  const probeSource = typeof handleCatalogResponseForProbe === 'function'
+    ? String(handleCatalogResponseForProbe)
+    : '';
+  const appAssetSource =
+    typeof handleApplicationScriptResponseForStartupProbe === 'function'
+      ? String(handleApplicationScriptResponseForStartupProbe)
+      : '';
   const responseSource = String(responseBody);
   const required = [
     ['catalog-response-stage', pausedSource.includes('responseBody(')
       && responseSource.includes("'Fetch.getResponseBody'")],
+    ['catalog-probe-response-stage', probeSource.includes('responseBody(')
+      && probeSource.includes('fulfillPausedResponse(')],
     ['catalog-delay', pausedSource.includes('catalogHeldState')],
     ['bootstrap-before-catalog', runSource.includes('bootstrap-before-catalog')],
     ['catalog-before-reveal', runSource.includes('catalog-before-reveal')],
     ['catalog-before-api', runSource.includes('catalog-before-api')],
+    ['css-before-bootstrap', runSource.includes('css-before-bootstrap')],
+    ['css-failure-request-stage', runSource.includes("'Fetch.failRequest'")
+      && runSource.includes("'css-failure'")],
+    ['app-asset-response-stage', appAssetSource.includes('responseBody(')
+      && appAssetSource.includes('startupState.secret')
+      && appAssetSource.includes('fulfillPausedResponse(')],
+    ['app-asset-emergency-only', runSource.includes('app-asset-emergency-only')],
     ['emergency-only', runSource.includes('emergency-only')],
     ['no-response-body-disclosure', runSource.includes('no-response-body-disclosure')],
   ];
   for (const [name, observed] of required) {
     if (!observed) failures.push(`${name}: startup proof is missing`);
+  }
+  if (typeof probeCatalogHtml === 'function') {
+    failures.push('catalog-probe-response-stage: inline-HTML catalog mutator survives');
   }
   for (const page of ['dashboard', 'setup', 'login']) {
     const html = fs.readFileSync(path.join(ROOT, 'src', 'web', `${page}.html`), 'utf8');
@@ -381,12 +408,28 @@ function catalogStartupSelftest() {
     if (!/<body\b[^>]*\bhidden(?:\s|=|>)/i.test(html)) {
       failures.push(`${page}-hidden-first-paint: body is not hidden`);
     }
+    if (!/<link\b[^>]*\bid=["']presentation-stylesheet["'][^>]*>/i.test(html)) {
+      failures.push(`${page}-css-before-bootstrap: stylesheet readiness is not addressable`);
+    }
+    const script = fs.readFileSync(
+      path.join(
+        ROOT,
+        'src',
+        'web',
+        page === 'dashboard' ? 'shared.js' : `${page}.js`,
+      ),
+      'utf8',
+    );
+    if (!script.includes('presentationStylesheetReady')
+        || !/if\s*\(\s*!presentationStylesheetReady\(\)\s*\)\s*return/.test(script)) {
+      failures.push(`${page}-css-before-bootstrap: boot does not stop before bootstrap`);
+    }
   }
   if (failures.length) {
     for (const failure of failures) console.error(`[catalog-startup] ${failure}`);
     return 1;
   }
-  console.log('catalog startup selftest ok — all pages and response-stage probes are wired');
+  console.log('catalog startup selftest ok — all pages and response/request-stage probes are wired');
   return 0;
 }
 
@@ -597,7 +640,6 @@ const IS_SETUP = pageArg === 'setup';
 const IS_LOGIN = pageArg === 'login';
 const IS_DASHBOARD = pageArg === 'dashboard';
 const PAGE_REL = path.join('src', 'web', `${pageArg}.html`);
-const CATALOG_PREFIX = IS_SETUP ? 'setup-' : '';
 const localeArg = (() => {
   const i = args.indexOf('--locale');
   return i >= 0 ? args[i + 1] : null;
@@ -611,13 +653,19 @@ const startupProbe = (() => {
   return i >= 0 ? args[i + 1] : null;
 })();
 const STARTUP_PROBES = new Set([
+  'app-script-failure',
   'delayed-catalog',
   'bootstrap-failure',
   'catalog-failure',
+  'css-failure',
   'malformed-catalog',
 ]);
 if (startupProbe && !STARTUP_PROBES.has(startupProbe)) {
   console.error(`unknown --startup-probe ${startupProbe}`);
+  process.exit(2);
+}
+if (startupProbe === 'app-script-failure' && !IS_DASHBOARD) {
+  console.error('app-script-failure is a dashboard-only startup probe');
   process.exit(2);
 }
 // Appended to every catalog value under --escape-probe. See the mutation below.
@@ -734,44 +782,29 @@ function loadFixtures() {
   );
 }
 
-function probeCatalogHtml(serverHtml) {
-  let html = serverHtml;
-  if (localeArg) {
-    const catalogFile = `${CATALOG_PREFIX}${localeArg}.json`;
-    const cp = path.join(ROOT, 'locales', catalogFile);
-    if (!fs.existsSync(cp)) {
-      const error = new Error(`missing locale ${path.relative(ROOT, cp)}`);
-      error.exitCode = 2;
-      throw error;
-    }
-    const cat = fs.readFileSync(cp, 'utf8').trim();
-    html = html.replace(
-      /(<script type="application\/json" id="i18n-catalog">)[\s\S]*?(<\/script>)/,
-      (_m, a, b) => a + cat + b,
-    );
+function loadTestLocaleCatalog(locale) {
+  if (locale !== 'en-XA') {
+    const error = new Error(`missing locale locales/${locale}.json`);
+    error.exitCode = 2;
+    throw error;
   }
-  if (escapeProbe) {
-    html = html.replace(
-      /(<script type="application\/json" id="i18n-catalog">)([\s\S]*?)(<\/script>)/,
-      (_m, a, json, b) => {
-        const cat = JSON.parse(json);
-        for (const key of Object.keys(cat.messages)) {
-          const value = cat.messages[key];
-          if (typeof value === 'string') cat.messages[key] = value + PROBE_SUFFIX;
-          else value.en += PROBE_SUFFIX;
-        }
-        return a + JSON.stringify(cat) + b;
-      },
-    );
-  }
-  const withoutCatalog = value => value.replace(
-    /(<script type="application\/json" id="i18n-catalog">)[\s\S]*?(<\/script>)/,
-    '$1[PROBE CATALOG]$2',
-  );
-  if (withoutCatalog(html) !== withoutCatalog(serverHtml)) {
-    throw new Error('probe changed server HTML outside the catalog body');
-  }
-  return html;
+  return JSON.parse(execFileSync(
+    'python3',
+    [path.join(ROOT, 'scripts', 'gen_pseudolocale.py'), '--stdout'],
+    { cwd: ROOT, encoding: 'utf8' },
+  ));
+}
+
+function publicCatalogProjection(catalog) {
+  return {
+    locale: catalog.locale,
+    messages: Object.fromEntries(
+      Object.entries(catalog.messages).filter(([id]) =>
+        id === 'common.app_name'
+        || id.startsWith('login.')
+        || id.startsWith('setup.')),
+    ),
+  };
 }
 
 async function responseBody(browser, sessionId, requestId) {
@@ -795,6 +828,39 @@ async function fulfillPausedResponse(browser, sessionId, params, body, statusCod
     responseHeaders: headers,
     body: Buffer.from(body).toString('base64'),
   }, sessionId);
+}
+
+async function handleCatalogResponseForProbe({
+  browser,
+  sessionId,
+  params,
+  pathname,
+  catalogPath,
+  serverCatalogResponses,
+}) {
+  const originalBody = await responseBody(browser, sessionId, params.requestId);
+  let body = originalBody;
+  let statusCode = params.responseStatusCode;
+  if (pathname === '/api/locale-bootstrap') {
+    const bootstrap = JSON.parse(body);
+    bootstrap.installed_locales = [localeArg];
+    bootstrap.server_default = localeArg;
+    body = JSON.stringify(bootstrap);
+  } else if (pathname === catalogPath) {
+    let catalog = localeArg
+      ? loadTestLocaleCatalog(localeArg)
+      : JSON.parse(body);
+    if (!IS_DASHBOARD) catalog = publicCatalogProjection(catalog);
+    if (escapeProbe) {
+      for (const id of Object.keys(catalog.messages)) {
+        catalog.messages[id] += PROBE_SUFFIX;
+      }
+    }
+    body = JSON.stringify(catalog);
+    if (localeArg) statusCode = 200;
+    serverCatalogResponses.add(pathname);
+  }
+  await fulfillPausedResponse(browser, sessionId, params, body, statusCode);
 }
 
 async function handleCatalogResponseForStartupProbe({
@@ -842,6 +908,23 @@ async function handleCatalogResponseForStartupProbe({
   }
   if (pathname === catalogPath) startupState.catalogReleasedAt = Date.now();
   await fulfillPausedResponse(browser, sessionId, params, body, statusCode);
+}
+
+async function handleApplicationScriptResponseForStartupProbe({
+  browser,
+  sessionId,
+  params,
+  startupState,
+}) {
+  await responseBody(browser, sessionId, params.requestId);
+  startupState.failureReleasedAt = Date.now();
+  await fulfillPausedResponse(
+    browser,
+    sessionId,
+    params,
+    startupState.secret,
+    503,
+  );
 }
 
 function configuredStore() {
@@ -937,12 +1020,16 @@ async function startProxy(tmpdir) {
 const SCAN_UNTRANSLATED = `
   (() => {
     const out = [];
+    const pseudoPad = 'escamotable';
     const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     for (let n = walk.nextNode(); n; n = walk.nextNode()) {
       const p = n.parentNode.nodeName;
       if (p === 'SCRIPT' || p === 'STYLE') continue;
       const t = n.textContent.trim();
       if (t.length < 3 || !/[a-zA-Z]{3}/.test(t)) continue;
+      const padding = t.endsWith(']') ? t.slice(0, -1) : t;
+      if (padding && [...padding].every((ch, i) => ch === pseudoPad[i % pseudoPad.length]))
+        continue;
       if (/[\\u00C0-\\u024F]/.test(t)) continue;   // accented: the catalog reached it
       out.push(t);
     }
@@ -1215,6 +1302,7 @@ async function main() {
   const requestedPresentation = new Set();
   const servedPresentation = new Set();
   const serverPageResponses = new Set();
+  const serverCatalogResponses = new Set();
   const fetchOperations = new Set();
   const fetched = [];
   const requestTimeline = [];
@@ -1229,9 +1317,14 @@ async function main() {
   };
   startupState.disclosureMarkers.add(startupState.secret);
   const pagePath = IS_SETUP ? '/setup' : IS_LOGIN ? '/login' : '/';
+  const selectedLocale = localeArg || 'en-US';
   const catalogPath = IS_DASHBOARD
-    ? '/assets/operator/locales/en-US.json'
-    : '/assets/public/locales/en-US.json';
+    ? `/assets/operator/locales/${selectedLocale}.json`
+    : `/assets/public/locales/${selectedLocale}.json`;
+  const stylesheetPath = IS_DASHBOARD
+    ? '/assets/operator/operator.css'
+    : '/assets/public/public.css';
+  const applicationScriptPath = '/assets/operator/dashboard.js';
   const presentationPath = value =>
     value === '/' || value === '/setup' || value === '/login'
       || value.startsWith('/assets/');
@@ -1242,6 +1335,16 @@ async function main() {
     const url = new URL(request.url);
     if (params.responseStatusCode !== undefined) {
       const headers = params.responseHeaders || [];
+      if (startupProbe === 'app-script-failure'
+          && url.pathname === applicationScriptPath) {
+        await handleApplicationScriptResponseForStartupProbe({
+          browser,
+          sessionId: S,
+          params,
+          startupState,
+        });
+        return;
+      }
       if (startupProbe
           && ['/api/locale-bootstrap', catalogPath].includes(url.pathname)) {
         await handleCatalogResponseForStartupProbe({
@@ -1251,6 +1354,18 @@ async function main() {
           pathname: url.pathname,
           catalogPath,
           startupState,
+        });
+        return;
+      }
+      if ((escapeProbe || localeArg)
+          && [catalogPath, '/api/locale-bootstrap'].includes(url.pathname)) {
+        await handleCatalogResponseForProbe({
+          browser,
+          sessionId: S,
+          params,
+          pathname: url.pathname,
+          catalogPath,
+          serverCatalogResponses,
         });
         return;
       }
@@ -1268,7 +1383,6 @@ async function main() {
         throw new Error(`server page response headers violated the presentation contract: ${url.pathname}`);
       }
       const serverHtml = await responseBody(browser, S, params.requestId);
-      let body = serverHtml;
       if (startupProbe) {
         if (/id=["']i18n-catalog["']/.test(serverHtml)) {
           startupState.pageSourceProblems.push('inline catalog survives');
@@ -1276,11 +1390,9 @@ async function main() {
         if (!/<body\b[^>]*\bhidden(?:\s|=|>)/i.test(serverHtml)) {
           startupState.pageSourceProblems.push('body is not hidden in served HTML');
         }
-      } else {
-        body = probeCatalogHtml(serverHtml);
       }
       serverPageResponses.add(url.pathname);
-      await fulfillPausedResponse(browser, S, params, body);
+      await fulfillPausedResponse(browser, S, params, serverHtml);
       return;
     }
     requestTimeline.push({
@@ -1288,6 +1400,14 @@ async function main() {
       method: request.method,
       path: url.pathname,
     });
+    if (startupProbe === 'css-failure' && url.pathname === stylesheetPath) {
+      startupState.failureReleasedAt = Date.now();
+      await browser.send('Fetch.failRequest', {
+        requestId: params.requestId,
+        errorReason: 'Failed',
+      }, S);
+      return;
+    }
     let body = null;
     if (url.pathname === '/api/config') body = fixtures['config.json'];
     else if (url.pathname === '/api/dashboard/now') body = fixtures['dashboard-now.json'];
@@ -1389,13 +1509,21 @@ async function main() {
       requestStage: 'Response',
     });
   }
-  if (startupProbe) {
+  if (startupProbe || escapeProbe || localeArg) {
     for (const responsePath of ['/api/locale-bootstrap', catalogPath]) {
+      if (!startupProbe && !localeArg
+          && responsePath === '/api/locale-bootstrap') continue;
       fetchPatterns.push({
         urlPattern: proxy.origin + responsePath,
         requestStage: 'Response',
       });
     }
+  }
+  if (startupProbe === 'app-script-failure') {
+    fetchPatterns.push({
+      urlPattern: proxy.origin + applicationScriptPath,
+      requestStage: 'Response',
+    });
   }
   await browser.send('Fetch.enable', { patterns: fetchPatterns }, S);
   if (IS_DASHBOARD) {
@@ -1442,7 +1570,22 @@ async function main() {
       row.path === '/api/locale-bootstrap');
     const catalogIndex = requestTimeline.findIndex(row =>
       row.path === catalogPath);
-    if (bootstrapIndex < 0) {
+    if (startupProbe === 'css-failure') {
+      if (!requestTimeline.some(row => row.path === stylesheetPath)) {
+        startupFailures.push('css-before-bootstrap: stylesheet failure was not forced');
+      }
+      if (bootstrapIndex >= 0) {
+        startupFailures.push('css-before-bootstrap: bootstrap was requested after CSS failed');
+      }
+      if (catalogIndex >= 0) {
+        startupFailures.push('css-before-bootstrap: catalog was requested after CSS failed');
+      }
+    } else if (startupProbe === 'app-script-failure'
+        && !requestTimeline.some(row => row.path === applicationScriptPath)) {
+      startupFailures.push(
+        'app-asset-emergency-only: operator application-script failure was not forced',
+      );
+    } else if (bootstrapIndex < 0) {
       startupFailures.push(
         'bootstrap-before-catalog: bootstrap was not requested',
       );
@@ -1463,7 +1606,8 @@ async function main() {
           'catalog-before-reveal: body was visible while the catalog response was held',
         );
       }
-      if (startupState.catalogHeldState?.text) {
+      if (!startupState.catalogHeldState?.hidden
+          && startupState.catalogHeldState?.text) {
         startupFailures.push(
           'catalog-before-reveal: stale English was visible while the catalog response was held',
         );
@@ -1471,6 +1615,11 @@ async function main() {
     }
     const appRequests = requestTimeline.filter(row =>
       row.path.startsWith('/api/') && row.path !== '/api/locale-bootstrap');
+    if (startupProbe === 'css-failure' && appRequests.length) {
+      startupFailures.push(
+        `css-before-bootstrap: application API work started after CSS failed: ${appRequests.map(row => row.path).join(', ')}`,
+      );
+    }
     const beforeCatalog = appRequests.filter(row =>
       !startupState.catalogReleasedAt || row.at < startupState.catalogReleasedAt);
     if (beforeCatalog.length) {
@@ -1479,24 +1628,41 @@ async function main() {
       );
     }
 
-    const emergencyExpected = startupProbe !== 'delayed-catalog';
+    const hardHiddenExpected = startupProbe === 'css-failure';
+    const emergencyExpected = startupProbe !== 'delayed-catalog'
+      && !hardHiddenExpected;
     const deadline = Date.now() + 3000;
     let visible = null;
     do {
       visible = await evaluateRaw(browser, S, `JSON.stringify({
         hidden: !document.body || document.body.hidden,
         text: document.body ? document.body.innerText.trim() : '',
+        stylesheetRules: (() => {
+          const sheet = document.getElementById('presentation-stylesheet')?.sheet;
+          try { return sheet ? sheet.cssRules.length : null; }
+          catch { return 'unreadable'; }
+        })(),
       })`).then(JSON.parse);
-      if ((!emergencyExpected && !visible.hidden)
+      if ((hardHiddenExpected && visible.hidden)
+          || (!hardHiddenExpected && !emergencyExpected && !visible.hidden)
           || (emergencyExpected && visible.text)) break;
       await sleep(50);
     } while (Date.now() < deadline);
 
-    if (emergencyExpected) {
+    if (hardHiddenExpected) {
+      if (!visible.hidden) {
+        startupFailures.push(
+          `css-before-bootstrap: page became visible after CSS failed with stylesheetRules=${JSON.stringify(visible.stylesheetRules)} text=${JSON.stringify(visible.text)}`,
+        );
+      }
+    } else if (emergencyExpected) {
       if (visible.hidden
           || visible.text !== 'NIM Proxy interface failed to load.') {
+        const check = startupProbe === 'app-script-failure'
+          ? 'app-asset-emergency-only'
+          : 'emergency-only';
         startupFailures.push(
-          `emergency-only: got hidden=${visible.hidden} text=${JSON.stringify(visible.text)}`,
+          `${check}: got hidden=${visible.hidden} text=${JSON.stringify(visible.text)}`,
         );
       }
       await sleep(IS_DASHBOARD ? 3500 : 500);
@@ -1579,7 +1745,9 @@ async function main() {
       );
     }
     const unexpectedConsoleErrors = consoleErrors.filter(message =>
-      !/Failed to load resource: the server responded with a status of 503/.test(message));
+      !/Failed to load resource: the server responded with a status of 503/.test(message)
+      && !(['css-failure', 'app-script-failure'].includes(startupProbe)
+        && /Failed to load resource: net::ERR_FAILED/.test(message)));
     if (errors.length || unexpectedConsoleErrors.length) {
       startupFailures.push(
         `startup-errors: ${errors.length} page error(s), ${unexpectedConsoleErrors.length} unexpected console error(s)`,
@@ -1596,17 +1764,20 @@ async function main() {
     return;
   }
   const requiredPresentation = IS_SETUP
-    ? ['/setup', '/assets/public/public.css', '/assets/public/setup.js']
+    ? ['/setup', '/assets/public/public.css', '/assets/public/setup.js', catalogPath]
     : IS_LOGIN
-      ? ['/login', '/assets/public/public.css', '/assets/public/login.js']
+      ? ['/login', '/assets/public/public.css', '/assets/public/login.js', catalogPath]
       : ['/', '/assets/operator/operator.css', '/assets/operator/shared.js',
-         '/assets/operator/dashboard.js', '/assets/operator/settings.js'];
+         '/assets/operator/dashboard.js', '/assets/operator/settings.js', catalogPath];
   for (const resource of requiredPresentation) {
     if (!requestedPresentation.has(resource)) initialAssetErrors.push(`not requested ${resource}`);
     if (!servedPresentation.has(resource)) initialAssetErrors.push(`not served ${resource}`);
   }
   if ((escapeProbe || localeArg) && !serverPageResponses.has(pagePath)) {
-    initialAssetErrors.push(`probe did not mutate a server response ${pagePath}`);
+    initialAssetErrors.push(`probe did not derive from the server page response ${pagePath}`);
+  }
+  if ((escapeProbe || localeArg) && !serverCatalogResponses.has(catalogPath)) {
+    initialAssetErrors.push(`probe did not mutate the server catalog response ${catalogPath}`);
   }
   if (initialAssetErrors.length) {
     console.error('FAIL — initial presentation asset load was incomplete or external');
@@ -1649,6 +1820,43 @@ async function main() {
     }
     return r.result.value;
   };
+
+  if (IS_LOGIN) {
+    const loginFailure = await evaluate(`
+      (() => {
+        if (document.body.hidden) return 'body stayed hidden after catalog resolution';
+        if (!document.querySelector('form.login-card')) return 'login form is missing';
+        if (document.querySelector('script[src^="/assets/operator/"]'))
+          return 'login loaded an operator script';
+        if (document.querySelector('h1')?.textContent !== 'NIM Proxy')
+          return 'catalog did not render the product name';
+        if (document.querySelector('.login-sub')?.textContent !== 'Sign in to the dashboard.')
+          return 'catalog did not render the login prompt';
+        return '';
+      })()`);
+    const inPage = await evaluate(
+      'JSON.stringify(window.__pageErrors || [])',
+    ).then(JSON.parse);
+    for (const error of inPage) {
+      errors.push({ text: `${error.kind}: ${error.msg}`, line: error.line || 0, col: error.col || 0 });
+    }
+    const operatorRequests = [...requestedPresentation]
+      .filter(pathname => pathname.startsWith('/assets/operator/'));
+    await cleanupRun();
+    if (loginFailure || operatorRequests.length || errors.length || consoleErrors.length) {
+      console.error('FAIL — login render violated its public catalog boundary');
+      if (loginFailure) console.error(`  ${loginFailure}`);
+      for (const pathname of operatorRequests) {
+        console.error(`  requested operator asset ${pathname}`);
+      }
+      for (const error of errors) console.error(`  ${error.text}`);
+      for (const error of consoleErrors) console.error(`  console: ${error}`);
+      throw reportedFailure();
+    }
+    console.log('rendered anonymous login from the public catalog');
+    console.log('render ok — no uncaught page errors');
+    return;
+  }
 
   /* Generated metric geometry changes on every poll. Prove the CSSOM bridge
      bounds its cache/rules without invalidating a live node during compaction. */
@@ -1818,18 +2026,18 @@ async function main() {
       }
       if (typeof setMessageWithNodes === 'function') {
         const id = 'setup.step3.mintkey';
-        const original = MSG[id].en;
+        const original = MSG[id];
         const key = document.createElement('code');
         key.textContent = 'KEY';
         try {
-          MSG[id].en = 'A {key} B {key}';
+          MSG[id] = 'A {key} B {key}';
           setMessageWithNodes(host, id, [['{key}', key]]);
           if (host.textContent !== 'A KEY B KEY')
             problems.push('structured replacement did not preserve repeated placeholders');
           if (host.querySelectorAll('code').length !== 2)
             problems.push('structured replacement did not create one fixed node per placeholder');
         } finally {
-          MSG[id].en = original;
+          MSG[id] = original;
         }
         for (const node of [
           document.createElement('script'),

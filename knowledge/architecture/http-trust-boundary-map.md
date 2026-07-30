@@ -15,7 +15,7 @@ module are test-only descriptive metadata and cannot dispatch a request.
 `probe_path` is a concrete fixture-backed request path. This distinction is
 load-bearing for `/v1/{*path}` and future parameterized routes.
 
-The current router has 30 method/path contracts, including seven presentation
+The current router has 33 method/path contracts, including nine presentation
 asset routes. A
 superuser has no exclusive route: it has admin endpoint power plus the
 undeletable/undemotable account invariant. `OperatorSuperuser` exists so a
@@ -57,10 +57,12 @@ not a second copy here.
 | `GET /assets/operator/shared.js` | Browser operator | Private | Post-setup | Session/header credentials; any role | None | JavaScript | `setup_required`, `unauthorized` | None | Dashboard page | No | B, M |
 | `GET /assets/operator/dashboard.js` | Browser operator | Private | Post-setup | Session/header credentials; any role | None | JavaScript | `setup_required`, `unauthorized` | None | Dashboard page | No | B, M |
 | `GET /assets/operator/settings.js` | Browser operator | Private | Post-setup | Session/header credentials; any role | None | JavaScript | `setup_required`, `unauthorized` | None | Dashboard page | No | B, M |
+| `GET /assets/operator/locales/{locale}.json` | Browser operator | Private | Post-setup | Session/header credentials; any role; gate precedes locale lookup | None | JSON catalog | `setup_required`, `unauthorized`; unknown locale is 404 only after the gate | None | Dashboard startup | No | B, M |
 | `GET /metrics` | Prometheus/operator | Private | Post-setup | Session, Basic, or header credentials; any role | None | Prometheus text | `setup_required`, `unauthorized` | Config unchanged; no upstream call | External scraper | No | B, M |
 | `GET /api/dashboard` | Browser operator | Private | Post-setup | Session/header credentials; any role | Query | JSON | `setup_required`, `unauthorized`, `invalid_query`, `invalid_time_window` | Config unchanged; no upstream call | Dashboard range load | Yes | B, M |
 | `GET /api/dashboard/now` | Browser operator | Private | Post-setup | Session/header credentials; any role | None | JSON | `setup_required`, `unauthorized` | Config unchanged; no upstream call | Dashboard polling | Yes | B, M |
 | `GET /api/config` | Browser operator | Private | Post-setup | Session/header credentials; any role; response filtered by role/ownership | None | JSON | `setup_required`, `unauthorized` | Config unchanged; no upstream call | Settings startup | Yes | B, M |
+| `GET /api/locale-bootstrap` | Browser | Public | Always | None | None | `LocaleBootstrap` JSON | None | None | Dashboard/setup/login startup | Yes, explicit no security | B, M |
 | `POST /api/settings/nim-keys` | Browser/operator API | Private | Post-setup | Session/header credentials; own keys for user, any key for admin | JSON | JSON | `setup_required`, `unauthorized`, `forbidden`, `invalid_config` | Success changes config bytes; rejection does not | Settings Access & keys | Yes | B, O, M |
 | `POST /api/settings/clients` | Browser/operator API | Private | Post-setup | Session/header credentials; own keys for user, any key/mode for admin | JSON | JSON | `setup_required`, `unauthorized`, `forbidden`, `invalid_config` | Success changes config bytes; rejection does not | Settings Access & keys | Yes | B, O, M |
 | `POST /api/settings/upstream` | Browser/operator API | Private | Post-setup | Session/header credentials; admin or superuser | JSON | JSON | `setup_required`, `unauthorized`, `forbidden`, `invalid_config` | Success changes config bytes; rejection does not | Settings Server | Yes | B, M |
@@ -74,6 +76,7 @@ not a second copy here.
 | `GET /assets/public/public.css` | Browser | Public | Always | None | None | CSS | None | None | Setup/login pages | No | B, M |
 | `GET /assets/public/setup.js` | Browser | Public | Always | None | None | JavaScript | None | None | Setup page | No | B, M |
 | `GET /assets/public/login.js` | Browser | Public | Always | None | None | JavaScript | None | None | Login page | No | B, M |
+| `GET /assets/public/locales/{locale}.json` | Browser | Public | Always | None | None | JSON catalog limited to `setup.*`, `login.*`, and `common.app_name` | Unknown locale 404 | None | Setup/login startup | No | B, M |
 | `GET /login` | Browser operator | Public | Always | None; authenticated callers redirect | None | HTML/redirect | None (HTML flow) | None | Login page | No | B, M |
 | `POST /login` | Browser operator | Public | Always | Username/password form | Form URL encoded | Redirect + session cookie | HTML 401 or plain 429; no `ApiError` code | Success sets a session cookie; config unchanged | Login form | No | B, M |
 | `POST /logout` | Browser operator | Public | Always | None required | None | Redirect + clearing cookie | None | Response sets a clearing cookie; config unchanged | Account/logout control | No | B, M |
@@ -96,8 +99,10 @@ durable byte changes. Upstream-only probes must change no config bytes. The
 data-plane scheduling, response, and observation details remain in the
 [streaming pipeline](streaming-pipeline.md).
 
-Generated OpenAPI describes only the 12 `/api` operations and two setup POST
-operations. HTML/form, presentation assets, health, metrics, and `/v1`
+Generated OpenAPI describes 13 `/api` operations and two setup POST
+operations. The locale bootstrap is public with explicit `security: []`; the
+other 12 `/api` operations inherit operator authentication. HTML/form,
+presentation assets, health, metrics, and `/v1`
 omissions are explicit
 decisions. The generated-file authority and error schema remain in
 [typed responses and generated OpenAPI](../decisions/typed-responses-and-generated-openapi.md).

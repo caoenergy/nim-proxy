@@ -36,7 +36,6 @@ The checks, and why each exists:
 - **length caps** — opt-in per key, for strings in width-constrained elements.
 """
 import argparse
-import hashlib
 import html
 import json
 import pathlib
@@ -147,18 +146,153 @@ def validate(source: dict, candidate: dict, name: str) -> list:
 
 
 def public_projection_problems(source_messages: dict, candidate: dict) -> list:
-    """Task 5 red seam: return named public-projection contract problems."""
-    return []
+    """Return named problems in the locked public plain-string projection."""
+    problems = []
+    expected = {
+        mid: message["en"]
+        for mid, message in source_messages.items()
+        if mid == "common.app_name"
+        or mid.startswith("login.")
+        or mid.startswith("setup.")
+    }
+    messages = candidate.get("messages")
+    if not isinstance(messages, dict):
+        return [("catalog-schema", "public catalog messages must be an object")]
+    for mid in sorted(set(messages) - set(expected)):
+        problems.append((
+            "public-catalog-extra-id",
+            f"public catalog exposes operator-only id {mid}",
+        ))
+    for mid in sorted(set(expected) - set(messages)):
+        problems.append((
+            "public-catalog-missing-id",
+            f"public catalog is missing {mid}",
+        ))
+    for mid in sorted(set(expected) & set(messages)):
+        if messages[mid] != expected[mid]:
+            problems.append((
+                "public-catalog-value-drift",
+                f"public catalog value for {mid} differs from the source",
+            ))
+    return problems
+
+
+def public_projection(source: dict) -> dict:
+    return {
+        "locale": "en-US",
+        "messages": {
+            mid: message["en"]
+            for mid, message in source["messages"].items()
+            if mid == "common.app_name"
+            or mid.startswith("login.")
+            or mid.startswith("setup.")
+        },
+    }
+
+
+def public_projection_text(source: dict) -> str:
+    return json.dumps(
+        public_projection(source),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def production_locale_problems(locale_names: list[str]) -> list:
-    """Task 5 red seam: return named production-registry contract problems."""
-    return []
+    """Production embeds exactly en-US; generated en-XA never ships."""
+    unsupported = sorted({name for name in locale_names if name != "en-US"})
+    return [
+        (
+            "production-pseudolocale",
+            f"production locale registry contains {name}; only en-US may ship",
+        )
+        for name in unsupported
+    ]
 
 
 def catalog_text_problems(raw: str, name: str, rich: bool) -> list:
-    """Task 5 red seam: preserve JSON pairs for schema/order/duplicate checks."""
-    return []
+    """Preserve JSON pairs so duplicate ids and authored order stay observable."""
+    class Pairs(list):
+        pass
+
+    try:
+        root = json.loads(raw, object_pairs_hook=Pairs)
+    except json.JSONDecodeError as error:
+        return [("catalog-schema", f"{name}: invalid JSON: {error.msg}")]
+    problems = []
+
+    def duplicate_keys(value):
+        if isinstance(value, Pairs):
+            keys = [key for key, _ in value]
+            for key in sorted({key for key in keys if keys.count(key) > 1}):
+                problems.append((
+                    "catalog-duplicate-id",
+                    f"{name}: duplicate object key {key}",
+                ))
+            for _, child in value:
+                duplicate_keys(child)
+        elif isinstance(value, list):
+            for child in value:
+                duplicate_keys(child)
+
+    duplicate_keys(root)
+    if not isinstance(root, Pairs):
+        return problems + [("catalog-schema", f"{name}: catalog must be an object")]
+    top = dict(root)
+    expected_top = {"locale", "messages", "state"} if rich else {"locale", "messages"}
+    if set(top) != expected_top or top.get("locale") != "en-US":
+        problems.append((
+            "catalog-schema",
+            f"{name}: top-level catalog schema is invalid",
+        ))
+    if rich and top.get("state") != "Source":
+        problems.append((
+            "catalog-schema",
+            f"{name}: rich source state must be Source",
+        ))
+    messages = top.get("messages")
+    if not isinstance(messages, Pairs):
+        problems.append((
+            "catalog-schema",
+            f"{name}: messages must be an object",
+        ))
+        return problems
+    ids = [mid for mid, _ in messages]
+    if ids != sorted(ids) or any(not mid.isascii() for mid in ids):
+        problems.append((
+            "catalog-key-order",
+            f"{name}: message ids must be ASCII and ASCII-sorted",
+        ))
+    for mid, message in messages:
+        if not isinstance(mid, str):
+            problems.append(("catalog-schema", f"{name}: message id must be text"))
+            continue
+        if rich:
+            if not isinstance(message, Pairs):
+                problems.append((
+                    "catalog-schema",
+                    f"{name}: {mid} rich message must be an object",
+                ))
+                continue
+            entry = dict(message)
+            if (
+                not {"en", "hash"} <= set(entry)
+                or not set(entry) <= {"en", "desc", "hash", "maxLen"}
+                or not isinstance(entry.get("en"), str)
+                or not isinstance(entry.get("hash"), str)
+                or ("desc" in entry and not isinstance(entry["desc"], str))
+                or ("maxLen" in entry and not isinstance(entry["maxLen"], int))
+            ):
+                problems.append((
+                    "catalog-schema",
+                    f"{name}: {mid} rich message schema is invalid",
+                ))
+        elif not isinstance(message, str):
+            problems.append((
+                "catalog-schema",
+                f"{name}: {mid} public value must be a string",
+            ))
+    return problems
 
 
 def load(path: pathlib.Path) -> dict:
@@ -294,6 +428,11 @@ def main() -> int:
     ap.add_argument("locale", nargs="*", type=pathlib.Path)
     ap.add_argument("--all", action="store_true", help="validate the repository catalogs")
     ap.add_argument("--selftest", action="store_true", help="prove each check can fail")
+    ap.add_argument(
+        "--update-public",
+        action="store_true",
+        help="regenerate the public en-US fixture from the canonical source",
+    )
     args = ap.parse_args()
 
     if args.selftest:
@@ -301,10 +440,18 @@ def main() -> int:
 
     source_path = ROOT / "src/web/locales/en-US.json"
     source = load(source_path)
+    public_path = FIXTURES / "public-en-US.json"
+    if args.update_public:
+        public_path.write_text(public_projection_text(source))
+        print(
+            "wrote "
+            f"{len(public_projection(source)['messages'])} messages to "
+            f"{public_path.relative_to(ROOT)}"
+        )
+        return 0
     targets = list(args.locale)
     problems = []
     if args.all:
-        public_path = FIXTURES / "public-en-US.json"
         problems += catalog_text_problems(
             source_path.read_text(),
             str(source_path.relative_to(ROOT)),
@@ -320,11 +467,15 @@ def main() -> int:
             source["messages"],
             load(public_path),
         )
-        legacy_names = [
+        production_names = [
+            path.stem
+            for path in sorted((ROOT / "src/web/locales").glob("*.json"))
+        ]
+        production_names += [
             path.stem.removeprefix("setup-")
             for path in sorted((ROOT / "locales").glob("*.json"))
         ]
-        problems += production_locale_problems(["en-US", *legacy_names])
+        problems += production_locale_problems(production_names)
     for path in targets:
         problems += catalog_text_problems(path.read_text(), path.name, True)
         problems += validate(source, load(path), path.name)

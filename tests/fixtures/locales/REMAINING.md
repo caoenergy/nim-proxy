@@ -12,15 +12,16 @@ against the page at rest reports almost nothing** — the KPI cards, ring gauges
 perf blocks and table bodies only exist once data arrives, which is where most
 of these live.
 
-Last measured at 30 actionable runs (27 further runs are correctly untranslated:
+Last measured at 31 actionable runs (27 further runs are correctly untranslated:
 frozen units, status codes, and data from the API). The gate prints both numbers,
-so this file being stale is detectable rather than a matter of trust.
+so this file being stale is detectable rather than a matter of trust. The
+setup run reports 0 actionable strings and 7 correctly untranslated
+machine/frozen values.
 
 ## What is left, by mechanism
 
-**Chart series names and axis labels.** Passed as arguments to `lineChart`,
-`stackChart` and `legend`, then escaped by those helpers, so they take `tRaw()`
-rather than `t()`:
+**Chart series names and axis labels.** Passed as catalog-resolved plain text
+to `lineChart`, `stackChart`, and `legend`, then escaped by those helpers:
 
 `requests` · `errors` · `disconnects` · `active` · `queued` · `median` ·
 `20.0 sec` · `40.0 sec` · `60.0 sec`
@@ -43,7 +44,8 @@ placeholders, because word order moves:
 | `3 models` · `Slot 1` | count fragments; `Slot` is the standard term, but the number makes it a message with `{n}` |
 
 **Four English plural ternaries live inside these runs** —
-`dashboard.html:1437` (`key(s)`), `:1484`, `:1529`, `:1602` (`model(s)`). They
+`src/web/dashboard.js:140` (`key(s)`), `:187`, `:232`, and `:305`
+(`model(s)`). They
 are the one shape no check here can see, because the English is the absence of a
 character in one branch rather than a string. They convert when their whole run
 does; see
@@ -53,9 +55,9 @@ does; see
 
 ## Two things this file is not
 
-It is **not** the settings surface. `renderSettings` and its sub-panels are out
-of scope until 0.6.7 and the gate does not visit that tab at all, so none of
-those strings appear above.
+It is **not** the settings surface. `renderSettings` and its sub-panels are
+owned by foundation Task 7, and this Task 5 gate does not visit that tab, so
+none of those strings appear above.
 
 It is **not** a list of everything untranslated in the tree. The gate only sees
 what the captured fixtures cause to render. Paths the fixtures never reach —

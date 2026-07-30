@@ -30,6 +30,7 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+EMERGENCY_TEXT = "NIM Proxy interface failed to load."
 PAGE_SOURCES = {
     "src/web/dashboard.html": (
         "src/web/shared.js",
@@ -327,6 +328,17 @@ CANONICAL_LOOKUPS = {
     throw new Error\("forbidden catalog text target"\);
   const text = message\(id\);""",
     ),
+    "src/web/login.html": (
+        r"""function setMessageText\(node, id, params = \{\}\) \{
+  assertMessageTextTarget\(node\);
+  node\.textContent = message\(id, params\);
+\}""",
+        r"""function setMessageAttr\(node, attr, id, params = \{\}\) \{
+  if \(!I18N_TEXT_ATTRS\.has\(attr\)\)
+    throw new Error\(`forbidden catalog attribute: \$\{attr\}`\);
+  node\.setAttribute\(attr, message\(id, params\)\);
+\}""",
+    ),
 }
 
 
@@ -516,9 +528,13 @@ def lint_untagged(name: str, raw: str) -> list:
     body = re.search(r"<script>(.*?)</script>", raw, re.S)
     js = body.group(1) if body else ""
 
-    # The settings surface is out of scope until 0.6.7.
+    # The settings surface is owned by foundation Task 7.
     cut = SETTINGS_START.search(js)
     scanned = js[: cut.start()] if cut else js
+    # The startup failure has one deliberately unlocalized, dependency-free
+    # string. It is useful precisely when no catalog is available.
+    scanned = scanned.replace(repr(EMERGENCY_TEXT), "''")
+    scanned = scanned.replace(json.dumps(EMERGENCY_TEXT), '""')
 
     # PUBLISHERS maps a model namespace to its vendor's brand name. Brand
     # names are DATA — they arrive from the model id and are never translated,
@@ -645,7 +661,7 @@ def lint_retired_vocabulary(name: str, raw: str, catalog=None) -> list:
         for old, new in RETIRED.items():
             if old in text:
                 out.append(
-                    f"{name}: {mid} uses retired term {old!r} — "
+                    f"[noncanonical-vocabulary] {name}: {mid} uses retired term {old!r} — "
                     f"standard vocabulary says {new!r}"
                 )
     # Everything outside the catalog block: markup, template literals, quoted
@@ -675,7 +691,8 @@ def lint_retired_vocabulary(name: str, raw: str, catalog=None) -> list:
             word_index = flat.count(" ", 0, m.start())
             src_pos = offsets[word_index] if word_index < len(offsets) else 0
             out.append(
-                f"{name}:{outside.count(chr(10), 0, src_pos) + 1}: retired term "
+                f"[noncanonical-vocabulary] {name}:"
+                f"{outside.count(chr(10), 0, src_pos) + 1}: retired term "
                 f"{old!r} outside the catalog — standard vocabulary says {new!r}"
             )
     return out

@@ -171,6 +171,14 @@ impl OkResponse {
     }
 }
 
+/// The installed presentation locales and the server-wide default used before
+/// per-user locale preferences are introduced.
+#[derive(Serialize, ToSchema)]
+pub struct LocaleBootstrap {
+    pub installed_locales: Vec<String>,
+    pub server_default: String,
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/config
 // ---------------------------------------------------------------------------
@@ -441,6 +449,7 @@ impl Modify for SecurityAddon {
     paths(
         crate::api_dashboard,
         crate::api_dashboard_now,
+        crate::api_locale_bootstrap,
         crate::settings::api_config,
         crate::settings::nim_keys,
         crate::settings::clients,
@@ -468,6 +477,7 @@ impl Modify for SecurityAddon {
         HistoryDiagnostics,
         HistorySettings,
         Limits,
+        LocaleBootstrap,
         MetricValue,
         MintedClientKey,
         Mode,
@@ -553,6 +563,13 @@ mod tests {
         );
         sorted("ApiErrorBody", &ApiError::new("code", "message").error);
         sorted("OkResponse", &OkResponse::new());
+        sorted(
+            "LocaleBootstrap",
+            &LocaleBootstrap {
+                installed_locales: vec!["en-US".into()],
+                server_default: "en-US".into(),
+            },
+        );
         sorted(
             "ClientsResponse",
             &ClientsResponse {

@@ -1,14 +1,61 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const setErrorText = (text) => { $("err").textContent = text || ""; };
+const EMERGENCY_MESSAGE = "NIM Proxy interface failed to load.";
+let MSG;
+function failInterface() {
+  document.body.replaceChildren(document.createTextNode(EMERGENCY_MESSAGE));
+  document.body.hidden = false;
+}
+function presentationStylesheetReady() {
+  const sheet = document.getElementById("presentation-stylesheet")?.sheet;
+  try { return Boolean(sheet?.cssRules.length); }
+  catch { return false; }
+}
+function validBootstrap(value) {
+  return value
+    && Object.keys(value).sort().join(",") === "installed_locales,server_default"
+    && Array.isArray(value.installed_locales)
+    && value.installed_locales.length > 0
+    && value.installed_locales.every(locale => typeof locale === "string")
+    && typeof value.server_default === "string"
+    && value.installed_locales.includes(value.server_default);
+}
+function validCatalog(value, locale) {
+  return value
+    && Object.keys(value).sort().join(",") === "locale,messages"
+    && value.locale === locale
+    && value.messages
+    && !Array.isArray(value.messages)
+    && typeof value.messages === "object"
+    && Object.values(value.messages).every(value => typeof value === "string");
+}
+async function responseJson(path) {
+  const response = await fetch(path, { headers: { Accept: "application/json" } });
+  if (!response.ok) throw new Error("startup request failed");
+  return response.json();
+}
+const catalogReady = (async () => {
+  if (!presentationStylesheetReady()) return;
+  const bootstrap = await responseJson("/api/locale-bootstrap");
+  if (!validBootstrap(bootstrap)) throw new Error("invalid locale bootstrap");
+  const locale = bootstrap.server_default;
+  const catalog = await responseJson(
+    `/assets/public/locales/${encodeURIComponent(locale)}.json`,
+  );
+  if (!validCatalog(catalog, locale)) throw new Error("invalid locale catalog");
+  MSG = catalog.messages;
+  document.documentElement.lang = locale;
+})().catch(() => {
+  failInterface();
+});
 
 /* ---------- i18n ----------
    Catalog values remain plain Unicode text. Native DOM sinks own ordinary
    element and text-bearing attribute contexts. Structured messages splice
    fixed caller-created nodes between text nodes; catalog text is never HTML. */
-const MSG = JSON.parse($("i18n-catalog").textContent).messages;
 const message = (id, params = {}) => {
-  let text = MSG[id] === undefined ? id : MSG[id].en;
+  let text = MSG[id] === undefined ? id : MSG[id];
   for (const key in params)
     text = text.split("{" + key + "}").join(String(params[key]));
   return text;
@@ -93,25 +140,28 @@ function applyStatic(root) {
     });
   });
 }
-applyStatic(document);
-const keyLiteral = document.createElement("code");
-keyLiteral.textContent = "npk_\u2026";
-const endpointLiteral = document.createElement("code");
-endpointLiteral.textContent = "/v1";
-setMessageWithNodes($("mintkey-label"), "setup.step3.mintkey", [
-  ["{key}", keyLiteral],
-  ["{endpoint}", endpointLiteral],
-]);
-setEmphasizedMessage(
-  $("mintwarn"),
-  "setup.step3.mintwarn",
-  document.createElement("b"),
-);
-setEmphasizedMessage(
-  $("setup-complete-intro"),
-  "setup.step4.intro",
-  document.createElement("b"),
-);
+function initializeSetup() {
+  applyStatic(document);
+  const keyLiteral = document.createElement("code");
+  keyLiteral.textContent = "npk_\u2026";
+  const endpointLiteral = document.createElement("code");
+  endpointLiteral.textContent = "/v1";
+  setMessageWithNodes($("mintkey-label"), "setup.step3.mintkey", [
+    ["{key}", keyLiteral],
+    ["{endpoint}", endpointLiteral],
+  ]);
+  setEmphasizedMessage(
+    $("mintwarn"),
+    "setup.step3.mintwarn",
+    document.createElement("b"),
+  );
+  setEmphasizedMessage(
+    $("setup-complete-intro"),
+    "setup.step4.intro",
+    document.createElement("b"),
+  );
+  document.body.hidden = false;
+}
 let keys = []; // {key, rpm, models}
 
 function show(n) {
@@ -273,3 +323,9 @@ $("wiz").onsubmit = async (ev) => {
   } catch (e) { setMessageText($("err"), "setup.step3.error.request", { error: e }); }
   $("finish").disabled = false;
 };
+
+catalogReady.then(() => {
+  if (MSG) initializeSetup();
+}).catch(() => {
+  failInterface();
+});

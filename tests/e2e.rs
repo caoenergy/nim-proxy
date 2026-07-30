@@ -2198,7 +2198,19 @@ async fn login_handles_malformed_urlencoded_without_panic() {
         .text()
         .await
         .unwrap();
-    assert!(login_js.contains("Incorrect username or password."));
+    assert!(login_js.contains("login.error.invalid_credentials"));
+    let catalog: serde_json::Value = client()
+        .get(proxy.url("/assets/public/locales/en-US.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        catalog["messages"]["login.error.invalid_credentials"],
+        "Incorrect username or password."
+    );
 }
 
 /// Repeated failed logins trip the throttle: a burst past the failure cap
@@ -2959,20 +2971,42 @@ async fn dashboard_capacity_history_has_no_guessed_key_size() {
     let proxy = start_proxy(&mock.url, &[]).await;
     let cookie = login(&proxy).await;
 
-    let html = client()
-        .get(proxy.url("/"))
-        .header("cookie", cookie)
+    let catalog: serde_json::Value = client()
+        .get(proxy.url("/assets/operator/locales/en-US.json"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        catalog["messages"]["dashboard.capacity.history.shortfall"],
+        "Peak shortfall · rpm"
+    );
+    assert!(
+        catalog["messages"]["dashboard.capacity.history.utilization"]
+            .as_str()
+            .unwrap()
+            .contains("of capacity at the time")
+    );
+    assert!(
+        catalog["messages"]["dashboard.capacity.history.no_data.other"]
+            .as_str()
+            .unwrap()
+            .contains("with no capacity data")
+    );
+    let dashboard_js = client()
+        .get(proxy.url("/assets/operator/dashboard.js"))
+        .header("cookie", &cookie)
         .send()
         .await
         .unwrap()
         .text()
         .await
         .unwrap();
-    assert!(html.contains("Peak shortfall"));
-    assert!(html.contains("of capacity at the time"));
-    assert!(html.contains("with no capacity data"));
-    assert!(!html.contains("const moreKeys"));
-    assert!(!html.contains("MORE KEY"));
+    assert!(!dashboard_js.contains("const moreKeys"));
+    assert!(!dashboard_js.contains("MORE KEY"));
 }
 
 #[tokio::test]

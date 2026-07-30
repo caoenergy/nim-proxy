@@ -23,7 +23,9 @@ if (process.env.TZ !== "UTC") {
 const ROOT = path.join(__dirname, "..");
 const src = fs.readFileSync(path.join(ROOT, "src/web/shared.js"), "utf8");
 const dashboard = fs.readFileSync(path.join(ROOT, "src/web/dashboard.js"), "utf8");
-const page = fs.readFileSync(path.join(ROOT, "src/web/dashboard.html"), "utf8");
+const catalog = JSON.parse(
+  fs.readFileSync(path.join(ROOT, "src/web/locales/en-US.json"), "utf8")
+);
 
 // Pull the formatter definitions straight out of the page so the fixture can
 // never drift from the code it is meant to pin.
@@ -54,21 +56,14 @@ if (!scopeDate || !scopeTime) {
 // it pinned the harness rather than the page.
 const axis = "const stamp = ms => at(STAMP, ms);";
 
-// The formatters now read their locale from the shipped catalog, so take it
-// from the same place the page does rather than assuming en-US.
-const catalog = JSON.parse(
-  page.match(
-    /(?<=<script type="application\/json" id="i18n-catalog">)[\s\S]*?(?=<\/script>)/
-  )?.[0] || (() => {
-    console.error("could not find the inline catalog in src/web/dashboard.html");
-    process.exit(2);
-  })()
-);
+// The formatters read their locale from the one rich authoring catalog. The
+// server projects that source to the plain-string wire catalog at runtime.
 const preamble = `const I18N = ${JSON.stringify({ locale: catalog.locale })};`;
 
 const F = {};
 new Function(
-  `${preamble}\n${block}\n${scopeDate}\n${scopeTime}\n${axis}\n` +
+  `${preamble}\n${block}\ninitializeFormatters();\n` +
+    `${scopeDate}\n${scopeTime}\n${axis}\n` +
     `Object.assign(this, { fmt, secs, ago, scopeDate, scopeTime, axisLabel, stamp, pctOf });`
 ).call(F);
 

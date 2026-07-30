@@ -85,9 +85,9 @@ first produced a confident green while exercising nothing:
   gate starts the binary, authenticates through the real operator boundary,
   observes every required page/CSS/JS request, and fails missing, non-success,
   or cross-origin initial resources. Only API fixture responses are invented.
-  Hostile/locale runs mutate the inert catalog inside the binary's actual page
-  response after pinning its status, content type, cache policy, and CSP; they
-  reject any mutation outside that catalog body.
+  Hostile/locale runs capture the real catalog-route response and re-fulfill
+  only those response bytes; page HTML and application assets remain the
+  binary's unmodified responses. Page and catalog provenance are both required.
 - **It must wait for the real load event.** A fixed sleep can measure a parser
   that never reached the application. It asserts `readyState === 'complete'`.
 - **It must capture unhandled rejections.** The page boots from an `async`
@@ -95,8 +95,8 @@ first produced a confident green while exercising nothing:
   `Runtime.exceptionThrown` does not reliably report it.
 - **It must keep production source line numbers.** Error capture is installed
   through CDP before navigation rather than injected into page source. Hostile
-  catalog runs replace only the inert catalog block; scripts and styles remain
-  production-served assets.
+  catalog runs replace only the catalog-route response; page HTML, scripts,
+  and styles remain production-served assets.
 
 The payloads are **captured, not hand-written**, and deliberately contain
 failures: 504s, client disconnects, 429 rate-limit cooldowns, worker
@@ -128,8 +128,17 @@ faked.
   stylesheet/style attributes, and event-handler attributes. The normal CDP
   modes prove the source scan agrees with what the real routes load.
 - `--served-page-selftest` makes the response provenance non-optional: it
-  rejects the former private source-file assembly and requires a real response
-  body read plus an explicit provenance record before hostile mutation.
+  rejects the former private source-file assembly and requires real page and
+  catalog response-body reads plus explicit provenance records before hostile
+  mutation.
+- `--catalog-startup-selftest` rejects inline-HTML catalog mutation and
+  requires response-stage mutation plus the stylesheet-before-bootstrap guard.
+  The startup matrix independently rejects bootstrap/catalog/schema failure,
+  delayed catalog resolution, request-stage stylesheet loss across Dashboard,
+  Setup, and Login, and later operator application-script loss. It pins hard
+  hidden/no-request behavior after CSS failure, bootstrap before catalog,
+  catalog before reveal/polling, emergency-only later failure text, and no
+  subsequent application request.
 - Generated `data-style` declarations use a 512-entry rule/cache bound.
   Browser proof creates more than twice that many distinct metric-like values,
   requires a real compaction, verifies cache/rule agreement, and checks a live

@@ -62,10 +62,14 @@ for a `user`, so the type says what the security posture already required.
 
 **Generated spec.** `utoipa` (pinned `=5.5.0`, project convention) renders
 `openapi.json` at the repo root from `#[utoipa::path]` on the handlers and
-`ToSchema` on the types. 14 operations: the **12** `/api/*` routes, plus
-`POST /setup` and `POST /setup/validate-key`.
+`ToSchema` on the types. 15 operations: **13** `/api/*` routes, plus
+`POST /setup` and `POST /setup/validate-key`. `GET /api/locale-bootstrap`
+returns the typed, field-ordered installed-locale registry and is explicitly
+public; the other 12 `/api/*` operations inherit operator authentication.
 
-- **The two `/setup` routes are in the spec, flagged unauthenticated.** They
+- **The bootstrap and two `/setup` routes are flagged unauthenticated.**
+  Bootstrap is required before any page can choose its compiled locale. The
+  setup routes
   are JSON endpoints that a wizard, a scripted install, or an operator
   debugging upstream reachability legitimately calls, and leaving them
   undocumented would not make them less reachable. They sit outside the
@@ -128,9 +132,10 @@ differ.
 CI's `check` job additionally runs `UPDATE_OPENAPI=1 cargo test --test openapi`
 followed by `git diff --exit-code -- openapi.json`, so a stale spec fails the
 build rather than merely being discouraged. `spec_is_usable` asserts the
-document is consumable at all: 14 operations, every one tagged with a
-documented 200, every `/api/*` operation inheriting the auth requirement and
-every `/setup` operation explicitly waiving it.
+document is consumable at all: 15 operations, every one tagged with a
+documented 200, the 12 protected `/api/*` operations inheriting the auth
+requirement, and bootstrap plus every `/setup` operation explicitly waiving
+it.
 
 ## Consequences
 

@@ -969,9 +969,9 @@
       "hash": "fc1a3704"
     },
     "setup.step3.mintwarn": {
-      "en": "Without a client API key, all /v1 requests are rejected. Create one in Settings → Access & keys, or change API authentication to Open (no authentication).",
-      "desc": "{b} markers are no longer needed; the message uses ordinary prose and fixed machine paths.",
-      "hash": "fb4e6253"
+      "en": "Without a client API key, {b}all{/b} /v1 requests are rejected. Create one in Settings → Access & keys, or change API authentication to Open (no authentication).",
+      "desc": "{b}...{/b} emphasizes that every /v1 request is rejected until the operator creates a client key or explicitly opens API authentication.",
+      "hash": "169155e2"
     },
     "setup.step3.review.api_access": {
       "en": "API access",

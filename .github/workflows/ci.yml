@@ -62,6 +62,7 @@ jobs:
           node scripts/render_check.js --asset-selftest
           node scripts/render_check.js --assets-only
           node scripts/render_check.js --served-page-selftest
+          node scripts/render_check.js --catalog-startup-selftest
           node scripts/render_check.js --syntax-selftest
           node scripts/render_check.js --syntax-only
       - name: Formatter output is unchanged
@@ -83,7 +84,11 @@ jobs:
         # Proves every check can fail before trusting any of them.
         run: python3 scripts/locale_v1.py --selftest
       - name: locale-v1 validation
-        run: python3 scripts/locale_v1.py --all
+        run: |
+          python3 scripts/locale_v1.py --update-public
+          git diff --exit-code -- tests/fixtures/locales/public-en-US.json \
+            || { echo "::error::public-en-US.json is stale — run 'python3 scripts/locale_v1.py --update-public' and commit it"; exit 1; }
+          python3 scripts/locale_v1.py --all
       - name: Pseudolocale is current
         # en-XA is generated, never hand-edited; a stale one silently stops
         # testing the strings that changed.
@@ -106,6 +111,17 @@ jobs:
           node scripts/render_check.js --escape-probe
           node scripts/render_check.js --page setup
           node scripts/render_check.js --page setup --escape-probe
+          node scripts/render_check.js --page login
+          node scripts/render_check.js --page dashboard --startup-probe bootstrap-failure
+          node scripts/render_check.js --page dashboard --startup-probe delayed-catalog
+          node scripts/render_check.js --page setup --startup-probe catalog-failure
+          node scripts/render_check.js --page setup --startup-probe delayed-catalog
+          node scripts/render_check.js --page login --startup-probe malformed-catalog
+          node scripts/render_check.js --page login --startup-probe delayed-catalog
+          node scripts/render_check.js --page dashboard --startup-probe css-failure
+          node scripts/render_check.js --page setup --startup-probe css-failure
+          node scripts/render_check.js --page login --startup-probe css-failure
+          node scripts/render_check.js --page dashboard --startup-probe app-script-failure
           node scripts/render_check.js --cleanup-selftest
 
   coverage:

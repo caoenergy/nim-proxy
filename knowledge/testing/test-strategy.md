@@ -37,7 +37,8 @@ that proof.
   including protocol-relative URLs, reordered/unquoted attributes, `srcset`,
   and quoted CSS imports; `--assets-only` parses real split sources for
   external and inline active/style contexts. `--served-page-selftest` requires
-  hostile/locale probes to derive from and record the real server response.
+  hostile/locale probes to derive from and record the real page and catalog
+  responses.
   `--syntax-selftest` proves the syntax gate can reject its fixtures, and
   `--syntax-only` parses all five real split scripts without Chromium. These
   modes prove source structure, not behavior. For behavior, run
@@ -55,7 +56,15 @@ that proof.
   page/CSS/JS bytes, rejects an initial missing/error/external resource,
   fulfills captured API responses through CDP, and proves the bounded
   dynamic-style rule cache compacts without changing live geometry. Hostile
-  catalog modes mutate only the catalog in the verified real server response.
+  catalog modes mutate only the verified catalog-route response.
+  `--catalog-startup-selftest` rejects inline-HTML mutation and requires the
+  response-stage catalog hook plus a stylesheet-before-bootstrap guard.
+  Startup probes cover bootstrap/catalog failure, malformed schema, delayed
+  catalog resolution, request-stage stylesheet loss on all three pages, and a
+  later operator application-script loss. They require failed CSS to leave the
+  page hard-hidden with no bootstrap/catalog/API work, bootstrap before
+  catalog, catalog before reveal or API work, and later dependency failure to
+  reveal only the emergency message with no subsequent application request.
   Every behavior mode treats browser/proxy shutdown and run-directory removal
   as part of the result; cleanup failure is a failing check.
   The escape probe enforces the id/descriptor context-owned-sink contract:
@@ -72,7 +81,10 @@ that proof.
   `python3 scripts/check_i18n.py`; when English changes, also run
   `python3 scripts/gen_pseudolocale.py --check`.
 - **Locale files:** `python3 scripts/locale_v1.py --selftest` and
-  `python3 scripts/locale_v1.py --all`.
+  `python3 scripts/locale_v1.py --all`. When the public English projection
+  changes, run `python3 scripts/locale_v1.py --update-public` and verify the
+  fixture diff. `en-XA` is generated in memory for render tests and must never
+  be committed as a production locale.
 - **Pacing, pool, dispatch, and affinity:** use the enforcing mock and load
   harness; one upstream violation is failure. Follow the setup prerequisites
   in the [load section](#3-load--scriptsloadtestpy-vs-scriptsmock_nimpy---enforce).
@@ -133,12 +145,12 @@ Two tests exist purely so the JSON contract cannot move by accident (see
   from the committed file. Regenerate with
   `UPDATE_OPENAPI=1 cargo test --test openapi`; CI's `check` job runs that and
   then `git diff --exit-code -- openapi.json`. `spec_is_usable` additionally
-  asserts the document is consumable — 14 operations, each tagged with a
-  documented 200, `/api/*` inheriting the auth requirement and `/setup`
-  explicitly waiving it.
-- `routes::tests::inventory_agrees_with_generated_openapi` owns the 30-row
+  asserts the document is consumable — 15 operations, each tagged with a
+  documented 200, the 12 protected `/api/*` operations inheriting the auth
+  requirement, and public bootstrap plus `/setup` explicitly waiving it.
+- `routes::tests::inventory_agrees_with_generated_openapi` owns the 33-row
   compiled method/path inventory, including explicit OpenAPI omissions, the
-  `/v1/{*path}` template versus concrete probe, all seven presentation assets,
+  `/v1/{*path}` template versus concrete probe, all nine presentation assets,
   and zero superuser-exclusive routes. `route_contract_behavior_matrix` sends the
   five-state matrix through the real binary and asserts request/success
   content types, stable boundary errors, side effects, and `config.json`
@@ -215,11 +227,11 @@ Dashboard changes get two more checks.
 its served page/assets, fulfills captured API payloads from
 `tests/fixtures/api/`, walks all five tabs, hovers every chart with real
 pointer input, and fails on an initial resource or uncaught page error.
-`--escape-probe` additionally mutates every catalog value with hostile literal
+`--escape-probe` additionally mutates every catalog-route value with hostile literal
 text and fails if a page parses it as markup, renders entity text, permits a
 forbidden catalog attribute, or retains an escaped/plain compatibility helper.
-The mutation starts from the real binary response, preserves its server-owned
-HTML outside the catalog, and pins the response's status and security headers.
+The mutation starts from the real catalog response; page HTML and application
+assets remain unmodified production responses.
 `check_i18n.py --selftest` carries the static forbidden-context matrix, while
 `locale_v1.py --selftest` distinguishes raw and entity-encoded catalog markup
 and rejects inline-marker structure the runtime cannot render.

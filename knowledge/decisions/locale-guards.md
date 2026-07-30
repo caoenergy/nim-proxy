@@ -35,8 +35,9 @@ None of that is visible in an English screenshot, and none of it is reachable by
 **`en-XA` pseudolocale.** Accents every letter, brackets each message, pads to
 135%. Untranslated text stays plain ASCII and stands out; a container that only
 fits English fails here rather than after a locale ships; a clipped string shows
-as a missing `]`. Generated, never maintained, so it is always complete and
-never stale. Placeholders pass through untouched — an accented `{çôûñt}` would
+as a missing `]`. It is generated in memory for tests, never committed or
+served by production, so it is always complete and never stale. Placeholders
+pass through untouched — an accented `{çôûñt}` would
 not substitute, which would make the pseudolocale test itself instead of the
 layout.
 
@@ -48,6 +49,11 @@ markers may surround translated text, but cannot be removed, duplicated, or
 reordered. The hash is what makes a
 regenerate-on-drift pipeline possible: it records which English text a
 translation was made from, so "still valid, no longer correct" is detectable.
+The one rich `src/web/locales/en-US.json` source is also the authority for the
+generated public fixture. That projection must contain every `setup.*`, every
+`login.*`, and only `common.app_name`; missing, extra, drifted, or non-ASCII
+ordered ids fail. The self-test contains 12 file fixtures and seven in-memory
+projection/schema cases, 19 named negative cases in total.
 
 **Untagged-string lint.** Fails on a display literal that bypasses `message()`,
 covering attributes as well as text. Without it, English creeps back within two
@@ -90,7 +96,8 @@ decoration: nothing establishes it can.
     page untranslated rather than one string — and neither `node --check` nor
     `cargo test` can see it. A dedicated lint now catches that class.
 - The untagged-string lint is deliberately scoped: the settings surface is
-  excluded until 0.6.7, and `chipHtml`'s interior is excluded permanently.
+  excluded until foundation Task 7, and `chipHtml`'s interior is excluded
+  permanently.
   Flagging `chipHtml` would invite someone to "fix" it by routing a catalog
   value through the URL and script contexts PR 3 spent its effort removing.
 - `en-XA` proves layout mechanically but not **clipping**, which needs eyes.
@@ -99,7 +106,9 @@ decoration: nothing establishes it can.
   against the pages at rest, with no API data — where the KPI cards, ring
   gauges, perf blocks and every table body never render at all. It reported
   zero English and was measuring almost nothing. Replaying payloads captured
-  from the real binary shows ~20 genuine leaks, listed in
+  from the real binary currently shows 31 actionable runs and 27 correctly
+  untranslated machine/frozen runs; setup shows zero actionable and seven
+  correctly untranslated runs. The inventory lives in
   `tests/fixtures/locales/REMAINING.md`. Most are the sentence fragments with
   interpolated counts that PR 3 deferred and PR 4 did not pick up; the rest are
   labels rendered by `ringGauge` and `perfBlock`. Any future leak scan must run
