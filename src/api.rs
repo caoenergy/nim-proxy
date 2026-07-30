@@ -836,12 +836,15 @@ mod tests {
     }
 
     #[test]
-    fn locale_bootstrap_uses_the_persisted_default_source() {
-        let bootstrap = LocaleBootstrap::from_sources(&["en-US", "fr-FR"], "fr-FR");
+    fn locale_bootstrap_config_factory_uses_the_persisted_default() {
+        let stored: crate::config::StoredConfig =
+            serde_json::from_value(serde_json::json!({"default_locale": "fr-FR"}))
+                .expect("locale-bootstrap: distinct StoredConfig");
+        let bootstrap = LocaleBootstrap::from_config(&stored, &["en-US", "fr-FR"]);
         assert_eq!(
             serde_json::to_string(&bootstrap).unwrap(),
             r#"{"installed_locales":["en-US","fr-FR"],"server_default":"fr-FR"}"#,
-            "locale-bootstrap: the internal builder must select the persisted default, not the compiled default"
+            "locale-bootstrap: the private config-owned factory must select the persisted default, not the compiled default"
         );
     }
 }
