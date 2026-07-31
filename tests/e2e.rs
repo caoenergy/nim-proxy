@@ -3194,6 +3194,58 @@ async fn history_startup_is_fail_closed() {
     }
 }
 
+/// `history.jsonl` is deliberately opaque upgrade-reset evidence. Startup
+/// emits one bounded path-and-size warning while leaving its bytes untouched.
+#[tokio::test]
+async fn legacy_history_is_warned_once_without_parsing_or_mutating_it() {
+    let mock = start_mock().await;
+    let data_dir = scratch_data_dir();
+    std::fs::write(
+        data_dir.join("config.json"),
+        serde_json::to_vec_pretty(&StoreOpts::default().json(&mock.url)).unwrap(),
+    )
+    .unwrap();
+    let legacy = data_dir.join("history.jsonl");
+    let legacy_bytes = b"not canonical and never parsed\n";
+    std::fs::write(&legacy, legacy_bytes).unwrap();
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_nim-proxy"))
+        .env_clear()
+        .current_dir(std::env::temp_dir())
+        .env("PORT", port.to_string())
+        .env("DATA_DIR", &data_dir)
+        .env("RUST_LOG", "nim_proxy=warn")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if client()
+            .get(format!("http://127.0.0.1:{port}/health"))
+            .send()
+            .await
+            .is_ok_and(|response| response.status().is_success())
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "proxy did not become healthy");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    child.kill().unwrap();
+    let output = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let legacy_display = legacy.display().to_string();
+    assert_eq!(stderr.matches(&legacy_display).count(), 1, "{stderr}");
+    assert!(stderr.contains(&legacy_bytes.len().to_string()), "{stderr}");
+    assert_eq!(std::fs::read(&legacy).unwrap(), legacy_bytes);
+    let _ = std::fs::remove_dir_all(data_dir);
+}
+
 #[tokio::test]
 async fn invalid_noncanonical_and_uninstalled_durable_locales_refuse_to_start() {
     let mock = start_mock().await;
