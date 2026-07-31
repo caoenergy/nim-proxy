@@ -4082,7 +4082,10 @@ const SETTINGS_PRESTATE_PANEL = new Map([
   ['error-nim-key-validation', 'access'],
 ]);
 
-async function runMatrixContext({ browser, row, role, configuredProxy, setupProxy, visualCapture = null }) {
+async function runMatrixContext({
+  browser, row, role, configuredProxy, setupProxy, visualCapture = null,
+  visualLocale = null, skipDomAssertions = false,
+}) {
   const origin = row.fixtures.page === 'setup' ? setupProxy.origin : configuredProxy.origin;
   const pagePath = row.fixtures.page === 'dashboard'
     ? '/'
@@ -4106,7 +4109,14 @@ async function runMatrixContext({ browser, row, role, configuredProxy, setupProx
   const requests = [];
   const assets = new Set();
   const run = Object.fromEntries(CLEAN_RUN_FIELDS.map(field => [field, []]));
+  const visualCatalogPath = visualLocale
+    ? `/assets/${row.fixtures.page === 'dashboard' ? 'operator' : 'public'}/locales/${visualLocale}.json`
+    : null;
   const expectedPaths = new Set(expectedRequestSequence(row).map(request => request.path));
+  if (visualCatalogPath) {
+    expectedPaths.delete(`/assets/${row.fixtures.page === 'dashboard' ? 'operator' : 'public'}/locales/en-US.json`);
+    expectedPaths.add(visualCatalogPath);
+  }
   const requestUrls = new Map();
 
   const drain = async () => {
@@ -4186,7 +4196,14 @@ async function runMatrixContext({ browser, row, role, configuredProxy, setupProx
         && !heldBootstrapRelease) {
       await new Promise(resolve => { heldBootstrapRelease = resolve; });
     }
-    const value = routeFixture(normalized);
+    let value = routeFixture(normalized);
+    if (visualLocale && pathname === '/api/locale-bootstrap') {
+      value.installed_locales = [visualLocale];
+      value.server_default = visualLocale;
+    } else if (visualLocale && pathname === visualCatalogPath) {
+      value = loadTestLocaleCatalog(visualLocale);
+      if (row.fixtures.page !== 'dashboard') value = publicCatalogProjection(value);
+    }
     if (row.id === 'error-settings-fallback'
         && normalized.method === 'POST'
         && pathname === '/api/settings/history') {
@@ -4494,7 +4511,7 @@ async function runMatrixContext({ browser, row, role, configuredProxy, setupProx
     }
 
     const dom = [];
-    for (const assertion of row.dom) {
+    for (const assertion of skipDomAssertions ? [] : row.dom) {
       if (assertion.collect?.kind === 'sequence') {
         const result = [];
         for (const selector of assertion.collect.steps) {
@@ -4825,6 +4842,7 @@ async function captureCurrentVisualItems({ items, artifactDir, drafts }, context
     let absolutePath = path.resolve(artifactDir, item.path);
     let reached = false;
     let rootVisible = false;
+    let renderedLocale = '';
     let layoutProblemsForItem = [];
     let layoutMeasurements = null;
     let capture = null;
@@ -4864,6 +4882,7 @@ async function captureCurrentVisualItems({ items, artifactDir, drafts }, context
         };
       })()`);
       rootVisible = state.rootVisible;
+      renderedLocale = state.renderedLocale;
       reached = state.rootVisible && state.ownerVisible;
       if (!reached) continue;
       const geometry = await evaluateRaw(context.browser, context.sessionId, `(() => {
@@ -4953,7 +4972,7 @@ async function captureCurrentVisualItems({ items, artifactDir, drafts }, context
       artifactWritten,
       reached,
       rootVisible,
-      renderedLocale: state.renderedLocale,
+      renderedLocale,
       capture,
       layoutProblems: layoutProblemsForItem,
       layoutMeasurements,
@@ -5009,21 +5028,25 @@ async function runVisualMatrix({ browser, configuredProxy, tmpdir, artifactDir }
     for (const row of INTERACTION_ROWS) {
       for (const declaration of row.visual || []) {
         for (const role of declaration.roles) {
-          const items = expected.filter(item => item.rowId === row.id
-            && item.caseId === declaration.case
-            && item.locale === 'en-US'
-            && item.role === role);
-          if (!items.length) continue;
-          await runMatrixContext({
-            browser,
-            row,
-            role,
-            configuredProxy,
-            setupProxy,
-            visualCapture: async context => {
-              await captureCurrentVisualItems({ items, artifactDir, drafts }, context);
-            },
-          });
+          for (const locale of declaration.locales) {
+            const items = expected.filter(item => item.rowId === row.id
+              && item.caseId === declaration.case
+              && item.locale === locale
+              && item.role === role);
+            if (!items.length) continue;
+            await runMatrixContext({
+              browser,
+              row,
+              role,
+              configuredProxy,
+              setupProxy,
+              visualLocale: locale === 'en-US' ? null : locale,
+              skipDomAssertions: locale !== 'en-US',
+              visualCapture: async context => {
+                await captureCurrentVisualItems({ items, artifactDir, drafts }, context);
+              },
+            });
+          }
         }
       }
     }
