@@ -6,6 +6,17 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-30] decision — stabilize native UI semantics and machine fidelity
+
+Task 9 replaced incomplete ARIA tab/switch emulation with native navigation
+buttons and pressed buttons, added a native one-time-secret dialog with focus
+containment and return, and gave public pages native main landmarks. The
+Models tool-call composite is non-wrapping, and model components now preserve
+the raw API bytes after the vendor split. The served-page semantic self-test
+has independent DOM mutations for accessible-name, landmark, action, focus,
+and data-fidelity failures. See [Dashboard](architecture/dashboard.md) and the
+[test strategy](testing/test-strategy.md).
+
 ## [2026-07-30] fix — align Rust asset proof with catalog ownership
 
 The history-settings asset e2e test now proves that Settings references its

@@ -325,7 +325,7 @@ const INTERACTION_ROWS = [
     state: 'mutation-success',
     action: 'activate the NIM key enabled switch',
     visible: 'the NIM key row shows disabled state',
-    dom: [{ selector: '[data-tog="0"]', property: 'aria-checked', equals: 'false' }],
+    dom: [{ selector: '[data-tog="0"]', property: 'aria-pressed', equals: 'false' }],
     request: {
       method: 'POST',
       path: '/api/settings/nim-keys',
@@ -427,7 +427,7 @@ const INTERACTION_ROWS = [
     state: 'mutation-success',
     action: 'activate the governor enabled switch',
     visible: 'the governor switch reflects the saved state',
-    dom: [{ selector: '#gov-tog', property: 'aria-checked', equals: 'false' }],
+    dom: [{ selector: '#gov-tog', property: 'aria-pressed', equals: 'false' }],
     request: {
       method: 'POST',
       path: '/api/settings/governor',
@@ -943,7 +943,7 @@ const DOM_CONTRACTS = {
     domContract('rpm-value', `document.querySelector('[data-rpm="0"]')?.value ?? null`, '41'),
   ],
   'mutation-nim-key-toggle': [
-    domContract('disabled-switch', `document.querySelector('[data-tog="0"]')?.getAttribute('aria-checked') ?? null`, 'false'),
+    domContract('disabled-switch', `document.querySelector('[data-tog="0"]')?.getAttribute('aria-pressed') ?? null`, 'false'),
   ],
   'mutation-nim-key-delete': [
     domContract('removed-key-absent', `!document.querySelector('[data-ksfp="f17e0001"]')`, true),
@@ -966,7 +966,7 @@ const DOM_CONTRACTS = {
         document.querySelector('#sv-timeout')?.value ?? null,
         document.querySelector('#sv-ttl')?.value ?? null,
         document.querySelector('#sv-inflight')?.value ?? null,
-        document.querySelector('#sv-strict')?.getAttribute('aria-checked') ?? null,
+        document.querySelector('#sv-strict')?.getAttribute('aria-pressed') ?? null,
       ]`,
       ['https://fixture.invalid/v1', '900', '10', '300', '300', '600', '512', 'false']),
     domContract('limits-saved', `document.querySelector('#limits-err')?.textContent.trim() ?? null`, 'Saved.'),
@@ -982,7 +982,7 @@ const DOM_CONTRACTS = {
     domContract('history-saved', `document.querySelector('#history-err')?.textContent.trim() ?? null`, 'Saved.'),
   ],
   'mutation-governor-toggle': [
-    domContract('governor-disabled', `document.querySelector('#gov-tog')?.getAttribute('aria-checked') ?? null`, 'false'),
+    domContract('governor-disabled', `document.querySelector('#gov-tog')?.getAttribute('aria-pressed') ?? null`, 'false'),
   ],
   'mutation-governor-override-create': [
     domContract('override-present', `Array.from(document.querySelectorAll('.ochip')).some(node => node.textContent.includes('fixture/model'))`, true),

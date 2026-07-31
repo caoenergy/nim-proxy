@@ -117,6 +117,15 @@ that proof.
 - **Layout:** use mechanical overflow probes where available plus explicit
   human review under rendered data and supported widths. Behavior passing does
   not prove fit.
+- **Task 9 semantics and responsive fidelity:** `node scripts/render_check.js
+  --semantic-selftest` drives the served Dashboard with Rust-owned fixtures,
+  proves the checker independently catches missing accessible name, invalid
+  landmark, non-button action, dialog-focus escape, and data mutation, then
+  checks native landmarks/actions and raw model-component text. Run it for
+  Setup and Login when changing public markup. `--layout-report` captures
+  bounded `/tmp/nim-proxy-task9-*` screenshots with explicit viewport/state
+  paths and overflow measurements; it is evidence for review, never a claim of
+  human visual approval.
 - **Before push:** `cargo fmt --check`.
 
 CI runs the automated checks configured in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml);

@@ -224,3 +224,17 @@ refresh uses `setMessageText`. Confirm/prompt dialogs are exact catalog text
 sinks. Repository fallback errors are catalog messages; usable API error bodies
 remain raw text. Settings keeps API integers exact with locale grouping rather
 than dashboard compact-number formatting.
+
+## Semantic and responsive boundary
+
+The operator page has one native `main` and page heading, native navigation
+buttons (not incomplete ARIA tabs), native tables, and a native `dialog` for
+the one-time client secret. Opening that dialog focuses Copy; Done closes it
+and returns focus to the client-key action. Settings' compact toggles remain
+native buttons with `aria-pressed` and catalog-owned accessible names.
+
+The Models tool-call value is an atomic formatted value: it may claim the
+space it needs but never wraps its count/separator/rate composite. Model
+presentation keeps the vendor/model split, while the rendered model component
+is byte-for-byte the raw component supplied by the API—no title casing,
+separator rewriting, or localization.
