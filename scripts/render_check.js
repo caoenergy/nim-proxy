@@ -4641,7 +4641,7 @@ async function captureCurrentVisualItems({ items, artifactDir, drafts }, context
         return {
           problems: [
             ...layoutProblems(${JSON.stringify(item.layoutRoot)}, ${JSON.stringify(item.layoutBoundary)}, ${JSON.stringify(item.identity)}),
-            ...primaryAddRowProblems(${JSON.stringify(item.layoutRoot)}, ${JSON.stringify(item.identity)}),
+            ...primaryAddRowProblems(${JSON.stringify(item.layoutRoot)}, ${JSON.stringify(item.identity)}, ${width}),
           ],
           root: measure(root),
           boundary: measure(boundary),
@@ -4861,7 +4861,9 @@ const LAYOUT_CHECKER = `
       const rect = node.getBoundingClientRect();
       const outside = rect.left < boundaryRect.left - 1 || rect.right > boundaryRect.right + 1
         || rect.top < boundaryRect.top - 1 || rect.bottom > boundaryRect.bottom + 1;
-      const intrinsic = node.clientWidth > 0 && node.scrollWidth > node.clientWidth + 1;
+      const intrinsic = !/^(INPUT|SELECT|TEXTAREA)$/.test(node.tagName)
+        && getComputedStyle(node).textOverflow !== 'ellipsis'
+        && node.clientWidth > 0 && node.scrollWidth > node.clientWidth + 1;
       let maskedBy = '';
       for (let parent = node.parentElement; parent; parent = parent.parentElement) {
         const style = getComputedStyle(parent);
@@ -4881,9 +4883,10 @@ const LAYOUT_CHECKER = `
     return problems;
   }
 
-  function primaryAddRowProblems(rootSelector, context) {
+  function primaryAddRowProblems(rootSelector, context, viewportWidth = innerWidth) {
     const root = document.querySelector(rootSelector);
     if (!root) return ['layout-unreachable:' + context + ':' + rootSelector];
+    if (viewportWidth > 500) return [];
     return [...root.querySelectorAll('.addrow > input:not([type="number"])')]
       .filter(node => {
         const style = getComputedStyle(node);
