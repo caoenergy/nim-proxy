@@ -15,6 +15,8 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+pub mod codec;
+
 pub const SAMPLE_SECS: u64 = 300;
 const MAX_EXPOSITION_LINE_BYTES: usize = 1024 * 1024;
 const MAX_EXPOSITION_SERIES: usize = 100_000;
