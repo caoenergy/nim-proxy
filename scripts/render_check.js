@@ -4307,6 +4307,11 @@ const SEMANTIC_CHECKER = `
   function semanticProblems(doc, expectedData) {
     const problems = [];
     if (doc.querySelectorAll('main').length !== 1) problems.push('invalid-landmark');
+    if (doc.querySelectorAll('h1').length !== 1) problems.push('invalid-landmark');
+    for (const input of doc.querySelectorAll('form input')) {
+      if (input.closest('[hidden]')) continue;
+      if (!input.labels?.length) problems.push('missing-accessible-name');
+    }
     if (doc.querySelector('#modal') && doc.querySelector('#modal').tagName !== 'DIALOG') problems.push('invalid-landmark');
     if (doc.querySelector('[role="tablist"],[role="tab"],[role="switch"]')) problems.push('non-button-action');
     for (const action of doc.querySelectorAll('[data-tab],[data-range],[data-sub],[data-copy],[data-tog],[data-kdel],[data-ckdel],[data-govdel],[data-semantic-action]')) {
@@ -5037,6 +5042,26 @@ async function main() {
     const semanticProblems = semanticSelftest
       ? await evaluate(`(() => { ${SEMANTIC_CHECKER}; return semanticProblems(document, []); })()`)
       : [];
+    const loginArtifacts = [];
+    if (layoutReport) {
+      const artifactDir = process.env.NIMPROXY_LAYOUT_ARTIFACT_DIR
+        || fs.mkdtempSync(path.join(os.tmpdir(), 'nim-proxy-task9-layout-'));
+      if (!path.resolve(artifactDir).startsWith(path.join(os.tmpdir(), 'nim-proxy-task9-')))
+        throw new Error('layout artifacts must stay in /tmp/nim-proxy-task9-*');
+      fs.mkdirSync(artifactDir, { recursive: true });
+      for (const [width, height] of [[390, 844], [768, 1024], [900, 1000], [1440, 1000]]) {
+        await browser.send('Emulation.setDeviceMetricsOverride', {
+          width, height, deviceScaleFactor: 1, mobile: false,
+        }, S);
+        await sleep(150);
+        const screenshot = await browser.send('Page.captureScreenshot', { format: 'png' }, S);
+        const locale = localeArg ? `-${localeArg}` : '';
+        const artifact = path.join(artifactDir, `login-healthy${locale}-${width}x${height}.png`);
+        fs.writeFileSync(artifact, Buffer.from(screenshot.data, 'base64'));
+        loginArtifacts.push({ viewport: `${width}x${height}`, artifact });
+      }
+      await browser.send('Emulation.clearDeviceMetricsOverride', {}, S);
+    }
     await cleanupRun();
     if (loginFailure || operatorRequests.length || semanticProblems.length || errors.length || consoleErrors.length) {
       console.error('FAIL — login render violated its public catalog boundary');
@@ -5050,6 +5075,9 @@ async function main() {
       throw reportedFailure();
     }
     if (semanticSelftest) console.log('semantic served-page check ok — login landmark and labeled native form');
+    for (const artifact of loginArtifacts) {
+      console.log(`[layout-report] state=login-healthy viewport=${artifact.viewport} path=${artifact.artifact}`);
+    }
     console.log('rendered anonymous login from the public catalog');
     console.log('render ok — no uncaught page errors');
     return;
@@ -5478,7 +5506,7 @@ async function main() {
   // how a hover throw escalates from "no tooltip" to "the tab stops updating".
   await sleep(3500);
   if (process.env.DEBUG) console.log('DEBUG hovered:', JSON.stringify(hovered));
-  if (IS_DASHBOARD) {
+  if (IS_DASHBOARD && !layoutReport) {
     const expectedHovered = [
       'overview/o-kpis',
       'overview/o-kpis',
