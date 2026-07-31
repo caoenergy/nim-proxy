@@ -2749,7 +2749,8 @@ const allStates = args.includes('--all-states');
 const PAGE_REL = path.join('src', 'web', `${pageArg}.html`);
 const localeArg = (() => {
   const i = args.indexOf('--locale');
-  return i >= 0 ? args[i + 1] : null;
+  if (i >= 0) return args[i + 1];
+  return args.includes('--pseudolocale') ? 'en-XA' : null;
 })();
 // Catalog values are plain Unicode text. The probe proves ordinary text and
 // allowed attributes render literally, while fixed-markup HTML builders
@@ -5434,6 +5435,10 @@ async function main() {
     console.log(`\nuntranslated runs under ${localeArg}: ${real.length} actionable`
       + ` (${correct} correctly untranslated: frozen tokens and data from the API)`);
     for (const [text, tab] of real) console.log(`   [${tab}] ${JSON.stringify(text)}`);
+    if (real.length) {
+      console.error(`FAIL — ${real.length} repository-owned run(s) bypassed the catalog`);
+      throw reportedFailure();
+    }
   }
 
   if (predicateFailures.length) {

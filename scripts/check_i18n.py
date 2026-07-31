@@ -28,6 +28,7 @@ import json
 import pathlib
 import re
 import sys
+from html.parser import HTMLParser
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 EMERGENCY_TEXT = "NIM Proxy interface failed to load."
@@ -176,7 +177,6 @@ def frozen(text: str) -> bool:
 DISPLAY_CALLS = re.compile(
     r"(?:\{\s*label:\s*|metricRow\(\s*|tile\(\s*|prow\(\s*|empty:\s*)'([^']{2,})'"
 )
-SETTINGS_START = re.compile(r"function renderSettings\(")
 
 # The allowlist above only sees five call shapes, so every leak that survived
 # extraction lived in a shape it does not scan: `{name:'…'}` chart series,
@@ -526,11 +526,9 @@ def lint_catalog_sinks(name: str, raw: str) -> list:
 def lint_untagged(name: str, raw: str) -> list:
     errors = []
     body = re.search(r"<script>(.*?)</script>", raw, re.S)
-    js = body.group(1) if body else ""
+    js = body.group(1) if body else raw
 
-    # The settings surface is owned by foundation Task 7.
-    cut = SETTINGS_START.search(js)
-    scanned = js[: cut.start()] if cut else js
+    scanned = js
     # The startup failure has one deliberately unlocalized, dependency-free
     # string. It is useful precisely when no catalog is available.
     scanned = scanned.replace(repr(EMERGENCY_TEXT), "''")
@@ -544,16 +542,16 @@ def lint_untagged(name: str, raw: str) -> list:
     # chipHtml is excluded by design, not by oversight.
     scanned = re.sub(r"function chipHtml\(pub\) \{.*?\n\}", "", scanned, flags=re.S)
 
-    for m in DISPLAY_CALLS.finditer(strip_comments(scanned)):
+    for m in DISPLAY_CALLS.finditer(blank_comments(scanned)):
         text = m.group(1)
         if frozen(text):
             continue
-        errors.append(
-            f"{name}: untagged display string {text!r} — route it through message()"
-        )
+        errors.append(unowned_ui_string(name, scanned, m.start(1),
+            f"display string {text!r} — route it through message()"))
 
-    stripped = strip_comments(scanned)
-    for line in stripped.splitlines():
+    stripped = blank_comments(scanned)
+    line_start = 0
+    for line in stripped.splitlines(keepends=True):
         for m in QUOTED.finditer(line):
             text = m.group(1) if m.group(1) is not None else m.group(2)
             before = line[: m.start()]
@@ -573,9 +571,9 @@ def lint_untagged(name: str, raw: str) -> list:
             if ATTR_VALUE.search(before):
                 continue
             if looks_like_prose(text):
-                errors.append(
-                    f"{name}: untagged prose {text!r} — route it through message()"
-                )
+                errors.append(unowned_ui_string(name, scanned, line_start + m.start(),
+                    f"prose {text!r} — route it through message()"))
+        line_start += len(line)
 
     # Bare prose sitting between tags inside a template literal.
     for m in TEMPLATE_LITERAL.finditer(stripped):
@@ -586,10 +584,8 @@ def lint_untagged(name: str, raw: str) -> list:
             for piece in node.split("\x00"):
                 piece = piece.strip()
                 if piece and looks_like_prose(piece):
-                    errors.append(
-                        f"{name}: untagged prose {piece!r} in template markup"
-                        f" — route it through message()"
-                    )
+                    errors.append(unowned_ui_string(name, scanned, m.start(),
+                        f"prose {piece!r} in template markup — route it through message()"))
 
     # Localizable attributes carrying prose, with no data-i18n-attr beside them.
     markup = strip_scripts(raw)
@@ -599,8 +595,75 @@ def lint_untagged(name: str, raw: str) -> list:
             continue
         if frozen(text):
             continue
-        errors.append(f"{name}: untagged {attr}={text!r} — add data-i18n-attr")
+        errors.append(unowned_ui_string(name, raw, m.start(2),
+            f"{attr}={text!r} — add data-i18n-attr"))
     return errors
+
+
+def unowned_ui_string(name: str, source: str, offset: int, detail: str) -> str:
+    """Report prose in its real source, rather than a synthetic bundle line."""
+    return (
+        f"[unowned-ui-string] {name}:{source.count(chr(10), 0, offset) + 1}: "
+        f"{detail}"
+    )
+
+
+class _MarkupTextOwnership(HTMLParser):
+    """Find ordinary visible markup text that has no catalog-owning ancestor."""
+
+    def __init__(self, name: str, source: str):
+        super().__init__(convert_charrefs=True)
+        self.name = name
+        self.source = source
+        self.stack = []
+        self.errors = []
+
+    def handle_starttag(self, tag, attrs):
+        self.stack.append((tag, dict(attrs)))
+
+    def handle_startendtag(self, tag, attrs):
+        pass
+
+    def handle_endtag(self, tag):
+        for index in range(len(self.stack) - 1, -1, -1):
+            if self.stack[index][0] == tag:
+                del self.stack[index:]
+                break
+
+    def handle_data(self, data):
+        text = data.strip()
+        if not text or not looks_like_prose(text):
+            return
+        if any("data-i18n" in attrs for _, attrs in self.stack):
+            return
+        line, column = self.getpos()
+        offset = sum(len(line) + 1 for line in self.source.splitlines()[:line - 1]) + column
+        self.errors.append(unowned_ui_string(
+            self.name, self.source, offset,
+            f"markup text {text!r} — add a catalog-owned data-i18n sink",
+        ))
+
+
+def lint_untagged_markup(name: str, raw: str) -> list:
+    parser = _MarkupTextOwnership(name, raw)
+    parser.feed(strip_scripts(blank_comments(raw)))
+    return parser.errors
+
+
+PLURAL_SUFFIX = re.compile(
+    r"\b(?:[A-Za-z_$][\w$]*\.)?(?:length|lanes)\s*===\s*1\s*\?\s*''\s*:\s*'s'"
+)
+
+
+def lint_plural_suffixes(name: str, raw: str) -> list:
+    """A narrow guard for the documented English-only plural suffix shape."""
+    return [
+        unowned_ui_string(
+            name, raw, match.start(),
+            "English plural suffix — select explicit catalog variants through Intl.PluralRules",
+        )
+        for match in PLURAL_SUFFIX.finditer(strip_comments(raw))
+    ]
 
 
 
@@ -713,17 +776,17 @@ def lint_retired_vocabulary(name: str, raw: str, catalog=None) -> list:
 # CSS and class attributes gets switched off.
 
 SELFTEST_CASES = [
-    # (label, snippet, expected: "untagged" | "retired" | None)
-    ("assignment-single", "const zzq = 'Some fresh label here';", "untagged"),
-    ("assignment-double", 'const zzq = "Some fresh label here";', "untagged"),
-    ("equality-compare", "if (x === 'Some fresh label here') {}", "untagged"),
-    ("textContent-sink", "el.textContent = 'Some fresh label here';", "untagged"),
-    ("innerHTML-sink", "el.innerHTML = 'Some fresh label here';", "untagged"),
-    ("adjacent-arg", "bar(v.toFixed(1), 'Some fresh label here');", "untagged"),
-    ("statement-boundary", "el.style.width = w; bar('Some fresh label here');", "untagged"),
-    ("colon-prefixed-prose", "const z = `<div>note: some fresh label</div>`;", "untagged"),
-    ("template-text-node", "const z = `<div><span>Some fresh label</span></div>`;", "untagged"),
-    ("display-call-arg", "prow('Some fresh label here', 1);", "untagged"),
+    # (label, snippet, expected: "unowned-ui-string" | "retired" | None)
+    ("assignment-single", "const zzq = 'Some fresh label here';", "unowned-ui-string"),
+    ("assignment-double", 'const zzq = "Some fresh label here";', "unowned-ui-string"),
+    ("equality-compare", "if (x === 'Some fresh label here') {}", "unowned-ui-string"),
+    ("textContent-sink", "el.textContent = 'Some fresh label here';", "unowned-ui-string"),
+    ("innerHTML-sink", "el.innerHTML = 'Some fresh label here';", "unowned-ui-string"),
+    ("adjacent-arg", "bar(v.toFixed(1), 'Some fresh label here');", "unowned-ui-string"),
+    ("statement-boundary", "el.style.width = w; bar('Some fresh label here');", "unowned-ui-string"),
+    ("colon-prefixed-prose", "const z = `<div>note: some fresh label</div>`;", "unowned-ui-string"),
+    ("template-text-node", "const z = `<div><span>Some fresh label</span></div>`;", "unowned-ui-string"),
+    ("display-call-arg", "prow('Some fresh label here', 1);", "unowned-ui-string"),
     ("retired-in-markup", "const z = `<div>Harness</div>`;", "retired"),
     # A real multi-word retired key, wrapped. NOT "Latency breakdown" — that is
     # the REPLACEMENT term. Using it here is how a scratch test that grepped for
@@ -736,6 +799,23 @@ SELFTEST_CASES = [
     ("real-machinery", "document.querySelector('#tab-models');", None),
     ("frozen-unit", "const z = 'tok/s';", None),
     ("lowercase-token", "const z = 'sticky';", None),
+]
+
+SOURCE_CLASS_SELFTESTS = [
+    ("html-label", "tests/fixtures/locales/unowned-html.html",
+     '\n<div>Unowned static label</div>', lint_untagged_markup, 2),
+    ("js-toast", "tests/fixtures/locales/unowned-toast.js",
+     "\nshowToast('Unowned toast message');", lint_untagged, 2),
+    ("validation-error", "tests/fixtures/locales/unowned-validation.js",
+     "\nnote('err', 'Unowned validation error');", lint_untagged, 2),
+    ("dialog-fragment", "tests/fixtures/locales/unowned-dialog.js",
+     "\nconst dialog = `<p>Unowned dialog fragment</p>`;", lint_untagged, 2),
+    ("accessibility-attribute", "tests/fixtures/locales/unowned-a11y.html",
+     '\n<button aria-label="Unowned accessible name"></button>', lint_untagged, 2),
+    ("plural-branch", "tests/fixtures/locales/unowned-plural.js",
+     "\nconst text = `${cfg.lanes} key${cfg.lanes === 1 ? '' : 's'}`;", lint_plural_suffixes, 2),
+    ("settings-label", "src/web/settings.js",
+     "\nfunction renderSettings() { const label = 'Unowned settings label'; }", lint_untagged, 2),
 ]
 
 SINK_SELFTEST_CASES = [
@@ -1005,7 +1085,7 @@ def selftest() -> int:
         page = SELFTEST_PAGE % snippet
         found = set()
         if lint_untagged("selftest", page):
-            found.add("untagged")
+            found.add("unowned-ui-string")
         if lint_retired_vocabulary("selftest", page):
             found.add("retired")
         if want is None:
@@ -1019,6 +1099,17 @@ def selftest() -> int:
             )
         else:
             print(f"  ok  {label:24} trips {want}")
+
+    for label, name, snippet, check, line in SOURCE_CLASS_SELFTESTS:
+        found = check(name, snippet)
+        if (len(found) != 1
+                or "[unowned-ui-string]" not in found[0]
+                or f"{name}:{line}:" not in found[0]):
+            failures.append(
+                f"{label}: expected one attributed unowned-ui-string, got {found!r}"
+            )
+        else:
+            print(f"  ok  {label:24} trips unowned-ui-string")
 
     for label, snippet, want in SINK_SELFTEST_CASES:
         page = SELFTEST_PAGE % snippet
@@ -1052,7 +1143,7 @@ def selftest() -> int:
         for f in failures:
             print("  -", f)
         return 1
-    total = len(SELFTEST_CASES) + len(SINK_SELFTEST_CASES)
+    total = len(SELFTEST_CASES) + len(SOURCE_CLASS_SELFTESTS) + len(SINK_SELFTEST_CASES)
     print(f"\nselftest ok — {total} cases, every check observed to fail")
     return 0
 
@@ -1161,7 +1252,11 @@ def main() -> int:
             f"[{check}] {detail}"
             for check, detail in lint_catalog_sinks(name, page)
         ]
-        errors += lint_untagged(name, page)
+        errors += lint_untagged_markup(name, (ROOT / name).read_text())
+        for script in PAGE_SOURCES[name]:
+            script_source = (ROOT / script).read_text()
+            errors += lint_untagged(script, script_source)
+            errors += lint_plural_suffixes(script, script_source)
         errors += lint_retired_vocabulary(
             name,
             page,
