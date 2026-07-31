@@ -2793,6 +2793,8 @@ const IS_SETUP = pageArg === 'setup';
 const IS_LOGIN = pageArg === 'login';
 const IS_DASHBOARD = pageArg === 'dashboard';
 const allStates = args.includes('--all-states');
+const semanticSelftest = args.includes('--semantic-selftest');
+const layoutReport = args.includes('--layout-report');
 const PAGE_REL = path.join('src', 'web', `${pageArg}.html`);
 const localeArg = (() => {
   const i = args.indexOf('--locale');
@@ -4286,6 +4288,29 @@ async function runInteractionMatrix({ browser, configuredProxy, tmpdir }) {
   return observations;
 }
 
+const SEMANTIC_CHECKER = `
+  function semanticProblems(doc, expectedData) {
+    const problems = [];
+    if (doc.querySelectorAll('main').length !== 1) problems.push('invalid-landmark');
+    for (const action of doc.querySelectorAll('[data-tab],[data-range],[data-sub],[data-copy],[data-tog],[data-kdel],[data-ckdel],[data-govdel],[data-semantic-action]')) {
+      if (action.tagName !== 'BUTTON') problems.push('non-button-action');
+      const name = (action.getAttribute('aria-label') || action.getAttribute('title') || action.textContent || '').trim();
+      if (!name) problems.push('missing-accessible-name');
+    }
+    for (const dialog of doc.querySelectorAll('dialog[open]')) {
+      if (!dialog.contains(doc.activeElement)) problems.push('focus-escape');
+    }
+    for (const data of doc.querySelectorAll('[data-semantic-data]')) {
+      if (data.textContent !== data.getAttribute('data-semantic-data')) problems.push('data-mutation');
+    }
+    for (const expected of expectedData || []) {
+      if (![...doc.querySelectorAll(expected.selector)].some(node => node.textContent === expected.text))
+        problems.push('data-mutation');
+    }
+    return [...new Set(problems)];
+  }
+`;
+
 async function main() {
   const chrome = findChrome();
   if (!chrome) {
@@ -5339,6 +5364,84 @@ async function main() {
     }
   }
 
+  // Task 9's browser checks deliberately inspect the served DOM rather than
+  // source spelling. The checker is also fed isolated DOM mutations below so
+  // its five failure ids cannot go green merely because this page happens to
+  // avoid them today.
+  if (semanticSelftest) {
+    const semanticSelftestFailures = await evaluate(`(() => {
+      ${SEMANTIC_CHECKER}
+      const base = () => {
+        const doc = document.implementation.createHTMLDocument('semantic-selftest');
+        doc.body.innerHTML = '<main></main><button data-semantic-action aria-label="Action"></button>';
+        return doc;
+      };
+      const cases = [];
+      { const doc = base(); doc.querySelector('button').removeAttribute('aria-label'); cases.push(['missing-accessible-name', semanticProblems(doc).includes('missing-accessible-name')]); }
+      { const doc = base(); doc.querySelector('main').remove(); cases.push(['invalid-landmark', semanticProblems(doc).includes('invalid-landmark')]); }
+      { const doc = base(); const action = doc.querySelector('button'); const replacement = doc.createElement('div'); replacement.setAttribute('data-semantic-action', ''); replacement.setAttribute('aria-label', 'Action'); action.replaceWith(replacement); cases.push(['non-button-action', semanticProblems(doc).includes('non-button-action')]); }
+      { const doc = base(); const dialog = doc.createElement('dialog'); dialog.open = true; doc.body.append(dialog); cases.push(['focus-escape', semanticProblems(doc).includes('focus-escape')]); }
+      { const doc = base(); const data = doc.createElement('span'); data.setAttribute('data-semantic-data', 'alpha'); data.textContent = 'Alpha'; doc.body.append(data); cases.push(['data-mutation', semanticProblems(doc).includes('data-mutation')]); }
+      return cases.filter(([, observed]) => !observed).map(([name]) => name);
+    })()`);
+    if (semanticSelftestFailures.length) {
+      console.error('[semantic-selftest] checker missed: ' + semanticSelftestFailures.join(', '));
+      throw reportedFailure();
+    }
+    console.log('semantic selftest ok — missing-accessible-name, invalid-landmark, non-button-action, focus-escape, data-mutation observed');
+  }
+
+  let task9SemanticProblems = [];
+  let task9LayoutMeasurements = [];
+  let task9Artifacts = [];
+  if (semanticSelftest || layoutReport) {
+    await evaluate(`document.querySelector('#side nav button[data-tab="models"]').click()`);
+    await sleep(200);
+    if (semanticSelftest) {
+      task9SemanticProblems = await evaluate(`(() => { ${SEMANTIC_CHECKER}; return semanticProblems(document, [{ selector: '#m-toolcalls .bname', text: 'alpha' }]); })()`);
+    }
+    for (const [width, height] of [[1440, 1000], [900, 1000]]) {
+      await browser.send('Emulation.setDeviceMetricsOverride', {
+        width, height, deviceScaleFactor: 1, mobile: false,
+      }, S);
+      await sleep(150);
+      const measurement = await evaluate(`(() => {
+        const value = document.querySelector('#m-toolcalls .bval');
+        if (!value) return { missing: true };
+        return { text: value.textContent, scrollWidth: value.scrollWidth, clientWidth: value.clientWidth, scrollHeight: value.scrollHeight, clientHeight: value.clientHeight };
+      })()`);
+      task9LayoutMeasurements.push({ width, height, ...measurement });
+    }
+    await browser.send('Emulation.clearDeviceMetricsOverride', {}, S);
+  }
+
+  if (layoutReport) {
+    const artifactDir = process.env.NIMPROXY_LAYOUT_ARTIFACT_DIR
+      || fs.mkdtempSync(path.join(os.tmpdir(), 'nim-proxy-task9-layout-'));
+    if (!path.resolve(artifactDir).startsWith(path.join(os.tmpdir(), 'nim-proxy-task9-')))
+      throw new Error('layout artifacts must stay in /tmp/nim-proxy-task9-*');
+    fs.mkdirSync(artifactDir, { recursive: true });
+    for (const [width, height] of [[390, 844], [768, 1024], [900, 1000], [1440, 1000]]) {
+      await browser.send('Emulation.setDeviceMetricsOverride', {
+        width, height, deviceScaleFactor: 1, mobile: false,
+      }, S);
+      await sleep(150);
+      const screenshot = await browser.send('Page.captureScreenshot', { format: 'png' }, S);
+      const filename = `${pageArg}-models-healthy-${width}x${height}.png`;
+      const artifact = path.join(artifactDir, filename);
+      fs.writeFileSync(artifact, Buffer.from(screenshot.data, 'base64'));
+      const measurement = await evaluate(`(() => {
+        const value = document.querySelector('#m-toolcalls .bval');
+        return value ? { text: value.textContent, scrollWidth: value.scrollWidth, clientWidth: value.clientWidth, scrollHeight: value.scrollHeight, clientHeight: value.clientHeight } : { missing: true };
+      })()`);
+      task9Artifacts.push({ viewport: `${width}x${height}`, state: 'models-healthy', artifact, ...measurement });
+    }
+    await browser.send('Emulation.clearDeviceMetricsOverride', {}, S);
+    const report = path.join(artifactDir, 'layout-report.json');
+    fs.writeFileSync(report, JSON.stringify({ page: pageArg, measurements: task9Artifacts }, null, 2) + '\n');
+    task9Artifacts.push({ report });
+  }
+
   // The poll loop re-applies the last hover on every live re-render, which is
   // how a hover throw escalates from "no tooltip" to "the tab stops updating".
   await sleep(3500);
@@ -5554,6 +5657,35 @@ async function main() {
       console.error(`    .${d.el}  ${JSON.stringify(d.text)}`);
     }
     throw reportedFailure();
+  }
+
+  if (task9SemanticProblems.length) {
+    console.error('\nFAIL — semantic DOM checks disagreed: ' + task9SemanticProblems.join(', '));
+    throw reportedFailure();
+  }
+
+  if (task9LayoutMeasurements.length) {
+    const layoutProblems = task9LayoutMeasurements.filter(measurement =>
+      measurement.missing
+      || measurement.scrollWidth > measurement.clientWidth
+      || measurement.scrollHeight > measurement.clientHeight);
+    if (layoutProblems.length) {
+      console.error('\nFAIL — tool-call value does not fit without wrapping');
+      for (const measurement of layoutProblems) {
+        console.error(`  [layout-toolcall-${measurement.width}] ${measurement.text || 'missing'} `
+          + `scroll=${measurement.scrollWidth}x${measurement.scrollHeight} `
+          + `client=${measurement.clientWidth}x${measurement.clientHeight}`);
+      }
+      throw reportedFailure();
+    }
+  }
+
+  if (layoutReport) {
+    for (const artifact of task9Artifacts) {
+      if (artifact.report) console.log(`[layout-report] report=${artifact.report}`);
+      else console.log(`[layout-report] state=${artifact.state} viewport=${artifact.viewport} path=${artifact.artifact} `
+        + `scroll=${artifact.scrollWidth}x${artifact.scrollHeight} client=${artifact.clientWidth}x${artifact.clientHeight}`);
+    }
   }
 
   if (errors.length || consoleErrors.length) {
