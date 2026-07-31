@@ -6,6 +6,15 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-30] fix — align Rust asset proof with catalog ownership
+
+The history-settings asset e2e test now proves that Settings references its
+semantic catalog id and the authenticated operator catalog serves the owned
+heading. Its former assertion required the retired escaped English literal
+inside JavaScript, so full-tests and coverage correctly failed after Task 7
+extraction. See the [test strategy](testing/test-strategy.md) and
+[Task 7 plan](../docs/plans/v0.6.6-foundation-implementation.md).
+
 ## [2026-07-30] fix — align Login render proof with selected catalog
 
 The standalone Login render proof now compares repository-owned DOM text with

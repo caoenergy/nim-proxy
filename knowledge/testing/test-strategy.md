@@ -301,6 +301,9 @@ Page-specific render assertions must compare rendered owned text with the
 selected catalog, not en-US literals; otherwise a real `en-XA` selection makes
 the harness reject correctly localized output before the untranslated-text
 scan runs.
+Rust asset e2e tests follow the same ownership boundary: assert the semantic
+catalog id in the application asset and the expected source text in the served
+catalog, never the retired English literal inside JavaScript.
 
 **Human — screenshots, still.** Real-browser screenshots under live traffic
 (the UI is dark-only since the operator-console redesign), inspected by eye —

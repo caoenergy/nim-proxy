@@ -2916,14 +2916,27 @@ async fn dashboard_history_settings_markup() {
 
     let settings_js = client()
         .get(proxy.url("/assets/operator/settings.js"))
-        .header("cookie", cookie)
+        .header("cookie", &cookie)
         .send()
         .await
         .unwrap()
         .text()
         .await
         .unwrap();
-    assert!(settings_js.contains("History &amp; dashboard"));
+    let catalog: serde_json::Value = client()
+        .get(proxy.url("/assets/operator/locales/en-US.json"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(settings_js.contains(r#"data-i18n="settings.server.history.heading""#));
+    assert_eq!(
+        catalog["messages"]["settings.server.history.heading"],
+        "History & dashboard"
+    );
     assert!(settings_js.contains("sv-default-days"));
     assert!(settings_js.contains("sv-retention-days"));
     assert!(settings_js.contains("sv-slo"));
