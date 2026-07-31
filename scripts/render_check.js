@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /*
- * Render the embedded dashboard against captured API payloads, drive it the
- * way an operator does, and fail on any uncaught page exception.
+ * Render the embedded dashboard against Rust-generated API fixtures, drive it
+ * the way an operator does, and fail on any uncaught page exception.
  *
  * This exists because `cargo test` asserts on served HTML *text* and never
  * parses or executes the page JavaScript, and `node --check` proves only that
@@ -30,7 +30,7 @@ const net = require('net');
 const { spawn, execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const FIXTURES = path.join(ROOT, 'tests', 'fixtures', 'api');
+const FIXTURES = path.join(ROOT, 'tests', 'fixtures', 'ui');
 
 const args = process.argv.slice(2);
 const PRESENTATION_CSP = "default-src 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
@@ -71,7 +71,7 @@ const INTERACTION_ROWS = [
     id: 'login-invalid-credentials',
     category: 'startup',
     state: 'invalid-credentials',
-    action: 'navigate to /login with the server-rendered invalid_credentials state',
+    action: 'submit invalid credentials and follow the server-rendered invalid_credentials state',
     visible: 'the catalog-backed invalid-credentials error is visible',
     dom: [
       { selector: '#login-error', property: 'hidden', equals: false },
@@ -616,14 +616,14 @@ const INTERACTION_ROWS = [
     id: 'error-settings-mutation',
     category: 'error',
     state: 'mutation-error',
-    action: 'submit invalid history settings and fulfill with ApiError',
+    action: 'submit locally valid history settings and fulfill with ApiError',
     visible: 'the typed API error message is visible beside the triggering control',
     dom: [{ selector: '#history-err', property: 'textContent', equals: 'invalid history fixture' }],
     request: {
       method: 'POST',
       path: '/api/settings/history',
       body: {
-        days: -1,
+        days: 30,
         default_window_days: 7,
         slo_target_percent: 99.9,
       },
@@ -1170,6 +1170,12 @@ const EXPLICIT_REQUEST_SEQUENCES = {
     getRequest('/assets/public/locales/en-US.json'),
   ],
   'login-invalid-credentials': [
+    {
+      method: 'POST',
+      path: '/login',
+      query: {},
+      body: 'username=fixture-user&password=incorrect-password',
+    },
     getRequest('/api/locale-bootstrap'),
     getRequest('/assets/public/locales/en-US.json'),
   ],
@@ -1298,7 +1304,7 @@ const FIXTURE_SCENARIOS = {
   'startup-dashboard-healthy': dashboardRecipe({ boundary: 'startup-application' }),
   'startup-setup-healthy': setupRecipe({ boundary: 'startup-application' }),
   'startup-login-healthy': loginRecipe({ boundary: 'startup-application' }),
-  'login-invalid-credentials': loginRecipe({ boundary: 'startup-application' }),
+  'login-invalid-credentials': loginRecipe(),
   'navigation-settings-role-panels': dashboardRecipe({
     role: ['superuser', 'admin', 'user'],
     config: {
@@ -1525,68 +1531,6 @@ for (const row of INTERACTION_ROWS) {
   if (FIXTURE_SCENARIOS[row.id]) row.fixtures = FIXTURE_SCENARIOS[row.id];
 }
 
-const RUST_FIXTURE_FILES = new Set([
-  'api-error-locale.json',
-  'api-error.json',
-  'clients-secret-absent.json',
-  'clients-secret-present.json',
-  'config-admin.json',
-  'config-superuser.json',
-  'config-user.json',
-  'dashboard-empty.json',
-  'dashboard-extreme.json',
-  'dashboard-healthy.json',
-  'dashboard-long.json',
-  'dashboard-now-changed.json',
-  'dashboard-now-initial.json',
-  'dashboard-partial.json',
-  'locale-bootstrap.json',
-  'ok.json',
-  'scenarios.json',
-  'setup-minted-client-key.json',
-  'setup-no-client-key.json',
-  'validate-failure.json',
-  'validate-success.json',
-]);
-const RUST_SCENARIO_KEYS = new Set([
-  'access-before',
-  'access-refreshed',
-  'auth-keyed-after',
-  'auth-open-before',
-  'client-create-before',
-  'client-created-after',
-  'client-deleted-after',
-  'dashboard-custom-window',
-  'dashboard-now-empty',
-  'dashboard-now-one-key',
-  'dashboard-now-open-auth',
-  'dashboard-now-partial',
-  'dashboard-one-hour-window',
-  'governor-disabled-after',
-  'governor-enabled-before',
-  'history-after',
-  'history-before',
-  'limits-after',
-  'limits-before',
-  'long-values',
-  'nim-create-before',
-  'nim-created-after',
-  'nim-deleted-after',
-  'nim-disabled-after',
-  'nim-rpm-after',
-  'override-create-before',
-  'override-created-after',
-  'override-delete-before',
-  'override-deleted-after',
-  'setup-error',
-  'users-create-before',
-  'users-created-after',
-  'users-deleted-after',
-  'users-delete-before',
-  'users-role-admin-after',
-  'users-role-before',
-]);
-
 function nestedFixtureReferences(value) {
   if (typeof value === 'string') return [value];
   if (Array.isArray(value)) return value.flatMap(nestedFixtureReferences);
@@ -1598,13 +1542,6 @@ function nestedFixtureReferences(value) {
 function fixtureReferences(recipe) {
   return ['locale', 'config', 'now', 'range', 'response']
     .flatMap(field => nestedFixtureReferences(recipe[field]));
-}
-
-function expectedFixtureManifest() {
-  return new Map([...RUST_FIXTURE_FILES].map(file => [
-    file,
-    file === 'scenarios.json' ? new Set(RUST_SCENARIO_KEYS) : null,
-  ]));
 }
 
 function generatedFixtureManifest() {
@@ -1619,7 +1556,7 @@ function generatedFixtureManifest() {
   return manifest;
 }
 
-function validFixtureReference(reference, manifest = expectedFixtureManifest()) {
+function validFixtureReference(reference, manifest) {
   const [file, key, extra] = reference.split('#');
   if (extra !== undefined || !manifest.has(file)) return false;
   return file === 'scenarios.json'
@@ -1628,6 +1565,7 @@ function validFixtureReference(reference, manifest = expectedFixtureManifest()) 
 }
 
 function fixtureReferenceProblems(rows, manifest) {
+  if (!manifest) return ['generated fixture manifest is unavailable'];
   const problems = [];
   for (const row of rows) {
     for (const reference of fixtureReferences(row.fixtures)) {
@@ -1865,8 +1803,7 @@ function interactionCoverageProblems(observations) {
     }
     const actualRequests = (observed.requests || []).map(normalizeRequest);
     const expectedRequests = expectedRequestSequence(row);
-    if (!row.allowAdditionalRequests
-        && canonicalJson(actualRequests) !== canonicalJson(expectedRequests)) {
+    if (canonicalJson(actualRequests) !== canonicalJson(expectedRequests)) {
       problems.push({
         check: `ui-interaction:${row.id}`,
         detail: `ordered requests ${canonicalJson(actualRequests)} != ${canonicalJson(expectedRequests)}`,
@@ -1917,12 +1854,9 @@ function interactionSelftest() {
   const categories = new Set();
   const failures = [
     ...fixtureRecipeProblems(INTERACTION_ROWS),
-    ...fixtureReferenceProblems(INTERACTION_ROWS, expectedFixtureManifest()),
+    ...fixtureReferenceProblems(INTERACTION_ROWS, generatedFixtureManifest()),
   ];
   const generatedManifest = generatedFixtureManifest();
-  if (generatedManifest) {
-    failures.push(...fixtureReferenceProblems(INTERACTION_ROWS, generatedManifest));
-  }
   for (const row of INTERACTION_ROWS) {
     if (ids.has(row.id)) failures.push(`duplicate row id ${row.id}`);
     ids.add(row.id);
@@ -1934,7 +1868,7 @@ function interactionSelftest() {
     }
     if (!row.fixtures) failures.push(`${row.id}: missing Rust-owned fixture scenario`);
     for (const reference of fixtureReferences(row.fixtures)) {
-      if (!validFixtureReference(reference)) {
+      if (!generatedManifest || !validFixtureReference(reference, generatedManifest)) {
         failures.push(`${row.id}: invalid Rust-owned fixture reference ${reference}`);
       }
     }
@@ -1956,30 +1890,17 @@ function interactionSelftest() {
         const sequence = assertion.collect.kind === 'sequence'
           && Array.isArray(assertion.collect.steps)
           && assertion.collect.steps.length > 0;
-        const contexts = assertion.collect.kind === 'contexts'
-          && Array.isArray(assertion.collect.contexts)
-          && assertion.collect.contexts.length > 0;
         const contextSequence = assertion.collect.kind === 'context-sequence'
           && assertion.collect.contexts
           && Object.keys(assertion.collect.contexts).length > 0
           && Object.values(assertion.collect.contexts)
             .every(steps => Array.isArray(steps) && steps.length > 0);
-        if (!sequence && !contexts && !contextSequence) {
+        if (!sequence && !contextSequence) {
           failures.push(`${row.id}:${assertion.check}: invalid DOM collection contract`);
         } else if (sequence
             && (!Array.isArray(assertion.expected)
               || assertion.expected.length !== assertion.collect.steps.length)) {
           failures.push(`${row.id}:${assertion.check}: sequence result shape does not match steps`);
-        } else if (contexts) {
-          const expectedContexts = assertion.expected
-            && typeof assertion.expected === 'object'
-            && !Array.isArray(assertion.expected)
-            ? Object.keys(assertion.expected).sort()
-            : [];
-          if (canonicalJson(expectedContexts)
-              !== canonicalJson([...assertion.collect.contexts].sort())) {
-            failures.push(`${row.id}:${assertion.check}: context result shape does not match contexts`);
-          }
         } else if (contextSequence) {
           const expected = assertion.expected;
           const contextNames = Object.keys(assertion.collect.contexts).sort();
@@ -2107,11 +2028,13 @@ function interactionSelftest() {
     }
   }
   {
-    const driftedManifest = expectedFixtureManifest();
-    driftedManifest.get('scenarios.json').delete('long-values');
-    if (!fixtureReferenceProblems(INTERACTION_ROWS, driftedManifest)
-      .some(problem => problem.includes('fixture-reference-drift'))) {
-      failures.push('fixture-reference-drift negative probe did not fire');
+    const driftedManifest = generatedFixtureManifest();
+    if (driftedManifest) {
+      driftedManifest.get('scenarios.json').delete('long-values');
+      if (!fixtureReferenceProblems(INTERACTION_ROWS, driftedManifest)
+        .some(problem => problem.includes('fixture-reference-drift'))) {
+        failures.push('fixture-reference-drift negative probe did not fire');
+      }
     }
   }
 
@@ -2807,8 +2730,8 @@ async function cleanupSelftest() {
   console.log('cleanup selftest ok — browser/proxy lifecycle and failure diagnostics passed');
   return 0;
 }
-// Which embedded page to drive. The dashboard renders from captured payloads;
-// the wizard has no payloads and is driven by filling and clicking instead.
+// Which embedded page to drive. The dashboard renders from Rust-owned
+// fixtures; the wizard is driven by filling and clicking.
 // Both were being proved by hand-built one-off harnesses, which is more work
 // than one committed check and leaves nothing behind.
 const pageArg = (() => {
@@ -2935,6 +2858,10 @@ class CDP {
 
   on(fn) {
     this.listeners.push(fn);
+    return () => {
+      const index = this.listeners.indexOf(fn);
+      if (index >= 0) this.listeners.splice(index, 1);
+    };
   }
 
   send(method, params = {}, sessionId) {
@@ -2964,12 +2891,16 @@ async function evaluateRaw(browser, sessionId, expression) {
 
 function loadFixtures() {
   const need = IS_DASHBOARD
-    ? ['config.json', 'dashboard.json', 'dashboard-now.json']
-    : [];
+    ? ['config-superuser.json', 'dashboard-healthy.json', 'dashboard-now-initial.json']
+    : IS_SETUP
+      ? ['setup-minted-client-key.json', 'validate-success.json']
+      : [];
   for (const f of need) {
     const p = path.join(FIXTURES, f);
     if (!fs.existsSync(p)) {
-      const error = new Error(`missing fixture ${path.relative(ROOT, p)} — see ${path.relative(ROOT, path.join(FIXTURES, 'README.md'))}`);
+      const error = new Error(
+        `missing fixture ${path.relative(ROOT, p)} — regenerate with UPDATE_UI_FIXTURES=1`,
+      );
       error.exitCode = 2;
       throw error;
     }
@@ -3025,6 +2956,88 @@ async function fulfillPausedResponse(browser, sessionId, params, body, statusCod
     responseHeaders: headers,
     body: Buffer.from(body).toString('base64'),
   }, sessionId);
+}
+
+function loadUiFixture(reference, consumed) {
+  const [file, key] = reference.split('#');
+  const fixturePath = path.join(FIXTURES, file);
+  const manifest = generatedFixtureManifest();
+  if (!manifest || !validFixtureReference(reference, manifest)) {
+    throw new Error(`invalid UI fixture reference ${reference}`);
+  }
+  let value = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
+  if (key) value = value[key];
+  if (value === undefined) throw new Error(`missing UI fixture value ${reference}`);
+  if (consumed) consumed.push(reference);
+  return JSON.parse(JSON.stringify(value));
+}
+
+function selectedFixtureReference(value, phase, role) {
+  if (typeof value === 'string' || value == null) return value;
+  if (Array.isArray(value)) return value;
+  if (value[role]) return value[role];
+  if (phase === 'action') return value.action ?? value.after ?? value.before;
+  return value.before ?? value.action ?? value.after;
+}
+
+class UiFixturePlan {
+  constructor(row, role) {
+    this.row = row;
+    this.recipe = row.fixtures;
+    this.role = role;
+    this.phase = 'before';
+    this.consumed = [];
+    this.responseReferences = this.recipe.response == null
+      ? []
+      : Array.isArray(this.recipe.response)
+        ? [...this.recipe.response]
+        : [this.recipe.response];
+    this.responseIndex = 0;
+  }
+
+  enterAction() {
+    this.phase = 'action';
+  }
+
+  value(reference) {
+    if (!reference) return null;
+    this.lastReference = reference;
+    return loadUiFixture(reference, this.consumed);
+  }
+
+  locale() {
+    return this.value(this.recipe.locale);
+  }
+
+  config() {
+    return this.value(selectedFixtureReference(this.recipe.config, this.phase, this.role));
+  }
+
+  now() {
+    return this.value(selectedFixtureReference(this.recipe.now, this.phase, this.role));
+  }
+
+  range() {
+    const reference = this.phase === 'action' && this.recipe.response
+      ? this.nextResponseReference()
+      : selectedFixtureReference(this.recipe.range, this.phase, this.role);
+    return this.value(reference);
+  }
+
+  response() {
+    return this.value(this.nextResponseReference());
+  }
+
+  nextResponseReference() {
+    const reference = this.responseReferences[this.responseIndex];
+    if (!reference) throw new Error(`${this.row.id}: action consumed too many response fixtures`);
+    this.responseIndex += 1;
+    return reference;
+  }
+
+  unconsumed() {
+    return this.responseReferences.slice(this.responseIndex);
+  }
 }
 
 async function handleCatalogResponseForProbe({
@@ -3211,7 +3224,7 @@ async function freePort() {
   });
 }
 
-async function startProxy(tmpdir) {
+async function startProxy(tmpdir, setupRequired = IS_SETUP) {
   const binary = path.join(ROOT, 'target', 'debug', 'nim-proxy');
   execFileSync('cargo', ['build', '--quiet', '--bin', 'nim-proxy'], {
     cwd: ROOT,
@@ -3219,7 +3232,7 @@ async function startProxy(tmpdir) {
   });
   const dataDir = path.join(tmpdir, 'data');
   fs.mkdirSync(dataDir);
-  if (!IS_SETUP) {
+  if (!setupRequired) {
     fs.writeFileSync(
       path.join(dataDir, 'config.json'),
       JSON.stringify(configuredStore(), null, 2),
@@ -3299,7 +3312,7 @@ const dataLabelValues = (() => {
   // rendered elements misclassifies our own generated names: "Slot 1" comes
   // from a template we wrote, not from the API.
   const out = new Set();
-  for (const f of ['dashboard.json', 'dashboard-now.json']) {
+  for (const f of ['dashboard-healthy.json', 'dashboard-now-initial.json']) {
     const p = path.join(FIXTURES, f);
     if (!fs.existsSync(p)) continue;
     const doc = JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -3362,7 +3375,10 @@ const SETUP_STEPS = {
     $('newkey').value = 'nvapi-probe-key';
     $('addkey').click();
     for (let i = 0; i < 40 && $('to3').disabled; i++) await new Promise(r => setTimeout(r, 50));
-    return !$('to3').disabled && /63/.test($('keylist').textContent || '');
+    return !$('to3').disabled
+      && ($('keylist').textContent || '').includes(
+        ${JSON.stringify(`${JSON.parse(fs.readFileSync(path.join(FIXTURES, 'validate-success.json'), 'utf8')).models} models · 40 rpm`)},
+      );
   })()`,
   step3: `(() => {
     $('to3').click();
@@ -3492,6 +3508,708 @@ function reportedFailure() {
   error.reported = true;
   error.exitCode = 1;
   return error;
+}
+
+async function waitForMatrixCondition(browser, sessionId, expression, label, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  let last;
+  while (Date.now() < deadline) {
+    try {
+      last = await evaluateRaw(browser, sessionId, expression);
+      if (last) return;
+    } catch (error) {
+      last = error.message;
+    }
+    await sleep(25);
+  }
+  throw new Error(`${label} timed out (last=${canonicalJson(last)})`);
+}
+
+function normalizedPausedRequest(request) {
+  const url = new URL(request.url);
+  const query = {};
+  for (const [key, value] of url.searchParams) {
+    if (Object.prototype.hasOwnProperty.call(query, key)) {
+      throw new Error(`duplicate query key ${key} in ${url.pathname}`);
+    }
+    query[key] = value;
+  }
+  let body = null;
+  if (request.postData) {
+    try { body = JSON.parse(request.postData); }
+    catch { body = request.postData; }
+  }
+  return { method: request.method, path: url.pathname, query, body };
+}
+
+function isExpectedMatrixApiResourceError(message) {
+  return /^Failed to load resource: the server responded with a status of [45]\d\d/.test(message);
+}
+
+const MATRIX_TIMER_SHIM = `
+  (() => {
+    const intervals = [];
+    window.__matrixIntervals = intervals;
+    window.setInterval = (fn, delay, ...args) => {
+      const entry = { fn, delay: Number(delay), args, active: true };
+      intervals.push(entry);
+      return 100000 + intervals.length;
+    };
+    window.clearInterval = id => {
+      const entry = intervals[id - 100001];
+      if (entry) entry.active = false;
+    };
+    window.__runMatrixIntervals = async delay => {
+      for (const entry of intervals) {
+        if (entry.active && entry.delay === delay) await entry.fn(...entry.args);
+      }
+    };
+    window.__matrixPageErrors = [];
+    window.__matrixPromiseRejections = [];
+    addEventListener('error', event => {
+      window.__matrixPageErrors.push(String(event.error?.stack || event.message));
+    });
+    addEventListener('unhandledrejection', event => {
+      window.__matrixPromiseRejections.push(String(event.reason?.stack || event.reason));
+    });
+  })();
+`;
+
+function matrixActionExpression(id) {
+  const openSettings = `document.querySelector('#side [data-tab="settings"]').click()`;
+  const setValue = (selector, value) =>
+    `document.querySelector(${JSON.stringify(selector)}).value=${JSON.stringify(value)}`;
+  const click = selector => `document.querySelector(${JSON.stringify(selector)}).click()`;
+  const expressions = {
+    'navigation-settings-role-panels': openSettings,
+    'sorting-table-ascending': `${click('#side [data-tab="models"]')};${click('#table-models thead th[data-i="0"]')}`,
+    'sorting-table-descending': `${click('#table-models thead th[data-i="0"]')}`,
+    'sorting-table-persists-rerender': `await pollNow()`,
+    'filtering-settings-role': openSettings,
+    'refresh-dashboard-now': `await pollNow()`,
+    'refresh-settings-access': `document.querySelector('#nk-key').focus();await window.__runMatrixIntervals(5000)`,
+    'history-window-preset': click('#ranges [data-range="3600"]'),
+    'history-window-custom': `(() => {
+      const local = seconds => {
+        const d = new Date(seconds * 1000), p = n => String(n).padStart(2, '0');
+        return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+      };
+      ${click('#ranges [data-range="custom"]')};
+      document.querySelector('#from').value=local(1700000100);
+      document.querySelector('#to').value=local(1700000200);
+      ${click('#applyRange')};
+    })()`,
+    'history-window-freeze': click('#live'),
+    'history-window-resume': click('#live'),
+    'dialog-client-secret-open': `${setValue('#ck-name', 'fixture-client')};${click('#ck-add')}`,
+    'dialog-client-secret-close': click('#modal-done'),
+    'dialog-confirm-cancel-focus-return': `document.querySelector('[data-kdel="0"]').focus();${click('[data-kdel="0"]')}`,
+    'mutation-nim-key-create': `${setValue('#nk-key', 'nvapi-ui-fixture')};${click('#nk-add')}`,
+    'mutation-nim-key-rpm': `${setValue('[data-rpm="0"]', '41')};document.querySelector('[data-rpm="0"]').dispatchEvent(new Event('change'))`,
+    'mutation-nim-key-toggle': click('[data-tog="0"]'),
+    'mutation-nim-key-delete': `document.querySelector('[data-kdel="0"]').click()`,
+    'mutation-client-key-delete': `document.querySelector('[data-ckdel="0"]').click()`,
+    'mutation-client-auth-mode': click('[data-mode="keyed"]'),
+    'mutation-server-limits': `${setValue('#sv-base', 'https://fixture.invalid/v1')};${setValue('#sv-maxwait', '900')};${setValue('#sv-heartbeat', '10')};${setValue('#sv-idle', '300')};${setValue('#sv-timeout', '300')};${setValue('#sv-ttl', '600')};${setValue('#sv-inflight', '512')};${click('#save-limits')}`,
+    'mutation-server-history': `${setValue('#sv-retention-days', '30')};${setValue('#sv-default-days', '7')};${setValue('#sv-slo', '99.9')};${click('#save-history')}`,
+    'mutation-governor-toggle': click('#gov-tog'),
+    'mutation-governor-override-create': `${setValue('#gov-model', 'fixture/model')};${setValue('#gov-cap', '8')};${click('#gov-add')}`,
+    'mutation-governor-override-delete': click('[data-govdel="0"]'),
+    'mutation-user-create': `${setValue('#u-name', 'fixture-user')};${setValue('#u-pass', 'fixture-password')};${click('#u-add')}`,
+    'mutation-user-role': `document.querySelector('[data-urole="1"]').value='admin';document.querySelector('[data-urole="1"]').dispatchEvent(new Event('change'))`,
+    'mutation-user-password-reset': click('[data-urp="1"]'),
+    'dialog-user-password-prompt-cancel': `document.querySelector('[data-urp="1"]').focus();${click('[data-urp="1"]')}`,
+    'mutation-user-delete': click('[data-udel="1"]'),
+    'account-password-validation': `${setValue('#a-cur', 'current-password')};${setValue('#a-new', 'replacement-password')};${setValue('#a-conf', 'different-password')};${click('#a-save')}`,
+    'account-password-update': `${setValue('#a-cur', 'current-password')};${setValue('#a-new', 'replacement-password')};${setValue('#a-conf', 'replacement-password')};${click('#a-save')}`,
+    'error-dashboard-range': click('#ranges [data-range="3600"]'),
+    'error-dashboard-now': `await pollNow()`,
+    'error-settings-load': openSettings,
+    'error-settings-mutation': `${setValue('#sv-retention-days', '30')};${setValue('#sv-default-days', '7')};${setValue('#sv-slo', '99.9')};${click('#save-history')}`,
+    'error-nim-key-validation': `${setValue('#nk-key', 'nvapi-invalid-fixture')};${click('#nk-add')}`,
+    'error-setup-key-validation': `${setValue('#newkey', 'nvapi-invalid-fixture')};${click('#addkey')}`,
+    'setup-key-validation-success': `${setValue('#newkey', 'nvapi-ui-fixture')};${click('#addkey')}`,
+    'error-setup-submit': `${click('#finish')}`,
+    'setup-submit-success': `${click('#finish')}`,
+  };
+  return expressions[id] || null;
+}
+
+const SETTINGS_PRESTATE_PANEL = new Map([
+  ['refresh-settings-access', 'access'],
+  ['dialog-client-secret-open', 'access'],
+  ['dialog-confirm-cancel-focus-return', 'access'],
+  ['mutation-nim-key-create', 'access'],
+  ['mutation-nim-key-rpm', 'access'],
+  ['mutation-nim-key-toggle', 'access'],
+  ['mutation-nim-key-delete', 'access'],
+  ['mutation-client-key-delete', 'access'],
+  ['mutation-client-auth-mode', 'server'],
+  ['mutation-server-limits', 'server'],
+  ['mutation-server-history', 'server'],
+  ['mutation-governor-toggle', 'server'],
+  ['mutation-governor-override-create', 'server'],
+  ['mutation-governor-override-delete', 'server'],
+  ['mutation-user-create', 'users'],
+  ['mutation-user-role', 'users'],
+  ['mutation-user-password-reset', 'users'],
+  ['dialog-user-password-prompt-cancel', 'users'],
+  ['mutation-user-delete', 'users'],
+  ['account-password-validation', 'account'],
+  ['account-password-update', 'account'],
+  ['error-settings-mutation', 'server'],
+  ['error-nim-key-validation', 'access'],
+]);
+
+async function runMatrixContext({ browser, row, role, configuredProxy, setupProxy }) {
+  const origin = row.fixtures.page === 'setup' ? setupProxy.origin : configuredProxy.origin;
+  const pagePath = row.fixtures.page === 'dashboard'
+    ? '/'
+    : `/${row.fixtures.page}`;
+  const { targetId } = await browser.send('Target.createTarget', { url: 'about:blank' });
+  const { sessionId } = await browser.send(
+    'Target.attachToTarget',
+    { targetId, flatten: true },
+  );
+  const plan = new UiFixturePlan(row, role);
+  let activePlan = plan;
+  let capture = !['after-ready', 'startup-range-through-action']
+    .includes(row.fixtures.boundary);
+  let strictCapture = ['startup-application', 'startup-held-bootstrap']
+    .includes(row.fixtures.boundary);
+  let heldBootstrapRelease = null;
+  let dialog = null;
+  let requestActivity = 0;
+  const pendingFetch = new Set();
+  const pausedRequests = new Set();
+  const requests = [];
+  const assets = new Set();
+  const run = Object.fromEntries(CLEAN_RUN_FIELDS.map(field => [field, []]));
+  const expectedPaths = new Set(expectedRequestSequence(row).map(request => request.path));
+  const requestUrls = new Map();
+
+  const drain = async () => {
+    let stable = 0;
+    let previous = -1;
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+      await Promise.all([...pendingFetch]);
+      if (pendingFetch.size === 0 && requestActivity === previous) {
+        stable += 1;
+        if (stable >= 2) return;
+      } else {
+        stable = 0;
+        previous = requestActivity;
+      }
+      await sleep(25);
+    }
+    throw new Error(`${row.id}: network did not settle`);
+  };
+
+  const routeFixture = normalized => {
+    const { method, path: pathname } = normalized;
+    if (method === 'GET' && pathname === '/api/locale-bootstrap') {
+      return activePlan.locale();
+    }
+    if (method === 'GET' && pathname === '/api/config') {
+      return activePlan.config();
+    }
+    if (method === 'GET' && pathname === '/api/dashboard/now') {
+      if (activePlan.phase === 'action'
+          && typeof activePlan.recipe.now === 'string'
+          && activePlan.recipe.response) {
+        return activePlan.response();
+      }
+      return activePlan.now();
+    }
+    if (method === 'GET' && pathname === '/api/dashboard') {
+      return activePlan.range();
+    }
+    if (method === 'POST' && (pathname === '/setup/validate-key'
+        || pathname === '/setup'
+        || pathname.startsWith('/api/settings/'))) {
+      return activePlan.response();
+    }
+    return undefined;
+  };
+
+  const handlePaused = async params => {
+    pausedRequests.add(params.requestId);
+    const normalized = normalizedPausedRequest(params.request);
+    const pathname = normalized.path;
+    requestActivity += 1;
+    // The long-value row observes the initial range response, then explicitly
+    // enters Settings to observe its reload. Startup config/Now are setup
+    // prerequisites, not the row's target boundary.
+    if ((row.fixtures.boundary === 'startup-dashboard-data'
+          && pathname === '/api/dashboard/now')
+        || (['startup-dashboard-range', 'startup-range-through-action']
+          .includes(row.fixtures.boundary)
+          && pathname === '/api/dashboard')) {
+      capture = true;
+      strictCapture = true;
+    }
+    if (capture && (expectedPaths.has(pathname)
+        || (strictCapture && (normalized.method !== 'GET'
+          || pathname.startsWith('/api/')
+          || pathname.startsWith('/setup/'))))) {
+      requests.push(normalized);
+      if (!expectedPaths.has(pathname)) {
+        run.unexpectedRequests.push(
+          `${normalized.method} ${pathname}`,
+        );
+      }
+    }
+    if (row.fixtures.boundary === 'startup-held-bootstrap'
+        && pathname === '/api/locale-bootstrap'
+        && !heldBootstrapRelease) {
+      await new Promise(resolve => { heldBootstrapRelease = resolve; });
+    }
+    const value = routeFixture(normalized);
+    if (value !== undefined) {
+      const reference = activePlan.lastReference;
+      const status = reference === 'validate-failure.json'
+        ? 200
+        : reference?.startsWith('api-error')
+            || reference === 'scenarios.json#setup-error'
+          ? 400
+          : value?.ok === false && value?.error?.code
+            ? 400
+            : 200;
+      await browser.send('Fetch.fulfillRequest', {
+        requestId: params.requestId,
+        responseCode: status,
+        responseHeaders: [
+          { name: 'Content-Type', value: 'application/json' },
+          { name: 'Cache-Control', value: 'no-store' },
+        ],
+        body: Buffer.from(JSON.stringify(value)).toString('base64'),
+      }, sessionId);
+    } else {
+      await browser.send('Fetch.continueRequest', { requestId: params.requestId }, sessionId);
+    }
+    pausedRequests.delete(params.requestId);
+  };
+
+  const unsubscribe = browser.on(msg => {
+    if (msg.sessionId !== sessionId) return;
+    if (msg.method === 'Fetch.requestPaused') {
+      let operation;
+      operation = handlePaused(msg.params)
+        .catch(async error => {
+          run.pageErrors.push(error.message);
+          try {
+            await browser.send('Fetch.failRequest', {
+              requestId: msg.params.requestId,
+              errorReason: 'Failed',
+            }, sessionId);
+          } catch (_) {}
+          pausedRequests.delete(msg.params.requestId);
+        })
+        .finally(() => pendingFetch.delete(operation));
+      pendingFetch.add(operation);
+    } else if (msg.method === 'Runtime.exceptionThrown') {
+      const details = msg.params.exceptionDetails;
+      run.pageErrors.push(
+        details.exception?.description || details.text,
+      );
+    } else if (msg.method === 'Runtime.consoleAPICalled'
+        && msg.params.type === 'error') {
+      const message = msg.params.args
+        .map(arg => arg.value ?? arg.description)
+        .join(' ');
+      if (!isExpectedMatrixApiResourceError(message)) run.consoleErrors.push(message);
+    } else if (msg.method === 'Log.entryAdded'
+        && msg.params.entry.level === 'error') {
+      if (!isExpectedMatrixApiResourceError(msg.params.entry.text)) {
+        run.consoleErrors.push(msg.params.entry.text);
+      }
+    } else if (msg.method === 'Page.javascriptDialogOpening') {
+      if (!dialog) {
+        run.pageErrors.push(`unexpected ${msg.params.type} dialog`);
+        dialog = { accept: false };
+      }
+      browser.send('Page.handleJavaScriptDialog', {
+        accept: dialog.accept,
+        ...(dialog.promptText === undefined ? {} : { promptText: dialog.promptText }),
+      }, sessionId).catch(error => run.pageErrors.push(error.message));
+      dialog = null;
+    } else if (msg.method === 'Network.requestWillBeSent') {
+      requestUrls.set(msg.params.requestId, msg.params.request.url);
+      if (msg.params.request.url.startsWith('http')
+          && !msg.params.request.url.startsWith(origin)) {
+        run.failedAssets.push(`external request ${msg.params.request.url}`);
+      }
+    } else if (msg.method === 'Network.responseReceived') {
+      const response = msg.params.response;
+      if (!response.url.startsWith(origin)) return;
+      const pathname = new URL(response.url).pathname;
+      if (!pathname.startsWith('/assets/')) return;
+      if (response.status >= 400) run.failedAssets.push(`${response.status} ${pathname}`);
+      else if (row.assets.includes(pathname)) assets.add(pathname);
+    } else if (msg.method === 'Network.loadingFailed') {
+      const requestUrl = requestUrls.get(msg.params.requestId);
+      if (requestUrl?.startsWith(origin)
+          && new URL(requestUrl).pathname.startsWith('/assets/')) {
+        run.failedAssets.push(`${msg.params.errorText} ${new URL(requestUrl).pathname}`);
+      }
+    }
+  });
+
+  const evaluate = expression =>
+    evaluateRaw(browser, sessionId, `(async()=>{
+      const __wait = async selector => {
+        for (let index = 0; index < 400; index++) {
+          const node = document.querySelector(selector);
+          if (node) return node;
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+        throw new Error('matrix selector did not appear: ' + selector);
+      };
+      ${expression}
+    })()`);
+  const resetObservation = () => {
+    requests.length = 0;
+    if (row.assets.length === 0) assets.clear();
+    run.unexpectedRequests.length = 0;
+    capture = true;
+    strictCapture = true;
+  };
+
+  const prepareSetup = async actionId => {
+    if (!actionId.startsWith('error-setup')
+        && actionId !== 'setup-key-validation-success'
+        && actionId !== 'setup-submit-success') return;
+    await evaluate(`
+      document.querySelector('#username').value='fixture-user';
+      document.querySelector('#password').value='fixture-password';
+      document.querySelector('#confirm').value='fixture-password';
+      document.querySelector('#baseurl').value='https://integrate.api.nvidia.com';
+      document.querySelector('#to2').click();
+    `);
+    await waitForMatrixCondition(
+      browser, sessionId,
+      `document.querySelector('#step2')?.hidden === false`,
+      `${row.id}: setup step two`,
+    );
+    if (actionId.includes('submit') || actionId === 'setup-submit-success') {
+      await evaluate(`
+        keys=[{key:'nvapi-ui-fixture',rpm:40,models:3}];
+        renderKeys();
+        document.querySelector('#to3').click();
+      `);
+      await waitForMatrixCondition(
+        browser, sessionId,
+        `document.querySelector('#step3')?.hidden === false`,
+        `${row.id}: setup review`,
+      );
+    }
+  };
+
+  const performAction = async (actionRow, actionPlan) => {
+    activePlan = actionPlan;
+    const prestatePanel = SETTINGS_PRESTATE_PANEL.get(actionRow.id);
+    if (prestatePanel) {
+      await evaluate(`
+        document.querySelector('#side [data-tab="settings"]').click();
+        await __wait('#setnav button');
+        document.querySelector('#setnav [data-sub=${JSON.stringify(prestatePanel)}]').click();
+      `);
+      await drain();
+      // Opening Settings is the precondition that consumes the `before`
+      // ConfigResponse. The named row begins at its actual control/POST.
+      resetObservation();
+    }
+    activePlan.enterAction();
+    if ([
+      'mutation-nim-key-delete',
+      'mutation-client-key-delete',
+      'mutation-user-delete',
+    ].includes(actionRow.id)) dialog = { accept: true };
+    if (actionRow.id === 'dialog-confirm-cancel-focus-return'
+        || actionRow.id === 'dialog-user-password-prompt-cancel') {
+      dialog = { accept: false };
+    }
+    if (actionRow.id === 'mutation-user-password-reset') {
+      dialog = { accept: true, promptText: 'replacement-password' };
+    }
+    await prepareSetup(actionRow.id);
+    const expression = matrixActionExpression(actionRow.id);
+    if (expression) {
+      try {
+        await evaluate(expression);
+      } catch (error) {
+        throw new Error(`${actionRow.id}: ${error.message}`);
+      }
+    }
+    await drain();
+    const unused = activePlan.unconsumed();
+    if (unused.length) {
+      run.unconsumedFixtures.push(
+        ...unused.map(reference => `${actionRow.id}:${reference}`),
+      );
+    }
+  };
+
+  let unsubscribeLoad = () => {};
+  try {
+    await browser.send('Runtime.enable', {}, sessionId);
+    await browser.send('Log.enable', {}, sessionId);
+    await browser.send('Page.enable', {}, sessionId);
+    await browser.send('Network.enable', {}, sessionId);
+    await browser.send('Network.setCacheDisabled', { cacheDisabled: true }, sessionId);
+    await browser.send('Fetch.enable', {
+      patterns: [{ urlPattern: '*', requestStage: 'Request' }],
+    }, sessionId);
+    if (row.fixtures.page === 'dashboard') {
+      await browser.send('Network.setExtraHTTPHeaders', {
+        headers: { Authorization: 'Bearer root:test-password-1' },
+      }, sessionId);
+    }
+    await browser.send('Page.addScriptToEvaluateOnNewDocument', {
+      source: MATRIX_TIMER_SHIM,
+    }, sessionId);
+
+    let loadedResolve;
+    let loaded = new Promise(resolve => { loadedResolve = resolve; });
+    unsubscribeLoad = browser.on(msg => {
+      if (msg.sessionId === sessionId && msg.method === 'Page.loadEventFired') {
+        loadedResolve();
+      }
+    });
+    await browser.send('Page.navigate', { url: origin + pagePath }, sessionId);
+    if (row.fixtures.boundary === 'startup-held-bootstrap') {
+      const deadline = Date.now() + 10000;
+      while (!heldBootstrapRelease && Date.now() < deadline) await sleep(25);
+      if (!heldBootstrapRelease) {
+        throw new Error(`${row.id}: bootstrap request was not captured for holding`);
+      }
+      await waitForMatrixCondition(
+        browser, sessionId,
+        `document.body?.hidden === true`,
+        `${row.id}: held startup body`,
+      );
+    } else {
+      await Promise.race([
+        loaded,
+        sleep(15000).then(() => { throw new Error(`${row.id}: page load timed out`); }),
+      ]);
+      await waitForMatrixCondition(
+        browser, sessionId,
+        row.fixtures.page === 'dashboard'
+          ? `document.body.hidden === false && typeof nowData !== 'undefined' && nowData !== null && typeof rangeData !== 'undefined' && rangeData !== null`
+          : `document.body.hidden === false`,
+        `${row.id}: application ready`,
+      );
+      await drain();
+    }
+    if (row.id === 'login-invalid-credentials') {
+      resetObservation();
+      loaded = new Promise(resolve => { loadedResolve = resolve; });
+      await evaluate(`
+        document.querySelector('input[name="username"]').value='fixture-user';
+        document.querySelector('input[name="password"]').value='incorrect-password';
+        document.querySelector('form').requestSubmit();
+      `);
+      await Promise.race([
+        loaded,
+        sleep(15000).then(() => { throw new Error(`${row.id}: invalid login timed out`); }),
+      ]);
+      await waitForMatrixCondition(
+        browser, sessionId,
+        `document.querySelector('#login-error')?.hidden === false`,
+        `${row.id}: invalid login message`,
+      );
+      await drain();
+    } else if (row.fixtures.boundary === 'after-ready') {
+      resetObservation();
+    }
+
+    const dependencies = [];
+    const addDependency = dependencyId => {
+      const dependency = INTERACTION_ROWS.find(candidate => candidate.id === dependencyId);
+      for (const nested of dependency.fixtures.requires) addDependency(nested);
+      if (!dependencies.some(candidate => candidate.id === dependency.id)) {
+        dependencies.push(dependency);
+      }
+    };
+    for (const dependencyId of row.fixtures.requires) addDependency(dependencyId);
+    for (const dependency of dependencies) {
+      const dependencyPlan = new UiFixturePlan(dependency, role);
+      await performAction(dependency, dependencyPlan);
+    }
+    if (row.fixtures.requires.length) resetObservation();
+    activePlan = plan;
+    if (row.fixtures.boundary === 'startup-held-bootstrap') {
+      // The held state is the observation. Release the request only so the
+      // target has no paused Fetch operation during teardown.
+    } else {
+      await performAction(row, plan);
+    }
+
+    const dom = [];
+    for (const assertion of row.dom) {
+      if (assertion.collect?.kind === 'sequence') {
+        const result = [];
+        for (const selector of assertion.collect.steps) {
+          await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
+          await drain();
+          result.push(await evaluateRaw(browser, sessionId, assertion.expression));
+        }
+        dom.push({
+          check: assertion.check,
+          expression: assertion.expression,
+          collect: assertion.collect,
+          result,
+        });
+      } else if (assertion.collect?.kind === 'context-sequence') {
+        const result = [];
+        for (const selector of assertion.collect.contexts[role]) {
+          await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
+          await drain();
+          result.push(await evaluateRaw(browser, sessionId, assertion.expression));
+        }
+        dom.push({
+          check: assertion.check,
+          expression: assertion.expression,
+          collect: assertion.collect,
+          result: { [role]: result },
+        });
+      } else {
+        await waitForMatrixCondition(
+          browser,
+          sessionId,
+          `(() => {
+            const canonical = value => {
+              if (Array.isArray(value))
+                return '[' + value.map(canonical).join(',') + ']';
+              if (value && typeof value === 'object')
+                return '{' + Object.keys(value).sort().map(key =>
+                  JSON.stringify(key) + ':' + canonical(value[key])).join(',') + '}';
+              return JSON.stringify(value);
+            };
+            return canonical(${assertion.expression})
+              === ${JSON.stringify(canonicalJson(assertion.expected))};
+          })()`,
+          `${row.id}:${assertion.check}`,
+        );
+        dom.push({
+          check: assertion.check,
+          expression: assertion.expression,
+          result: await evaluateRaw(browser, sessionId, assertion.expression),
+        });
+      }
+    }
+    run.pageErrors.push(...await evaluateRaw(
+      browser,
+      sessionId,
+      'window.__matrixPageErrors || []',
+    ));
+    run.promiseRejections.push(...await evaluateRaw(
+      browser,
+      sessionId,
+      'window.__matrixPromiseRejections || []',
+    ));
+    if (heldBootstrapRelease) {
+      // The held boundary owns only bootstrap. Resume without capture so the
+      // target can settle and close, but its later startup work is not folded
+      // into this loading-state observation.
+      const release = heldBootstrapRelease;
+      heldBootstrapRelease = null;
+      capture = false;
+      strictCapture = false;
+      release();
+    }
+    await drain();
+    // Every before/action/after fixture named by the target recipe must have
+    // crossed the intercepted HTTP boundary. This catches a matrix row that
+    // merely names a Rust response without actually exercising it.
+    const requiredFixtures = new Set([plan.recipe.locale]);
+    for (const field of ['config', 'now', 'range']) {
+      requiredFixtures.add(selectedFixtureReference(plan.recipe[field], 'before', role));
+      requiredFixtures.add(selectedFixtureReference(plan.recipe[field], 'action', role));
+    }
+    for (const reference of plan.responseReferences) requiredFixtures.add(reference);
+    for (const reference of requiredFixtures) {
+      if (reference && !plan.consumed.includes(reference)) {
+        run.unconsumedFixtures.push(reference);
+      }
+    }
+    if (plan.unconsumed().length) {
+      run.unconsumedFixtures.push(...plan.unconsumed());
+    }
+    return {
+      assets: [...assets],
+      dom,
+      fixtures: row.fixtures,
+      requests,
+      run,
+    };
+  } finally {
+    if (heldBootstrapRelease) heldBootstrapRelease();
+    for (const requestId of pausedRequests) {
+      try {
+        await browser.send('Fetch.continueRequest', { requestId }, sessionId);
+      } catch (_) {}
+    }
+    unsubscribeLoad();
+    unsubscribe();
+    try { await browser.send('Target.closeTarget', { targetId }); } catch (_) {}
+  }
+}
+
+function mergeMatrixContextObservations(row, observations) {
+  if (observations.length === 1) return observations[0];
+  const merged = {
+    assets: [...new Set(observations.flatMap(observation => observation.assets))],
+    dom: row.dom.map(assertion => ({
+      check: assertion.check,
+      expression: assertion.expression,
+      ...(assertion.collect ? { collect: assertion.collect } : {}),
+      result: {},
+    })),
+    fixtures: row.fixtures,
+    requests: observations.flatMap(observation => observation.requests),
+    run: Object.fromEntries(CLEAN_RUN_FIELDS.map(field => [
+      field,
+      observations.flatMap(observation => observation.run[field]),
+    ])),
+  };
+  for (const observation of observations) {
+    for (const [index, assertion] of observation.dom.entries()) {
+      Object.assign(merged.dom[index].result, assertion.result);
+    }
+  }
+  return merged;
+}
+
+async function runInteractionMatrix({ browser, configuredProxy, tmpdir }) {
+  const setupDir = path.join(tmpdir, 'matrix-setup');
+  fs.mkdirSync(setupDir);
+  const setupProxy = await startProxy(setupDir, true);
+  const observations = new Map();
+  try {
+    for (const row of INTERACTION_ROWS) {
+      const roles = Array.isArray(row.fixtures.role) ? row.fixtures.role : [row.fixtures.role];
+      const contexts = [];
+      for (const role of roles) {
+        contexts.push(await runMatrixContext({
+          browser,
+          row,
+          role,
+          configuredProxy,
+          setupProxy,
+        }));
+      }
+      observations.set(row.id, mergeMatrixContextObservations(row, contexts));
+      if (process.env.DEBUG) console.log(`[matrix] ${row.id} observed`);
+    }
+  } finally {
+    if (!await stopChild(setupProxy.proc)) {
+      throw new Error('interaction setup proxy did not exit');
+    }
+  }
+  return observations;
 }
 
 async function main() {
@@ -3685,13 +4403,15 @@ async function main() {
     }
     let body = null;
     if (url.pathname === '/api/config' && startupProbe !== 'locale-precedence')
-      body = fixtures['config.json'];
-    else if (url.pathname === '/api/dashboard/now') body = fixtures['dashboard-now.json'];
-    else if (url.pathname === '/api/dashboard') body = fixtures['dashboard.json'];
+      body = fixtures['config-superuser.json'];
+    else if (url.pathname === '/api/dashboard/now')
+      body = fixtures['dashboard-now-initial.json'];
+    else if (url.pathname === '/api/dashboard')
+      body = fixtures['dashboard-healthy.json'];
     else if (url.pathname === '/setup/validate-key' && request.method === 'POST')
-      body = { ok: true, models: 63 };
+      body = fixtures['validate-success.json'];
     else if (url.pathname === '/setup' && request.method === 'POST')
-      body = { ok: true, client_key: { name: 'default', secret: 'npk_probe_secret' } };
+      body = fixtures['setup-minted-client-key.json'];
     if (body !== null) {
       fetched.push(url.pathname);
       await browser.send('Fetch.fulfillRequest', {
@@ -4536,6 +5256,35 @@ async function main() {
   // The poll loop re-applies the last hover on every live re-render, which is
   // how a hover throw escalates from "no tooltip" to "the tab stops updating".
   await sleep(3500);
+  if (process.env.DEBUG) console.log('DEBUG hovered:', JSON.stringify(hovered));
+  if (IS_DASHBOARD) {
+    const expectedHovered = [
+      'overview/o-kpis',
+      'overview/o-kpis',
+      'overview/o-kpis',
+      'overview/o-traffic',
+      'models/chart-modeltok',
+      'models/chart-ttft',
+      'models/chart-tps',
+      'models/chart-tpot',
+      'models/chart-upstream',
+      'reliability/chart-reqrate',
+      'reliability/chart-outcomes',
+      'reliability/chart-load',
+      'reliability/chart-outcome-stack',
+      'reliability/chart-qwait',
+      'reliability/heatmap',
+      'reliability/chart-exhaust',
+      'capacity/chart-cooldowns',
+    ];
+    if (canonicalJson(hovered) !== canonicalJson(expectedHovered)) {
+      console.error(
+        `FAIL — dashboard hover inventory ${canonicalJson(hovered)} `
+        + `!= ${canonicalJson(expectedHovered)}`,
+      );
+      throw reportedFailure();
+    }
+  }
 
   let doubleEscaped = [];
   if (escapeProbe) {
@@ -4632,6 +5381,16 @@ async function main() {
     });
   }
 
+  let matrixObservations = null;
+  if (allStates) {
+    await browser.send('Target.closeTarget', { targetId });
+    matrixObservations = await runInteractionMatrix({
+      browser,
+      configuredProxy: proxy,
+      tmpdir,
+    });
+  }
+
   await cleanupRun();
 
   /* ---------- report ------------------------------------------------------ */
@@ -4641,12 +5400,15 @@ async function main() {
     : `rendered ${TABS.length} tabs, hovered ${hovered.length} charts`);
 
   if (allStates) {
-    const problems = interactionCoverageProblems(new Map());
-    console.error(`\nFAIL — ${problems.length} browser interaction row(s) are not implemented`);
-    for (const { check, detail } of problems) {
-      console.error(`  [${check}] ${detail}`);
+    const problems = interactionCoverageProblems(matrixObservations);
+    if (problems.length) {
+      console.error(`\nFAIL — ${problems.length} browser interaction row(s) disagreed`);
+      for (const { check, detail } of problems) {
+        console.error(`  [${check}] ${detail}`);
+      }
+      throw reportedFailure();
     }
-    throw reportedFailure();
+    console.log(`interaction matrix ok — ${matrixObservations.size} named rows observed`);
   }
 
   if (untranslatedByTab.size) {

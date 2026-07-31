@@ -54,6 +54,15 @@ jobs:
           UPDATE_OPENAPI=1 cargo test --test openapi
           git diff --exit-code -- openapi.json \
             || { echo "::error::openapi.json is stale — run 'UPDATE_OPENAPI=1 cargo test --test openapi' and commit it"; exit 1; }
+      - name: Rust-owned UI fixtures are in sync
+        # Fixture bytes are serialized from the production response types. The
+        # update command is deliberate; a diff after it catches an omitted
+        # generated fixture in the same way the OpenAPI gate catches its spec.
+        run: |
+          UPDATE_UI_FIXTURES=1 cargo test api::tests::ui_fixtures --lib
+          git add --intent-to-add -- tests/fixtures/ui
+          git diff --exit-code -- tests/fixtures/ui \
+            || { echo "::error::UI fixtures are stale — run 'UPDATE_UI_FIXTURES=1 cargo test api::tests::ui_fixtures --lib' and commit tests/fixtures/ui"; exit 1; }
       - name: Embedded presentation source boundaries and JS syntax
         # cargo test asserts on served HTML text and never parses the
         # JavaScript. These checks also keep executable/style source external
@@ -65,6 +74,7 @@ jobs:
           node scripts/render_check.js --catalog-startup-selftest
           node scripts/render_check.js --syntax-selftest
           node scripts/render_check.js --syntax-only
+          node scripts/render_check.js --interaction-selftest
       - name: Formatter output is unchanged
         # Pins number/duration/date/percent output against a golden fixture.
         # TZ and locale are fixed because these formatters read the catalog
@@ -108,6 +118,7 @@ jobs:
         # than one committed check and leaves nothing behind.
         run: |
           node scripts/render_check.js
+          node scripts/render_check.js --all-states
           node scripts/render_check.js --escape-probe
           node scripts/render_check.js --page setup
           node scripts/render_check.js --page setup --escape-probe

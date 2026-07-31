@@ -600,16 +600,373 @@ mod tests {
         }
     }
 
-    fn metric(metric: &str, value: f64) -> MetricValue {
-        metric_for(metric, "fixture/alpha", value)
-    }
-
     fn active_requests(value: f64) -> MetricValue {
         MetricValue {
             labels: BTreeMap::new(),
             metric: "nimproxy_active_requests".into(),
             value,
         }
+    }
+
+    fn labeled_metric(metric: &str, labels: &[(&str, &str)], value: f64) -> MetricValue {
+        MetricValue {
+            labels: labels
+                .iter()
+                .map(|(key, value)| ((*key).into(), (*value).into()))
+                .collect(),
+            metric: metric.into(),
+            value,
+        }
+    }
+
+    // Keep the fixture histogram shape tied to the recorder configured in
+    // `lib.rs`. A generic "fast/slow/+Inf" shape would exercise a dashboard
+    // that the production recorder can never emit.
+    fn histogram_bounds(metric: &str) -> &'static [f64] {
+        crate::HISTOGRAM_BUCKETS
+            .iter()
+            .find_map(|(name, bounds)| (*name == metric).then_some(*bounds))
+            .unwrap_or_else(|| panic!("ui-fixture: unknown production histogram {metric}"))
+    }
+
+    #[derive(Clone, Copy)]
+    enum FixtureSegment {
+        All,
+        First,
+        Second,
+    }
+
+    fn histogram_samples(metric: &str, segment: FixtureSegment) -> &'static [f64] {
+        let all = match metric {
+            "nimproxy_ttft_seconds" => &[0.03, 0.07, 0.2, 0.4, 0.8, 1.5, 3.0, 7.0, 12.0, 20.0][..],
+            "nimproxy_tokens_per_second" => {
+                &[0.5, 1.5, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 400.0][..]
+            }
+            "nimproxy_queue_wait_seconds" => {
+                &[0.0005, 0.02, 0.1, 0.5, 2.0, 10.0, 30.0, 90.0, 300.0, 500.0][..]
+            }
+            "nimproxy_upstream_seconds" => {
+                &[0.1, 0.3, 0.7, 1.5, 3.0, 7.0, 15.0, 45.0, 100.0, 250.0][..]
+            }
+            "nimproxy_tpot_seconds" => {
+                &[0.003, 0.008, 0.015, 0.03, 0.06, 0.12, 0.24, 0.4, 0.5, 0.6][..]
+            }
+            _ => panic!("ui-fixture: unknown production histogram {metric}"),
+        };
+        match segment {
+            FixtureSegment::All => all,
+            FixtureSegment::First => &all[..5],
+            FixtureSegment::Second => &all[5..],
+        }
+    }
+
+    fn histogram(metric: &str, labels: &[(&str, &str)], samples: &[f64]) -> Vec<MetricValue> {
+        let mut values = Vec::new();
+        // A series comes from a small concrete set of observations. This ties
+        // bucket/count/sum values together and keeps each fixture physically
+        // possible under the production recorder's configured bounds.
+        for bound in histogram_bounds(metric) {
+            let mut bucket_labels = labels.to_vec();
+            let bound_text = bound.to_string();
+            bucket_labels.push(("le", &bound_text));
+            values.push(labeled_metric(
+                &format!("{metric}_bucket"),
+                &bucket_labels,
+                samples.iter().filter(|sample| **sample <= *bound).count() as f64,
+            ));
+        }
+        let mut terminal_labels = labels.to_vec();
+        terminal_labels.push(("le", "+Inf"));
+        values.push(labeled_metric(
+            &format!("{metric}_bucket"),
+            &terminal_labels,
+            samples.len() as f64,
+        ));
+        values.push(labeled_metric(
+            &format!("{metric}_count"),
+            labels,
+            samples.len() as f64,
+        ));
+        values.push(labeled_metric(
+            &format!("{metric}_sum"),
+            labels,
+            samples.iter().sum(),
+        ));
+        values
+    }
+
+    fn fixture_delta(total: f64, segment: FixtureSegment, is_sum: bool) -> f64 {
+        match segment {
+            FixtureSegment::All => total,
+            FixtureSegment::First if is_sum => total / 2.0,
+            FixtureSegment::First => (total as u64 / 2) as f64,
+            FixtureSegment::Second if is_sum => total / 2.0,
+            FixtureSegment::Second => total - (total as u64 / 2) as f64,
+        }
+    }
+
+    fn representative_dashboard_metrics(segment: FixtureSegment) -> Vec<MetricValue> {
+        let mut values = vec![
+            metric_for("nimproxy_requests_total", "fixture/alpha", 30.0),
+            labeled_metric(
+                "nimproxy_requests_total",
+                &[
+                    ("client", "fixture-client"),
+                    ("model", "fixture/zeta"),
+                    ("path", "/v1/chat/completions"),
+                    ("status", "504"),
+                ],
+                3.0,
+            ),
+            labeled_metric(
+                "nimproxy_prompt_tokens_total",
+                &[("client", "fixture-client"), ("model", "fixture/alpha")],
+                1_200.0,
+            ),
+            labeled_metric(
+                "nimproxy_completion_tokens_total",
+                &[
+                    ("client", "fixture-client"),
+                    ("model", "fixture/alpha"),
+                    ("source", "usage"),
+                ],
+                300.0,
+            ),
+            labeled_metric(
+                "nimproxy_reasoning_tokens_total",
+                &[("model", "fixture/alpha")],
+                60.0,
+            ),
+            labeled_metric(
+                "nimproxy_finish_reason_total",
+                &[("model", "fixture/alpha"), ("reason", "stop")],
+                25.0,
+            ),
+            labeled_metric(
+                "nimproxy_stream_requests_total",
+                &[("client", "fixture-client"), ("stream", "true")],
+                20.0,
+            ),
+            labeled_metric(
+                "nimproxy_tool_calls_total",
+                &[("model", "fixture/alpha")],
+                8.0,
+            ),
+            labeled_metric("nimproxy_tool_choice_total", &[("mode", "auto")], 10.0),
+            labeled_metric(
+                "nimproxy_json_mode_total",
+                &[("client", "fixture-client")],
+                4.0,
+            ),
+            labeled_metric("nimproxy_affinity_total", &[("result", "sticky")], 24.0),
+            labeled_metric("nimproxy_affinity_total", &[("result", "spill")], 2.0),
+            labeled_metric("nimproxy_lane_requests_total", &[("lane", "0")], 33.0),
+            labeled_metric(
+                "nimproxy_lane_cooldown_total",
+                &[("lane", "0"), ("status", "429")],
+                2.0,
+            ),
+            labeled_metric(
+                "nimproxy_worker_exhausted_total",
+                &[("model", "fixture/alpha")],
+                1.0,
+            ),
+            labeled_metric("nimproxy_shed_total", &[], 1.0),
+            labeled_metric("nimproxy_unauthorized_total", &[], 1.0),
+            labeled_metric("nimproxy_login_failures_total", &[], 1.0),
+            labeled_metric(
+                "nimproxy_request_tools_count",
+                &[("client", "fixture-client")],
+                10.0,
+            ),
+            labeled_metric(
+                "nimproxy_request_tools_sum",
+                &[("client", "fixture-client")],
+                15.0,
+            ),
+            labeled_metric(
+                "nimproxy_request_messages_count",
+                &[("client", "fixture-client")],
+                10.0,
+            ),
+            labeled_metric(
+                "nimproxy_request_messages_sum",
+                &[("client", "fixture-client")],
+                40.0,
+            ),
+            labeled_metric(
+                "nimproxy_request_temperature_count",
+                &[("client", "fixture-client")],
+                10.0,
+            ),
+            labeled_metric(
+                "nimproxy_request_temperature_sum",
+                &[("client", "fixture-client")],
+                7.0,
+            ),
+            labeled_metric(
+                "nimproxy_request_max_tokens_count",
+                &[("client", "fixture-client")],
+                10.0,
+            ),
+            labeled_metric(
+                "nimproxy_request_max_tokens_sum",
+                &[("client", "fixture-client")],
+                10_240.0,
+            ),
+        ];
+        for metric in &mut values {
+            metric.value = fixture_delta(metric.value, segment, metric.metric.ends_with("_sum"));
+        }
+        values.extend(histogram(
+            "nimproxy_ttft_seconds",
+            &[("model", "fixture/alpha")],
+            histogram_samples("nimproxy_ttft_seconds", segment),
+        ));
+        values.extend(histogram(
+            "nimproxy_tokens_per_second",
+            &[("model", "fixture/alpha"), ("source", "usage")],
+            histogram_samples("nimproxy_tokens_per_second", segment),
+        ));
+        values.extend(histogram(
+            "nimproxy_tpot_seconds",
+            &[("model", "fixture/alpha")],
+            histogram_samples("nimproxy_tpot_seconds", segment),
+        ));
+        values.extend(histogram(
+            "nimproxy_upstream_seconds",
+            &[("model", "fixture/alpha")],
+            histogram_samples("nimproxy_upstream_seconds", segment),
+        ));
+        values.extend(histogram(
+            "nimproxy_queue_wait_seconds",
+            &[],
+            histogram_samples("nimproxy_queue_wait_seconds", segment),
+        ));
+        values
+    }
+
+    fn assert_representative_metrics_are_production_faithful(range: &DashboardResponse) {
+        let histogram_families = [
+            "nimproxy_ttft_seconds",
+            "nimproxy_tokens_per_second",
+            "nimproxy_queue_wait_seconds",
+            "nimproxy_upstream_seconds",
+            "nimproxy_tpot_seconds",
+        ];
+        for family in histogram_families {
+            let bucket_name = format!("{family}_bucket");
+            let count_name = format!("{family}_count");
+            let expected_bounds: Vec<_> = histogram_bounds(family)
+                .iter()
+                .map(ToString::to_string)
+                .chain(std::iter::once("+Inf".to_owned()))
+                .collect();
+            let buckets: Vec<_> = range
+                .totals
+                .iter()
+                .filter(|metric| metric.metric == bucket_name)
+                .collect();
+            let actual_bounds: Vec<_> = buckets
+                .iter()
+                .map(|metric| metric.labels.get("le").map(String::as_str))
+                .collect();
+            assert_eq!(
+                actual_bounds,
+                expected_bounds
+                    .iter()
+                    .map(|bound| Some(bound.as_str()))
+                    .collect::<Vec<_>>(),
+                "ui-fixture:{family}: bucket bounds must match the production recorder"
+            );
+            assert!(
+                buckets
+                    .windows(2)
+                    .all(|pair| pair[0].value <= pair[1].value),
+                "ui-fixture:{family}: cumulative buckets must be monotonic"
+            );
+            assert!(
+                buckets.iter().all(|metric| metric.value.fract() == 0.0),
+                "ui-fixture:{family}: bucket counts must be integral"
+            );
+            let mut series_labels = buckets
+                .first()
+                .expect("ui-fixture: representative histogram has buckets")
+                .labels
+                .clone();
+            series_labels.remove("le");
+            let count = range
+                .totals
+                .iter()
+                .find(|metric| metric.metric == count_name && metric.labels == series_labels)
+                .expect("ui-fixture: representative histogram has count");
+            assert_eq!(
+                buckets.last().expect("ui-fixture: terminal bucket").value,
+                count.value,
+                "ui-fixture:{family}: +Inf bucket must equal count"
+            );
+        }
+        for point in &range.points {
+            for metric in &point.values {
+                if metric.metric.ends_with("_total")
+                    || metric.metric.ends_with("_count")
+                    || metric.metric.ends_with("_bucket")
+                {
+                    assert_eq!(
+                        metric.value.fract(),
+                        0.0,
+                        "ui-fixture:{}: point counters/counts/buckets must be integral",
+                        metric.metric
+                    );
+                }
+            }
+        }
+        for total in &range.totals {
+            let point_total: f64 = range
+                .points
+                .iter()
+                .map(|point| {
+                    point
+                        .values
+                        .iter()
+                        .find(|metric| {
+                            metric.metric == total.metric && metric.labels == total.labels
+                        })
+                        .expect("ui-fixture: every point has every total series")
+                        .value
+                })
+                .sum();
+            assert_eq!(
+                point_total, total.value,
+                "ui-fixture:{}: point deltas must sum exactly to range total",
+                total.metric
+            );
+        }
+        for metric in [
+            "nimproxy_tokens_per_second_bucket",
+            "nimproxy_tpot_seconds_bucket",
+        ] {
+            assert!(
+                range
+                    .points
+                    .iter()
+                    .all(|point| point.values.iter().any(|value| value.metric == metric)),
+                "ui-fixture:{metric}: every point must drive its dashboard chart"
+            );
+        }
+    }
+
+    fn representative_latest_metrics() -> Vec<MetricValue> {
+        vec![
+            active_requests(2.0),
+            labeled_metric("nimproxy_queue_depth", &[], 1.0),
+            labeled_metric(
+                "nimproxy_model_inflight",
+                &[("model", "fixture/alpha")],
+                2.0,
+            ),
+            labeled_metric("nimproxy_model_limit", &[("model", "fixture/alpha")], 8.0),
+        ]
     }
 
     fn dashboard_ui_fixture(kind: &str) -> DashboardResponse {
@@ -637,10 +994,14 @@ mod tests {
             }]
         } else {
             let value = if extreme { f64::MAX / 4.0 } else { 3.0 };
-            vec![
-                metric_for("nimproxy_requests_total", "fixture/alpha", value),
-                metric_for("nimproxy_requests_total", "fixture/zeta", value),
-            ]
+            if extreme {
+                vec![
+                    metric_for("nimproxy_requests_total", "fixture/alpha", value),
+                    metric_for("nimproxy_requests_total", "fixture/zeta", value),
+                ]
+            } else {
+                representative_dashboard_metrics(FixtureSegment::All)
+            }
         };
         let available_from = if partial {
             1_699_913_600
@@ -648,6 +1009,36 @@ mod tests {
             1_697_411_600
         };
         let effective_from = available_from;
+        let effective_to = 1_700_003_600;
+        let point = |from, to, point_values| RollupPoint {
+            capacity: Some(crate::history::CapacityRollup {
+                average_rpm: 80.0,
+                latest_rpms: vec![40, 40],
+            }),
+            duration_seconds: to - from,
+            from,
+            to,
+            values: point_values,
+        };
+        let points = if empty {
+            Vec::new()
+        } else if extreme || long {
+            vec![point(effective_from, effective_to, values.clone())]
+        } else {
+            let midpoint = effective_from + (effective_to - effective_from) / 2;
+            vec![
+                point(
+                    effective_from,
+                    midpoint,
+                    representative_dashboard_metrics(FixtureSegment::First),
+                ),
+                point(
+                    midpoint,
+                    effective_to,
+                    representative_dashboard_metrics(FixtureSegment::Second),
+                ),
+            ]
+        };
         DashboardResponse {
             config_revision: 7,
             diagnostics: HistoryDiagnostics {
@@ -658,33 +1049,24 @@ mod tests {
                 valid_samples: usize::from(!empty),
             },
             history_revision: 11,
-            latest: (!empty)
-                .then(|| active_requests(if extreme { f64::MAX / 4.0 } else { 2.0 }))
-                .into_iter()
-                .collect(),
-            points: (!empty)
-                .then(|| RollupPoint {
-                    capacity: Some(crate::history::CapacityRollup {
-                        average_rpm: 80.0,
-                        latest_rpms: vec![40, 40],
-                    }),
-                    duration_seconds: 1_700_003_600 - effective_from,
-                    from: effective_from,
-                    to: 1_700_003_600,
-                    values: values.clone(),
-                })
-                .into_iter()
-                .collect(),
+            latest: if empty {
+                Vec::new()
+            } else if extreme {
+                vec![active_requests(f64::MAX / 4.0)]
+            } else {
+                representative_latest_metrics()
+            },
+            points,
             totals: values,
             window: DashboardWindow {
                 available_from: (!empty).then_some(available_from),
-                available_to: (!empty).then_some(1_700_003_600),
+                available_to: (!empty).then_some(effective_to),
                 default_window_days: 30,
                 effective_from: (!empty).then_some(effective_from),
-                effective_to: (!empty).then_some(1_700_003_600),
+                effective_to: (!empty).then_some(effective_to),
                 following_now: false,
                 requested_from: 1_697_411_600,
-                requested_to: 1_700_003_600,
+                requested_to: effective_to,
                 retention_days: 30,
             },
         }
@@ -696,9 +1078,16 @@ mod tests {
         response.window.effective_to = Some(requested_to);
         response.window.requested_from = requested_from;
         response.window.requested_to = requested_to;
-        response.points[0].from = requested_from;
-        response.points[0].to = requested_to;
-        response.points[0].duration_seconds = requested_to - requested_from;
+        let midpoint = requested_from + (requested_to - requested_from) / 2;
+        for (point, (from, to)) in response
+            .points
+            .iter_mut()
+            .zip([(requested_from, midpoint), (midpoint, requested_to)])
+        {
+            point.from = from;
+            point.to = to;
+            point.duration_seconds = to - from;
+        }
         response
     }
 
@@ -1005,6 +1394,8 @@ mod tests {
     }
 
     fn dashboard_now_ui_fixture(changed: bool) -> DashboardNowResponse {
+        let mut metrics = representative_dashboard_metrics(FixtureSegment::All);
+        metrics.extend(representative_latest_metrics());
         DashboardNowResponse {
             auth: true,
             available_from: Some(1_697_411_600),
@@ -1014,10 +1405,7 @@ mod tests {
             default_window_days: 30,
             history_revision: 11,
             lanes: 2,
-            metrics: vec![
-                active_requests(0.0),
-                metric("nimproxy_requests_total", if changed { 5.0 } else { 3.0 }),
-            ],
+            metrics,
             retention_days: 30,
             rpms: vec![40, 40],
             sampled_at: if changed {
@@ -1035,10 +1423,11 @@ mod tests {
                 } else {
                     1_700_003_600
                 },
-                totals: changed
-                    .then(|| metric("nimproxy_requests_total", 2.0))
-                    .into_iter()
-                    .collect(),
+                totals: if changed {
+                    representative_dashboard_metrics(FixtureSegment::Second)
+                } else {
+                    Vec::new()
+                },
             },
             version: "0.6.6".into(),
         }
@@ -1104,12 +1493,66 @@ mod tests {
         let changed_now = dashboard_now_ui_fixture(true);
         let empty_now = dashboard_now_empty_ui_fixture();
         let partial_now = dashboard_now_partial_ui_fixture();
+        let healthy_range = dashboard_ui_fixture("healthy");
+        assert_representative_metrics_are_production_faithful(&healthy_range);
+        let metric_inventory: std::collections::BTreeSet<_> = healthy_range
+            .totals
+            .iter()
+            .chain(healthy_range.latest.iter())
+            .chain(initial_now.metrics.iter())
+            .map(|metric| metric.metric.as_str())
+            .collect();
+        let expected_metric_inventory = std::collections::BTreeSet::from([
+            "nimproxy_active_requests",
+            "nimproxy_affinity_total",
+            "nimproxy_completion_tokens_total",
+            "nimproxy_finish_reason_total",
+            "nimproxy_json_mode_total",
+            "nimproxy_lane_cooldown_total",
+            "nimproxy_lane_requests_total",
+            "nimproxy_login_failures_total",
+            "nimproxy_model_inflight",
+            "nimproxy_model_limit",
+            "nimproxy_prompt_tokens_total",
+            "nimproxy_queue_depth",
+            "nimproxy_queue_wait_seconds_bucket",
+            "nimproxy_queue_wait_seconds_count",
+            "nimproxy_queue_wait_seconds_sum",
+            "nimproxy_reasoning_tokens_total",
+            "nimproxy_request_max_tokens_count",
+            "nimproxy_request_max_tokens_sum",
+            "nimproxy_request_messages_count",
+            "nimproxy_request_messages_sum",
+            "nimproxy_request_temperature_count",
+            "nimproxy_request_temperature_sum",
+            "nimproxy_request_tools_count",
+            "nimproxy_request_tools_sum",
+            "nimproxy_requests_total",
+            "nimproxy_shed_total",
+            "nimproxy_stream_requests_total",
+            "nimproxy_tokens_per_second_bucket",
+            "nimproxy_tokens_per_second_count",
+            "nimproxy_tokens_per_second_sum",
+            "nimproxy_tool_calls_total",
+            "nimproxy_tool_choice_total",
+            "nimproxy_tpot_seconds_bucket",
+            "nimproxy_tpot_seconds_count",
+            "nimproxy_tpot_seconds_sum",
+            "nimproxy_ttft_seconds_bucket",
+            "nimproxy_ttft_seconds_count",
+            "nimproxy_ttft_seconds_sum",
+            "nimproxy_unauthorized_total",
+            "nimproxy_upstream_seconds_bucket",
+            "nimproxy_upstream_seconds_count",
+            "nimproxy_upstream_seconds_sum",
+            "nimproxy_worker_exhausted_total",
+        ]);
+        assert_eq!(
+            metric_inventory, expected_metric_inventory,
+            "ui-fixture: representative dashboard metric inventory changed"
+        );
         for (label, range, now) in [
-            (
-                "healthy-initial",
-                dashboard_ui_fixture("healthy"),
-                &initial_now,
-            ),
+            ("healthy-initial", healthy_range, &initial_now),
             (
                 "healthy-changed-tail",
                 dashboard_ui_fixture("healthy"),
@@ -1436,19 +1879,39 @@ mod tests {
             ),
         ];
         let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ui");
-        let healthy = fixtures
+        let generated: Vec<(&str, Vec<u8>)> = fixtures
+            .into_iter()
+            .map(|(name, value)| {
+                let mut json = serde_json::to_string_pretty(&value)
+                    .expect("ui-fixture: typed value serializes");
+                json.push('\n');
+                (name, json.into_bytes())
+            })
+            .collect();
+        let mut expected_names: Vec<String> = generated
             .iter()
-            .find(|(name, _)| *name == "dashboard-healthy.json")
-            .expect("ui-fixture: healthy dashboard variant is inventoried");
-        let mut healthy_json = serde_json::to_string_pretty(&healthy.1)
-            .expect("ui-fixture: dashboard response serializes");
-        healthy_json.push('\n');
-        assert_eq!(
-            fs::read_to_string(fixture_dir.join("dashboard-response.json"))
-                .expect("ui-fixture: deliberately stale dashboard response is readable"),
-            healthy_json,
-            "ui-fixture:dashboard-response-drift: committed fixture must be generated from DashboardResponse"
-        );
+            .map(|(name, _)| (*name).to_owned())
+            .collect();
+        expected_names.sort();
+        let update =
+            std::env::var_os("UPDATE_UI_FIXTURES").as_deref() == Some(std::ffi::OsStr::new("1"));
+        if update {
+            fs::create_dir_all(&fixture_dir).expect("ui-fixture: fixture directory is writable");
+            for entry in
+                fs::read_dir(&fixture_dir).expect("ui-fixture: fixture directory is readable")
+            {
+                let entry = entry.expect("ui-fixture: fixture directory entry is readable");
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !expected_names.contains(&name) {
+                    fs::remove_file(entry.path())
+                        .expect("ui-fixture: obsolete fixture can be removed");
+                }
+            }
+            for (name, bytes) in &generated {
+                fs::write(fixture_dir.join(name), bytes)
+                    .expect("ui-fixture: generated fixture can be written");
+            }
+        }
         let mut actual_names: Vec<String> = fs::read_dir(&fixture_dir)
             .expect("ui-fixture: fixture directory exists")
             .map(|entry| {
@@ -1460,25 +1923,27 @@ mod tests {
             })
             .collect();
         actual_names.sort();
-        let mut expected_names: Vec<String> = fixtures
-            .iter()
-            .map(|(name, _)| (*name).to_owned())
-            .collect();
-        expected_names.sort();
         assert_eq!(
             actual_names, expected_names,
             "ui-fixture:inventory-drift: committed Rust-owned fixture inventory must be exact"
         );
-        for (name, value) in fixtures {
-            let mut generated =
-                serde_json::to_string_pretty(&value).expect("ui-fixture: typed value serializes");
-            generated.push('\n');
-            let committed = fs::read_to_string(fixture_dir.join(name))
+        for (name, generated) in generated {
+            let committed = fs::read(fixture_dir.join(name))
                 .expect("ui-fixture: committed fixture is readable");
-            assert_eq!(
-                committed, generated,
-                "ui-fixture:{name}-drift: committed fixture must match its Rust response type"
-            );
+            if committed != generated {
+                let mismatch = committed
+                    .iter()
+                    .zip(&generated)
+                    .position(|(left, right)| left != right)
+                    .unwrap_or_else(|| committed.len().min(generated.len()));
+                panic!(
+                    "ui-fixture:{name}-drift: committed fixture differs at byte {mismatch} \
+                     (committed {} bytes, generated {} bytes); regenerate with \
+                     UPDATE_UI_FIXTURES=1",
+                    committed.len(),
+                    generated.len(),
+                );
+            }
         }
     }
 

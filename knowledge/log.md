@@ -6,6 +6,18 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-30] component — Rust-owned browser fixtures and interaction matrix
+
+Task 8 makes `tests/fixtures/ui/` a 21-file, typed Rust serialization surface:
+`src/api.rs` generates and verifies its bytes, while fixture histogram values
+derive from the recorder's production bucket registry. The dependency-free
+served-browser gate consumes only those files or `scenarios.json#scenario`; its
+52 rows record exact requests, DOM results, and clean-run observations,
+including a held-bootstrap loading state. This is named interaction coverage,
+not layout or every path. See the [test strategy](testing/test-strategy.md),
+[Dashboard](architecture/dashboard.md), [presentation layer](architecture/presentation-layer.md),
+[render-gate decision](decisions/render-gate.md), and [Task 8 plan](../docs/plans/v0.6.6-foundation-implementation.md).
+
 ## [2026-07-30] research finding — duplicate-safe account JSON boundary
 
 The mixed password-or-locale account endpoint cannot deserialize through

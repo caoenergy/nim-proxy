@@ -89,12 +89,16 @@ the probe flow to read and record the binary's page and catalog response
 bodies.
 Normal browser mode starts the current binary, requests its real page and
 asset routes, fails any missing/error/external initial resource, and fulfills
-captured API calls through CDP; those API payloads are the only responses it
-invents. It then drives every dashboard tab/chart hover or setup step under
-the production CSP. It also forces more than twice the dynamic-style bound,
-proves compaction happened, pins the rule/cache limit, and verifies live-node
-geometry survived. Hostile and pseudolocale probes first receive the real
-catalog-route response and then re-fulfill only those response bytes.
+only Rust-generated `tests/fixtures/ui/` API responses through CDP. The 52-row
+`--all-states` matrix names file or `scenarios.json#scenario` consumption,
+exact ordered requests, DOM observations, and clean browser observations; its
+loading row holds the real bootstrap response. It covers these interactions,
+not layout or every application path. It then drives every dashboard tab/chart
+hover or setup step under the production CSP. It also forces more than twice
+the dynamic-style bound, proves compaction happened, pins the rule/cache
+limit, and verifies live-node geometry survived. Hostile and pseudolocale
+probes first receive the real catalog-route response and then re-fulfill only
+those response bytes.
 Bootstrap/catalog failure, malformed-schema, and delayed-catalog probes pin the
 startup ordering and emergency-only behavior; page HTML, scripts, and styles
 remain production-served bytes.

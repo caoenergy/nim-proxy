@@ -67,10 +67,10 @@ it would have surfaced as `Jetons d&#39;entrée` on the first real translation.
 ## Choice
 
 Option 3. `scripts/render_check.js` starts the current nim-proxy binary,
-requests its real page and asset routes, fulfills captured API payloads through
-CDP, walks all five tabs, hovers every chart with real pointer input, and fails
-on any uncaught page or initial-resource error. Stdlib only, matching the
-convention both existing scripts already declare.
+requests its real page and asset routes, fulfills its fixture API responses
+through CDP, walks all five tabs, hovers every chart with real pointer input,
+and fails on any uncaught page or initial-resource error. Stdlib only, matching
+the convention both existing scripts already declare.
 
 This does **not** replace the human review the plan assigned. Clipping is a
 layout property and the gate does not judge it; the `.bval` wrap on Models at
@@ -110,16 +110,29 @@ faked.
 
 ## Consequences
 
+### Supersession — Task 8 fixture authority (2026-07-30)
+
+The captured/manual-fixture statements below describe the gate as it existed
+when this decision was made; they are not the current fixture authority. Task
+8 replaces them with 21 stable JSON files in `tests/fixtures/ui/`, generated
+by the `src/api.rs` module test from production response types. Deliberate
+regeneration is `UPDATE_UI_FIXTURES=1 cargo test api::tests::ui_fixtures --lib`;
+normal mode compares bytes and CI rejects a fixture diff. The 52-row
+`--all-states` matrix consumes only a file or `scenarios.json#scenario`, then
+asserts exact request order, DOM results, and clean browser observations. Its
+loading proof holds a real bootstrap response; it is not a layout test or
+complete application-path inventory. This supersession keeps the original
+decision's provenance while making typed Rust serialization the current wire
+authority.
+
 - Two CI steps in the existing `check` job, so the required-status-check list
   in [release.md](../ops/release.md) does not change.
 - `scripts/mock_nim.py` honors `max_tokens` so a capped request finishes with
   `length`. The dashboard's Truncated column was otherwise unreachable and
   would have been exempt from every future check.
-- ~27 KB of committed fixtures (gzipped), regenerable per
-  [the fixture README](../../tests/fixtures/api/README.md).
-- The fixtures are a **snapshot of a wire format**. If `/api/dashboard` changes
-  shape, they must be recaptured — the gate will fail loudly rather than
-  silently drift, which is the intended failure mode.
+- The current fixture set is generated from production Rust response types;
+  changing an API shape requires deliberate regeneration and a reviewed
+  committed diff, not recapture or JavaScript rewrites.
 - `--asset-selftest` independently names external script, stylesheet/font,
   image, and CSS URL defects across direct and protocol-relative URLs,
   reordered/unquoted attributes, `srcset`, quoted `@import`, font URLs, and
