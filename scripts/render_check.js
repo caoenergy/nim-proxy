@@ -3038,6 +3038,7 @@ const IS_SETUP = pageArg === 'setup';
 const IS_LOGIN = pageArg === 'login';
 const IS_DASHBOARD = pageArg === 'dashboard';
 const allStates = args.includes('--all-states');
+const visualMatrix = args.includes('--visual-matrix');
 const semanticSelftest = args.includes('--semantic-selftest');
 const layoutReport = args.includes('--layout-report');
 const layoutSelftest = args.includes('--layout-selftest');
@@ -4557,6 +4558,29 @@ async function runInteractionMatrix({ browser, configuredProxy, tmpdir }) {
   return observations;
 }
 
+function prepareVisualArtifactDir() {
+  const artifactDir = process.env.NIMPROXY_LAYOUT_ARTIFACT_DIR
+    || fs.mkdtempSync(path.join(os.tmpdir(), 'nim-proxy-task9-visual-'));
+  const resolved = path.resolve(artifactDir);
+  const allowedPrefix = path.join(os.tmpdir(), 'nim-proxy-task9-visual-');
+  if (!resolved.startsWith(allowedPrefix)) {
+    throw new Error('visual artifacts must stay in /tmp/nim-proxy-task9-visual-*');
+  }
+  fs.mkdirSync(resolved, { recursive: true });
+  if (fs.readdirSync(resolved).length) {
+    throw new Error(`visual artifact directory must be empty: ${resolved}`);
+  }
+  return resolved;
+}
+
+async function runVisualMatrix({ browser, configuredProxy, tmpdir, artifactDir }) {
+  void browser;
+  void configuredProxy;
+  void tmpdir;
+  void artifactDir;
+  return [];
+}
+
 const SEMANTIC_CHECKER = `
   function semanticProblems(doc, expectedData) {
     const problems = [];
@@ -4738,6 +4762,25 @@ async function main() {
   const { targetId } = await browser.send('Target.createTarget', { url: 'about:blank' });
   const { sessionId } = await browser.send('Target.attachToTarget', { targetId, flatten: true });
   const S = sessionId;
+
+  if (visualMatrix) {
+    await browser.send('Target.closeTarget', { targetId });
+    const artifactDir = prepareVisualArtifactDir();
+    const startedAt = Date.now();
+    const observations = await runVisualMatrix({
+      browser,
+      configuredProxy: proxy,
+      tmpdir,
+      artifactDir,
+    });
+    const problems = visualCoverageProblems(observations);
+    console.log(`[visual-matrix] artifact-dir=${artifactDir} observed=${observations.length} expected=${resolveVisualExpectations().items.length} elapsed-ms=${Date.now() - startedAt}`);
+    if (problems.length) {
+      for (const problem of problems) console.error(`[visual-matrix] ${problem}`);
+      throw reportedFailure();
+    }
+    return;
+  }
 
   const errors = [];
   const consoleErrors = [];
