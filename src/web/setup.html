@@ -8,6 +8,7 @@
 <link id="presentation-stylesheet" rel="stylesheet" href="/assets/public/public.css">
 </head>
 <body hidden>
+<main>
 <form class="card" id="wiz" autocomplete="off">
   <h1><span class="brand">NIM</span> PROXY <span data-i18n="setup.header.title">— First-time setup</span></h1>
   <p class="sub" data-i18n="setup.header.subtitle">Complete setup: create the superuser account and add at least one NIM API key.</p>
@@ -28,13 +29,13 @@
   <section id="step2" hidden>
     <ul class="keys" id="keylist"></ul>
     <div class="addrow">
-      <input class="key" id="newkey" type="password" placeholder="nvapi-…">
-      <input class="rpm" id="newrpm" type="number" value="40" min="1" max="10000" title="requests/min">
+      <input class="key" id="newkey" type="password" placeholder="nvapi-…" data-i18n-attr="aria-label:setup.step2.key_label">
+      <input class="rpm" id="newrpm" type="number" value="40" min="1" max="10000" title="requests/min" data-i18n-attr="aria-label:setup.step2.rpm_label">
       <button type="button" class="ghost" id="addkey" data-i18n="setup.step2.addkey">Validate &amp; add</button>
     </div>
     <details>
       <summary data-i18n="setup.step2.advanced">Advanced — upstream base URL</summary>
-      <input id="baseurl" placeholder="https://integrate.api.nvidia.com">
+      <input id="baseurl" placeholder="https://integrate.api.nvidia.com" data-i18n-attr="aria-label:setup.step2.base_url">
     </details>
     <div class="row">
       <button type="button" class="ghost" id="back1" data-i18n="setup.wizard.back">Back</button>
@@ -63,6 +64,7 @@
     <button type="button" class="primary" id="opendash" data-i18n="setup.step4.opendash">Open dashboard</button>
   </section>
 </form>
+</main>
 
 <script src="/assets/public/setup.js"></script>
 </body>

@@ -271,6 +271,7 @@ let LOCALE;
 const NF = (opts) => new Intl.NumberFormat(LOCALE, opts);
 const DTF = (opts) => new Intl.DateTimeFormat(LOCALE, opts);
 let NUM_COMPACT;
+let NUM_SCIENTIFIC;
 let NUM_GROUPED;
 let NUM_1DP;
 let NUM_2DP;
@@ -324,6 +325,7 @@ function initializeFormatters() {
     throw new Error('invalid catalog locale');
   }
   NUM_COMPACT = NF({ notation: 'compact', maximumFractionDigits: 1 });
+  NUM_SCIENTIFIC = NF({ notation: 'scientific', maximumSignificantDigits: 3 });
   NUM_GROUPED = NF({ maximumFractionDigits: 0 });
   NUM_1DP = NF({ maximumFractionDigits: 1 });
   NUM_2DP = NF({ maximumFractionDigits: 2 });
@@ -395,7 +397,10 @@ const axisLabel = (ms, spanMs) => (spanMs > 36e5 * 26 ? DAY_SHORT : TIME_HM).for
 const at = (fmtr, ms) => (Number.isFinite(ms) ? fmtr.format(ms) : NO_VALUE);
 
 const fmt = n => !isFinite(n) ? NO_VALUE
-  : Math.abs(n) >= 1e4 ? NUM_COMPACT.format(n)
+  : Math.abs(n) >= 1e4 ? (() => {
+    const compact = NUM_COMPACT.format(n);
+    return compact.length > 12 ? NUM_SCIENTIFIC.format(n) : compact;
+  })()
   : Math.abs(n) >= 100 ? NUM_GROUPED.format(n)
   : Math.abs(n) >= 10 ? NUM_1DP.format(n)
   : NUM_2DP.format(n);
@@ -920,9 +925,7 @@ function publisher(model) {
   return { name, slug: null, color: '#5A6150' };
 }
 function prettyName(model) {
-  const raw = model.includes('/') ? model.split('/').slice(1).join('/') : model;
-  return raw.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-    .replace(/\bAi\b/g, 'AI').replace(/\bIt\b/g, 'IT');
+  return model.includes('/') ? model.split('/').slice(1).join('/') : model;
 }
 const initialsOf = name => name.replace(/[^A-Za-z0-9 ]/g, ' ').trim().split(/\s+/)
   .map(w => w[0]).join('').slice(0, 2).toUpperCase() || '?';

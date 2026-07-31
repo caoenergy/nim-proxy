@@ -50,6 +50,10 @@ const INTERACTION_ROWS = [
     action: 'navigate to / and resolve bootstrap, config, catalog, and dashboard fixtures',
     visible: '#tab-overview is visible after catalog and dashboard fixtures resolve',
     dom: [{ selector: '#tab-overview', property: 'hidden', equals: false }],
+    visual: [{
+      case: 'dashboard-healthy', locales: ['en-US', 'en-XA'], roles: ['superuser'],
+      surfaces: ['dashboard-tabs', 'settings-panels'],
+    }],
   },
   {
     id: 'startup-setup-healthy',
@@ -58,6 +62,10 @@ const INTERACTION_ROWS = [
     action: 'navigate to /setup and resolve bootstrap and the public catalog',
     visible: '#step1 is visible after the public catalog resolves',
     dom: [{ selector: '#step1', property: 'hidden', equals: false }],
+    visual: [
+      { case: 'setup-step1', locales: ['en-US', 'en-XA'], roles: ['public'], surfaces: ['setup-step1'] },
+      { case: 'setup-client-validation-error', locales: ['en-US'], roles: ['public'], surfaces: ['setup-client-validation-error'] },
+    ],
   },
   {
     id: 'startup-login-healthy',
@@ -66,6 +74,7 @@ const INTERACTION_ROWS = [
     action: 'navigate to /login and resolve bootstrap and the public catalog',
     visible: 'the login form is visible after the public catalog resolves',
     dom: [{ selector: 'form.login-card', property: 'exists', equals: true }],
+    visual: [{ case: 'login-healthy', locales: ['en-US', 'en-XA'], roles: ['public'], surfaces: ['login-healthy'] }],
   },
   {
     id: 'login-invalid-credentials',
@@ -77,6 +86,7 @@ const INTERACTION_ROWS = [
       { selector: '#login-error', property: 'hidden', equals: false },
       { selector: '#login-error', property: 'textContent', equals: 'Incorrect username or password.' },
     ],
+    visual: [{ case: 'login-invalid-credentials', locales: ['en-US'], roles: ['public'], surfaces: ['login-invalid-credentials'] }],
   },
   {
     id: 'navigation-dashboard-tabs',
@@ -97,7 +107,7 @@ const INTERACTION_ROWS = [
     action: 'enter Settings and activate every role-authorized subnavigation button',
     visible: 'Settings subnavigation exposes only role-authorized panels',
     dom: [{
-      selector: '#setnav button[aria-selected="true"]',
+      selector: '#setnav button[aria-current="page"]',
       property: 'data-sub-sequence-by-role',
       equals: {
         admin: ['access', 'server', 'users', 'account'],
@@ -274,6 +284,18 @@ const INTERACTION_ROWS = [
     requests: [],
   },
   {
+    id: 'dialog-client-secret-escape-focus-return',
+    category: 'keyboard-focus',
+    state: 'modal-client-secret',
+    action: 'press Escape in the one-time client-secret dialog after Settings rerenders',
+    visible: 'Escape closes the native dialog and returns focus to the current Generate key control',
+    dom: [
+      { selector: '#modal', property: 'class-contains-show', equals: false },
+      { selector: 'document', property: 'activeElement', equals: '#ck-add' },
+    ],
+    requests: [],
+  },
+  {
     id: 'dialog-confirm-cancel-focus-return',
     category: 'keyboard-focus',
     state: 'modal-confirm',
@@ -325,7 +347,7 @@ const INTERACTION_ROWS = [
     state: 'mutation-success',
     action: 'activate the NIM key enabled switch',
     visible: 'the NIM key row shows disabled state',
-    dom: [{ selector: '[data-tog="0"]', property: 'aria-checked', equals: 'false' }],
+    dom: [{ selector: '[data-tog="0"]', property: 'aria-pressed', equals: 'false' }],
     request: {
       method: 'POST',
       path: '/api/settings/nim-keys',
@@ -427,7 +449,7 @@ const INTERACTION_ROWS = [
     state: 'mutation-success',
     action: 'activate the governor enabled switch',
     visible: 'the governor switch reflects the saved state',
-    dom: [{ selector: '#gov-tog', property: 'aria-checked', equals: 'false' }],
+    dom: [{ selector: '#gov-tog', property: 'aria-pressed', equals: 'false' }],
     request: {
       method: 'POST',
       path: '/api/settings/governor',
@@ -585,6 +607,7 @@ const INTERACTION_ROWS = [
       query: { from: '1700000000', points: '288', to: '1700003600' },
       body: null,
     },
+    visual: [{ case: 'dashboard-range-api-error', locales: ['en-US'], roles: ['superuser'], surfaces: ['dashboard-tabs'] }],
   },
   {
     id: 'error-dashboard-now',
@@ -611,6 +634,7 @@ const INTERACTION_ROWS = [
       path: '/api/config',
       body: null,
     },
+    visual: [{ case: 'settings-load-api-error', locales: ['en-US'], roles: ['superuser'], surfaces: ['settings-load-error'] }],
   },
   {
     id: 'error-settings-mutation',
@@ -677,6 +701,7 @@ const INTERACTION_ROWS = [
         key: 'nvapi-invalid-fixture',
       },
     },
+    visual: [{ case: 'setup-key-validation-api-error', locales: ['en-US'], roles: ['public'], surfaces: ['setup-key-validation-api-error'] }],
   },
   {
     id: 'setup-key-validation-success',
@@ -694,6 +719,10 @@ const INTERACTION_ROWS = [
         key: 'nvapi-ui-fixture',
       },
     },
+    visual: [
+      { case: 'setup-step2', locales: ['en-US', 'en-XA'], roles: ['public'], surfaces: ['setup-step2'] },
+      { case: 'setup-step3', locales: ['en-US', 'en-XA'], roles: ['public'], surfaces: ['setup-step3'] },
+    ],
   },
   {
     id: 'error-setup-submit',
@@ -716,6 +745,7 @@ const INTERACTION_ROWS = [
         username: 'fixture-user',
       },
     },
+    visual: [{ case: 'setup-submit-api-error', locales: ['en-US'], roles: ['public'], surfaces: ['setup-submit-api-error'] }],
   },
   {
     id: 'setup-submit-success',
@@ -739,6 +769,7 @@ const INTERACTION_ROWS = [
         username: 'fixture-user',
       },
     },
+    visual: [{ case: 'setup-step4', locales: ['en-US', 'en-XA'], roles: ['public'], surfaces: ['setup-step4'] }],
   },
   {
     id: 'state-empty',
@@ -763,6 +794,7 @@ const INTERACTION_ROWS = [
     action: 'fulfill dashboard requests from the partial/incomplete Rust-owned fixture',
     visible: 'partial data is distinguishable from complete data',
     dom: [{ selector: '#rangeinfo', property: 'effective-bound-summary', equals: true }],
+    visual: [{ case: 'dashboard-partial-incomplete', locales: ['en-US'], roles: ['superuser'], surfaces: ['dashboard-tabs'] }],
   },
   {
     id: 'state-extreme-numeric',
@@ -771,6 +803,7 @@ const INTERACTION_ROWS = [
     action: 'fulfill dashboard requests from the extreme-numeric Rust-owned fixture',
     visible: 'extreme numeric values render without a page error',
     dom: [{ selector: '#tab-overview', property: 'finite-layout', equals: true }],
+    visual: [{ case: 'dashboard-extreme-numeric', locales: ['en-US'], roles: ['superuser'], surfaces: ['dashboard-tabs'] }],
   },
   {
     id: 'state-settings-exact-large-values',
@@ -782,6 +815,7 @@ const INTERACTION_ROWS = [
       { selector: '#pool-note', property: 'textContent', equals: 'Pool: 12,345 enabled · Total: 67,890 rpm' },
       { selector: '[data-ksfp="f17e0001"]', property: 'textContent', equals: '12,345 / 67,890 in window' },
     ],
+    visual: [{ case: 'settings-exact-large-values', locales: ['en-US'], roles: ['superuser'], surfaces: ['settings-access'] }],
   },
   {
     id: 'state-long-machine-values',
@@ -790,8 +824,310 @@ const INTERACTION_ROWS = [
     action: 'fulfill dashboard/config requests from long-machine-value Rust-owned fixtures',
     visible: 'long model, client, publisher, and user values remain byte-identical',
     dom: [{ selector: '#tab-models,#tab-clients,#setbody', property: 'machine-value-byte-match', equals: true }],
+    visual: [{
+      case: 'long-machine-values', locales: ['en-US'], roles: ['superuser'],
+      surfaces: ['dashboard-tabs', 'settings-access', 'settings-users'],
+    }],
   },
 ];
+
+const VISUAL_VIEWPORTS = ['390x844', '768x1024', '900x1000', '1440x1000'];
+const DASHBOARD_VISUAL_SURFACES = [
+  { id: 'dashboard-overview', root: '#tab-overview', reach: 'dashboard:overview', layoutRoot: '.main', layoutBoundary: '.main' },
+  { id: 'dashboard-models', root: '#tab-models', reach: 'dashboard:models', layoutRoot: '.main', layoutBoundary: '.main' },
+  { id: 'dashboard-clients', root: '#tab-clients', reach: 'dashboard:clients', layoutRoot: '.main', layoutBoundary: '.main' },
+  { id: 'dashboard-reliability', root: '#tab-reliability', reach: 'dashboard:reliability', layoutRoot: '.main', layoutBoundary: '.main' },
+  { id: 'dashboard-capacity', root: '#tab-capacity', reach: 'dashboard:capacity', layoutRoot: '.main', layoutBoundary: '.main' },
+];
+const SETTINGS_VISUAL_SURFACES = [
+  { id: 'settings-access', root: '#nk-key', reach: 'settings:access', layoutRoot: '.main', layoutBoundary: '.main' },
+  { id: 'settings-server', root: '#sv-base', reach: 'settings:server', layoutRoot: '.main', layoutBoundary: '.main' },
+  { id: 'settings-users', root: '#u-add', reach: 'settings:users', layoutRoot: '.main', layoutBoundary: '.main' },
+  { id: 'settings-account', root: '#a-cur', reach: 'settings:account', layoutRoot: '.main', layoutBoundary: '.main' },
+];
+const VISUAL_SURFACE_FAMILIES = {
+  'dashboard-tabs': DASHBOARD_VISUAL_SURFACES,
+  'settings-panels': SETTINGS_VISUAL_SURFACES,
+};
+const VISUAL_SURFACES = new Map([
+  ...DASHBOARD_VISUAL_SURFACES,
+  ...SETTINGS_VISUAL_SURFACES,
+  { id: 'settings-load-error', root: '#setbody .empty', reach: 'settings:load-error', layoutRoot: '.main', layoutBoundary: '.main' },
+  { id: 'setup-step1', root: '#step1', reach: 'setup:step1', layoutRoot: '#step1', layoutBoundary: 'main' },
+  { id: 'setup-step2', root: '#step2', reach: 'setup:step2', layoutRoot: '#step2', layoutBoundary: 'main' },
+  { id: 'setup-step3', root: '#step3', reach: 'setup:review-after-successful-key', layoutRoot: '#step3', layoutBoundary: 'main' },
+  { id: 'setup-step4', root: '#step4', reach: 'setup:completion', layoutRoot: '#step4', layoutBoundary: 'main' },
+  { id: 'setup-client-validation-error', root: '#err', reach: 'setup:client-validation-error', layoutRoot: '#step1', layoutBoundary: 'main' },
+  { id: 'setup-key-validation-api-error', root: '#err', reach: 'setup:key-validation-api-error', layoutRoot: '#step2', layoutBoundary: 'main' },
+  { id: 'setup-submit-api-error', root: '#err', reach: 'setup:submit-api-error', layoutRoot: '#step3', layoutBoundary: 'main' },
+  { id: 'login-healthy', root: 'form.login-card', reach: 'login:healthy', layoutRoot: 'main', layoutBoundary: 'main' },
+  { id: 'login-invalid-credentials', root: '#login-error', reach: 'login:invalid-credentials', layoutRoot: 'main', layoutBoundary: 'main' },
+].map(surface => [surface.id, surface]));
+
+function visualIdentity(item) {
+  return [item.rowId, item.caseId, item.surfaceId, item.locale, item.role, item.viewport].join(':');
+}
+
+function visualArtifactPath(item) {
+  return [item.rowId, item.caseId, item.surfaceId, item.locale, item.role, item.viewport].join('__') + '.png';
+}
+
+function resolveVisualExpectations(rows = INTERACTION_ROWS) {
+  const items = [], problems = [];
+  for (const row of rows) {
+    for (const declaration of row.visual || []) {
+      if (!declaration.case || !Array.isArray(declaration.locales) || !Array.isArray(declaration.roles)
+          || !Array.isArray(declaration.surfaces)) {
+        problems.push(`visual-coverage:${row.id}:invalid-declaration`);
+        continue;
+      }
+      const surfaces = declaration.surfaces.flatMap(name => {
+        if (VISUAL_SURFACE_FAMILIES[name]) return VISUAL_SURFACE_FAMILIES[name];
+        const surface = VISUAL_SURFACES.get(name);
+        if (surface) return [surface];
+        problems.push(`visual-coverage:${row.id}:${declaration.case}:unknown-surface:${name}`);
+        return [];
+      });
+      for (const surface of surfaces) {
+        for (const locale of declaration.locales) {
+          for (const role of declaration.roles) {
+            for (const viewport of VISUAL_VIEWPORTS) {
+              const item = {
+                rowId: row.id,
+                caseId: declaration.case,
+                surfaceId: surface.id,
+                locale,
+                role,
+                viewport,
+                root: surface.root,
+                reach: declaration.reach || surface.reach,
+                layoutRoot: surface.layoutRoot,
+                layoutBoundary: surface.layoutBoundary,
+              };
+              item.identity = visualIdentity(item);
+              item.path = visualArtifactPath(item);
+              items.push(item);
+            }
+          }
+        }
+      }
+    }
+  }
+  return { items, problems };
+}
+
+function completeVisualCapture(item) {
+  const [width, height] = item.viewport.split('x').map(Number);
+  const contentHeight = Math.max(height, 1200);
+  return {
+    kind: 'document-vertical-v1',
+    requestedViewport: { width, height },
+    cssLayoutViewport: { pageX: 0, pageY: 0, clientWidth: width, clientHeight: height },
+    cssContentSize: { x: 0, y: 0, width, height: contentHeight },
+    clip: { x: 0, y: 0, width, height: contentHeight, scale: 1 },
+    captureBeyondViewport: true,
+    png: { width, height: contentHeight },
+    internalVerticalScrollers: [],
+  };
+}
+
+function visualCaptureProblems(item, capture) {
+  const prefix = `visual-coverage:${item.identity}:`;
+  const [width, height] = item.viewport.split('x').map(Number);
+  if (!capture || capture.kind !== 'document-vertical-v1'
+      || !capture.requestedViewport || !capture.cssLayoutViewport || !capture.cssContentSize
+      || !capture.clip || !capture.png || !Array.isArray(capture.internalVerticalScrollers)) {
+    return [`${prefix}capture-metadata-missing`];
+  }
+  const viewport = capture.requestedViewport;
+  const layoutViewport = capture.cssLayoutViewport;
+  if (viewport.width !== width || viewport.height !== height
+      || layoutViewport.pageX !== 0 || layoutViewport.pageY !== 0
+      || layoutViewport.clientWidth !== width || layoutViewport.clientHeight !== height) {
+    return [`${prefix}capture-viewport-mismatch`];
+  }
+  const content = capture.cssContentSize;
+  const expectedHeight = Math.max(height, Math.ceil(content.height));
+  if (capture.captureBeyondViewport !== true || capture.clip.height < expectedHeight) {
+    return [`${prefix}capture-not-full-document`];
+  }
+  const clip = capture.clip;
+  if (content.x !== 0 || content.y !== 0 || !Number.isFinite(content.width) || !Number.isFinite(content.height)
+      || clip.x !== 0 || clip.y !== 0 || clip.width !== width || clip.height !== expectedHeight || clip.scale !== 1) {
+    return [`${prefix}capture-clip-mismatch`];
+  }
+  if (capture.png.width !== clip.width || capture.png.height !== clip.height) {
+    return [`${prefix}png-dimensions-mismatch`];
+  }
+  return capture.internalVerticalScrollers.flatMap(scroller => {
+    if (scroller?.intentionalTable === true && scroller.directChild === 'table'
+        && typeof scroller.selector === 'string' && scroller.selector.includes('.scroll')) return [];
+    return [`${prefix}internal-vertical-scroller:${canonicalJson(scroller)}`];
+  });
+}
+
+function completeVisualObservations(rows = INTERACTION_ROWS) {
+  return resolveVisualExpectations(rows).items.map(item => ({
+    ...item,
+    artifactWritten: true,
+    reached: true,
+    rootVisible: true,
+    renderedLocale: item.locale,
+    capture: completeVisualCapture(item),
+    layoutProblems: [],
+    pageErrors: [],
+    consoleErrors: [],
+    promiseRejections: [],
+  }));
+}
+
+function visualCoverageProblems(observations, rows = INTERACTION_ROWS) {
+  const { items: expected, problems } = resolveVisualExpectations(rows);
+  const duplicateProblems = (items, field, label) => {
+    const seen = new Set();
+    for (const item of items) {
+      if (seen.has(item[field])) problems.push(`visual-coverage:${item.identity}:${label}:${item[field]}`);
+      seen.add(item[field]);
+    }
+  };
+  duplicateProblems(expected, 'identity', 'duplicate-identity');
+  duplicateProblems(expected, 'path', 'duplicate-path');
+  duplicateProblems(observations, 'identity', 'duplicate-identity');
+  duplicateProblems(observations, 'path', 'duplicate-path');
+
+  const observationDetails = (observed, item, field, label) => {
+    const details = Array.isArray(observed[field]) ? observed[field] : [{ missing: field }];
+    for (const detail of details) {
+      problems.push(`visual-coverage:${item.identity}:${label}:${canonicalJson(detail)}`);
+    }
+  };
+  const actual = new Map(observations.map(item => [item.identity, item]));
+  const expectedIds = new Set(expected.map(item => item.identity));
+  for (const item of observations) {
+    if (!expectedIds.has(item.identity)) problems.push(`visual-coverage:${item.identity}:unexpected`);
+  }
+  for (const item of expected) {
+    const observed = actual.get(item.identity);
+    if (!observed) {
+      problems.push(`visual-coverage:${item.identity}:missing`);
+      continue;
+    }
+    if (observed.path !== item.path) problems.push(`visual-coverage:${item.identity}:path-mismatch`);
+    if (observed.artifactWritten !== true) problems.push(`visual-coverage:${item.identity}:artifact-missing`);
+    if (observed.root !== item.root || observed.reach !== item.reach) {
+      problems.push(`visual-coverage:${item.identity}:root-mismatch`);
+    } else if (!observed.reached || !observed.rootVisible) {
+      problems.push(`visual-coverage:${item.identity}:root-unreached`);
+    }
+    if (!observed.renderedLocale) {
+      problems.push(`visual-coverage:${item.identity}:locale-provenance-missing`);
+    } else if (observed.renderedLocale !== item.locale) {
+      problems.push(`visual-coverage:${item.identity}:locale-provenance-mismatch:${item.locale}:${observed.renderedLocale}`);
+    }
+    problems.push(...visualCaptureProblems(item, observed.capture));
+    observationDetails(observed, item, 'layoutProblems', 'layout');
+    observationDetails(observed, item, 'pageErrors', 'page-error');
+    observationDetails(observed, item, 'consoleErrors', 'console-error');
+    observationDetails(observed, item, 'promiseRejections', 'promise-rejection');
+  }
+  return problems;
+}
+
+function visualCoverageSelftest() {
+  const failures = [];
+  const complete = completeVisualObservations();
+  if (visualCoverageProblems(complete).length) failures.push('visual complete observation set did not pass');
+  if (complete.filter(item => item.surfaceId.startsWith('dashboard-') || item.surfaceId.startsWith('settings-'))
+    .some(item => item.layoutRoot !== '.main')) {
+    failures.push('operator visual layout root is not .main');
+  }
+  const target = complete.find(item => item.identity
+    === 'state-long-machine-values:long-machine-values:settings-users:en-US:superuser:390x844');
+  if (!target) {
+    failures.push('long-machine Settings Users visual case is missing');
+    return failures;
+  }
+  const expectOnly = (name, observations, expected) => {
+    const problems = visualCoverageProblems(observations);
+    if (problems.length !== 1 || problems[0] !== expected) failures.push(`${name} did not fire ${expected}`);
+  };
+  expectOnly('long-machine Settings Users missing mutation',
+    complete.filter(item => item.identity !== target.identity),
+    `visual-coverage:${target.identity}:missing`);
+  expectOnly('hidden visual root mutation',
+    complete.map(item => item.identity === target.identity ? { ...item, rootVisible: false } : item),
+    `visual-coverage:${target.identity}:root-unreached`);
+  const expectProblem = (name, observations, expected) => {
+    if (!visualCoverageProblems(observations).includes(expected)) {
+      failures.push(`${name} did not fire ${expected}`);
+    }
+  };
+  expectProblem('artifact missing mutation',
+    complete.map(item => item.identity === target.identity ? { ...item, artifactWritten: false } : item),
+    `visual-coverage:${target.identity}:artifact-missing`);
+  expectOnly('viewport-only capture mutation',
+    complete.map(item => item.identity === target.identity ? {
+      ...item,
+      capture: {
+        ...item.capture,
+        captureBeyondViewport: false,
+        clip: { ...item.capture.clip, height: 844 },
+        png: { ...item.capture.png, height: 844 },
+      },
+    } : item),
+    `visual-coverage:${target.identity}:capture-not-full-document`);
+  expectOnly('PNG dimension mutation',
+    complete.map(item => item.identity === target.identity ? {
+      ...item,
+      capture: { ...item.capture, png: { ...item.capture.png, height: 1199 } },
+    } : item),
+    `visual-coverage:${target.identity}:png-dimensions-mismatch`);
+  const localeTarget = complete.find(item => item.identity
+    === 'startup-dashboard-healthy:dashboard-healthy:dashboard-overview:en-XA:superuser:390x844');
+  if (!localeTarget) {
+    failures.push('en-XA dashboard visual case is missing');
+  } else {
+    expectOnly('en-XA locale provenance mutation',
+      complete.map(item => item.identity === localeTarget.identity
+        ? { ...item, renderedLocale: 'en-US' }
+        : item),
+      `visual-coverage:${localeTarget.identity}:locale-provenance-mismatch:en-XA:en-US`);
+  }
+  const unexpectedScroller = {
+    selector: '#unexpected-scroll-pane',
+    geometry: { left: 0, top: 0, width: 120, height: 120, scrollHeight: 240, clientHeight: 120 },
+    intentionalTable: false,
+    directChild: 'div',
+  };
+  expectOnly('unexpected vertical scroller mutation',
+    complete.map(item => item.identity === target.identity ? {
+      ...item,
+      capture: { ...item.capture, internalVerticalScrollers: [unexpectedScroller] },
+    } : item),
+    `visual-coverage:${target.identity}:internal-vertical-scroller:${canonicalJson(unexpectedScroller)}`);
+  expectProblem('layout problem mutation',
+    complete.map(item => item.identity === target.identity ? { ...item, layoutProblems: ['layout fixture'] } : item),
+    `visual-coverage:${target.identity}:layout:${canonicalJson('layout fixture')}`);
+  expectProblem('page error mutation',
+    complete.map(item => item.identity === target.identity ? { ...item, pageErrors: ['page fixture'] } : item),
+    `visual-coverage:${target.identity}:page-error:${canonicalJson('page fixture')}`);
+  expectProblem('console error mutation',
+    complete.map(item => item.identity === target.identity ? { ...item, consoleErrors: ['console fixture'] } : item),
+    `visual-coverage:${target.identity}:console-error:${canonicalJson('console fixture')}`);
+  expectProblem('promise rejection mutation',
+    complete.map(item => item.identity === target.identity ? { ...item, promiseRejections: ['promise fixture'] } : item),
+    `visual-coverage:${target.identity}:promise-rejection:${canonicalJson('promise fixture')}`);
+  const collisionTarget = complete.find(item => item.identity !== target.identity);
+  const collision = complete.map(item => item.identity === collisionTarget.identity
+    ? { ...item, path: target.path }
+    : item);
+  const collisionProblems = visualCoverageProblems(collision);
+  const expectedCollision = `visual-coverage:${target.identity}:duplicate-path:${target.path}`;
+  if (!collisionProblems.includes(expectedCollision)) {
+    failures.push(`duplicate visual artifact path mutation did not fire ${expectedCollision}`);
+  }
+  return failures;
+}
 
 const domContract = (check, expression, expected, collect) => ({
   check,
@@ -831,7 +1167,7 @@ const DOM_CONTRACTS = {
   'navigation-settings-role-panels': [
     domContract('authorized-subnavigation-activates-visible-panel-by-role',
       `(() => {
-        const selected = document.querySelector('#setnav [aria-selected="true"]')?.dataset.sub ?? null;
+        const selected = document.querySelector('#setnav [aria-current="page"]')?.dataset.sub ?? null;
         const marker = {
           access: '#nk-key',
           account: '#a-cur',
@@ -923,12 +1259,19 @@ const DOM_CONTRACTS = {
     domContract('following-label', `document.querySelector('#liveText')?.textContent.trim() ?? null`, 'Live'),
   ],
   'dialog-client-secret-open': [
-    domContract('dialog-open', `document.querySelector('#modal')?.classList.contains('show') ?? false`, true),
+    domContract('dialog-open', `document.querySelector('#modal')?.open ?? false`, true),
     domContract('done-control-present', `!!document.querySelector('#modal-done')`, true),
+    domContract('dialog-focus-contained', `document.activeElement?.matches('#modal-copy') ?? false`, true),
     domContract('secret-byte-exact', `document.querySelector('#modal-body .secretbox')?.textContent ?? null`, 'npk_fixture_secret'),
   ],
   'dialog-client-secret-close': [
-    domContract('dialog-closed', `document.querySelector('#modal')?.classList.contains('show') ?? null`, false),
+    domContract('dialog-closed', `document.querySelector('#modal')?.open ?? null`, false),
+    domContract('dialog-focus-returned', `document.activeElement?.matches('#ck-add') ?? false`, true),
+  ],
+  'dialog-client-secret-escape-focus-return': [
+    domContract('dialog-closed', `document.querySelector('#modal')?.open ?? null`, false),
+    domContract('current-add-control-retained', `!!document.querySelector('#ck-add')`, true),
+    domContract('dialog-focus-returned', `document.activeElement?.matches('#ck-add') ?? false`, true),
   ],
   'dialog-confirm-cancel-focus-return': [
     domContract('destructive-control-retained', `!!document.querySelector('[data-kdel="0"]')`, true),
@@ -941,7 +1284,7 @@ const DOM_CONTRACTS = {
     domContract('rpm-value', `document.querySelector('[data-rpm="0"]')?.value ?? null`, '41'),
   ],
   'mutation-nim-key-toggle': [
-    domContract('disabled-switch', `document.querySelector('[data-tog="0"]')?.getAttribute('aria-checked') ?? null`, 'false'),
+    domContract('disabled-switch', `document.querySelector('[data-tog="0"]')?.getAttribute('aria-pressed') ?? null`, 'false'),
   ],
   'mutation-nim-key-delete': [
     domContract('removed-key-absent', `!document.querySelector('[data-ksfp="f17e0001"]')`, true),
@@ -964,7 +1307,7 @@ const DOM_CONTRACTS = {
         document.querySelector('#sv-timeout')?.value ?? null,
         document.querySelector('#sv-ttl')?.value ?? null,
         document.querySelector('#sv-inflight')?.value ?? null,
-        document.querySelector('#sv-strict')?.getAttribute('aria-checked') ?? null,
+        document.querySelector('#sv-strict')?.getAttribute('aria-pressed') ?? null,
       ]`,
       ['https://fixture.invalid/v1', '900', '10', '300', '300', '600', '512', 'false']),
     domContract('limits-saved', `document.querySelector('#limits-err')?.textContent.trim() ?? null`, 'Saved.'),
@@ -980,7 +1323,7 @@ const DOM_CONTRACTS = {
     domContract('history-saved', `document.querySelector('#history-err')?.textContent.trim() ?? null`, 'Saved.'),
   ],
   'mutation-governor-toggle': [
-    domContract('governor-disabled', `document.querySelector('#gov-tog')?.getAttribute('aria-checked') ?? null`, 'false'),
+    domContract('governor-disabled', `document.querySelector('#gov-tog')?.getAttribute('aria-pressed') ?? null`, 'false'),
   ],
   'mutation-governor-override-create': [
     domContract('override-present', `Array.from(document.querySelectorAll('.ochip')).some(node => node.textContent.includes('fixture/model'))`, true),
@@ -1402,6 +1745,10 @@ const FIXTURE_SCENARIOS = {
     response: 'clients-secret-present.json',
   }),
   'dialog-client-secret-close': dashboardRecipe({
+    config: 'scenarios.json#client-created-after',
+    requires: ['dialog-client-secret-open'],
+  }),
+  'dialog-client-secret-escape-focus-return': dashboardRecipe({
     config: 'scenarios.json#client-created-after',
     requires: ['dialog-client-secret-open'],
   }),
@@ -2099,12 +2446,14 @@ function interactionSelftest() {
       observation.run[field].push(`${field} fixture`);
     });
   }
+  const visualExpectationCount = resolveVisualExpectations().items.length;
+  failures.push(...visualCoverageSelftest());
 
   if (failures.length) {
     for (const failure of failures) console.error(`[interaction-selftest] ${failure}`);
     return 1;
   }
-  console.log(`interaction selftest ok — ${INTERACTION_ROWS.length} named rows; DOM, request, fixture-recipe/reference, locale, asset, and clean-run mutations observed`);
+  console.log(`interaction selftest ok — ${INTERACTION_ROWS.length} named rows, ${visualExpectationCount} visual applicability items; DOM, request, fixture-recipe/reference, locale, asset, and clean-run mutations observed`);
   return 0;
 }
 
@@ -2793,6 +3142,22 @@ const IS_SETUP = pageArg === 'setup';
 const IS_LOGIN = pageArg === 'login';
 const IS_DASHBOARD = pageArg === 'dashboard';
 const allStates = args.includes('--all-states');
+const visualMatrix = args.includes('--visual-matrix');
+const semanticSelftest = args.includes('--semantic-selftest');
+const layoutReport = args.includes('--layout-report');
+const layoutSelftest = args.includes('--layout-selftest');
+const layoutStateIndex = args.indexOf('--layout-state');
+const layoutState = layoutStateIndex >= 0 ? args[layoutStateIndex + 1] : 'healthy';
+const LAYOUT_RANGE_FIXTURES = {
+  healthy: 'dashboard-healthy.json',
+  long: 'dashboard-long.json',
+  extreme: 'dashboard-extreme.json',
+  incomplete: 'dashboard-partial.json',
+  error: 'api-error.json',
+};
+if (layoutReport && IS_DASHBOARD && !LAYOUT_RANGE_FIXTURES[layoutState]) {
+  throw new Error(`unknown --layout-state ${JSON.stringify(layoutState)}`);
+}
 const PAGE_REL = path.join('src', 'web', `${pageArg}.html`);
 const localeArg = (() => {
   const i = args.indexOf('--locale');
@@ -2938,8 +3303,9 @@ async function evaluateRaw(browser, sessionId, expression) {
 /* ---------- production server and captured API responses ------------------ */
 
 function loadFixtures() {
+  const dashboardFixture = LAYOUT_RANGE_FIXTURES[layoutState] || 'dashboard-healthy.json';
   const need = IS_DASHBOARD
-    ? ['config-superuser.json', 'dashboard-healthy.json', 'dashboard-now-initial.json']
+    ? ['config-superuser.json', dashboardFixture, 'dashboard-now-initial.json']
     : IS_SETUP
       ? ['setup-minted-client-key.json', 'validate-success.json']
       : [];
@@ -3720,7 +4086,10 @@ const SETTINGS_PRESTATE_PANEL = new Map([
   ['error-nim-key-validation', 'access'],
 ]);
 
-async function runMatrixContext({ browser, row, role, configuredProxy, setupProxy }) {
+async function runMatrixContext({
+  browser, row, role, configuredProxy, setupProxy, visualCapture = null,
+  visualLocale = null, skipDomAssertions = false,
+}) {
   const origin = row.fixtures.page === 'setup' ? setupProxy.origin : configuredProxy.origin;
   const pagePath = row.fixtures.page === 'dashboard'
     ? '/'
@@ -3744,7 +4113,14 @@ async function runMatrixContext({ browser, row, role, configuredProxy, setupProx
   const requests = [];
   const assets = new Set();
   const run = Object.fromEntries(CLEAN_RUN_FIELDS.map(field => [field, []]));
+  const visualCatalogPath = visualLocale
+    ? `/assets/${row.fixtures.page === 'dashboard' ? 'operator' : 'public'}/locales/${visualLocale}.json`
+    : null;
   const expectedPaths = new Set(expectedRequestSequence(row).map(request => request.path));
+  if (visualCatalogPath) {
+    expectedPaths.delete(`/assets/${row.fixtures.page === 'dashboard' ? 'operator' : 'public'}/locales/en-US.json`);
+    expectedPaths.add(visualCatalogPath);
+  }
   const requestUrls = new Map();
 
   const drain = async () => {
@@ -3824,7 +4200,14 @@ async function runMatrixContext({ browser, row, role, configuredProxy, setupProx
         && !heldBootstrapRelease) {
       await new Promise(resolve => { heldBootstrapRelease = resolve; });
     }
-    const value = routeFixture(normalized);
+    let value = routeFixture(normalized);
+    if (visualLocale && pathname === '/api/locale-bootstrap') {
+      value.installed_locales = [visualLocale];
+      value.server_default = visualLocale;
+    } else if (visualLocale && pathname === visualCatalogPath) {
+      value = loadTestLocaleCatalog(visualLocale);
+      if (row.fixtures.page !== 'dashboard') value = publicCatalogProjection(value);
+    }
     if (row.id === 'error-settings-fallback'
         && normalized.method === 'POST'
         && pathname === '/api/settings/history') {
@@ -4016,6 +4399,16 @@ async function runMatrixContext({ browser, row, role, configuredProxy, setupProx
         throw new Error(`${actionRow.id}: ${error.message}`);
       }
     }
+    if (actionRow.id === 'dialog-client-secret-escape-focus-return') {
+      const key = {
+        key: 'Escape',
+        code: 'Escape',
+        windowsVirtualKeyCode: 27,
+        nativeVirtualKeyCode: 27,
+      };
+      await browser.send('Input.dispatchKeyEvent', { type: 'keyDown', ...key }, sessionId);
+      await browser.send('Input.dispatchKeyEvent', { type: 'keyUp', ...key }, sessionId);
+    }
     await drain();
     const unused = activePlan.unconsumed();
     if (unused.length) {
@@ -4122,7 +4515,7 @@ async function runMatrixContext({ browser, row, role, configuredProxy, setupProx
     }
 
     const dom = [];
-    for (const assertion of row.dom) {
+    for (const assertion of skipDomAssertions ? [] : row.dom) {
       if (assertion.collect?.kind === 'sequence') {
         const result = [];
         for (const selector of assertion.collect.steps) {
@@ -4173,6 +4566,20 @@ async function runMatrixContext({ browser, row, role, configuredProxy, setupProx
           result: await evaluateRaw(browser, sessionId, assertion.expression),
         });
       }
+    }
+    if (visualCapture) {
+      await visualCapture({
+        browser,
+        sessionId,
+        row,
+        role,
+        plan,
+        run,
+        requests,
+        assets,
+        evaluate,
+        drain,
+      });
     }
     run.pageErrors.push(...await evaluateRaw(
       browser,
@@ -4286,6 +4693,524 @@ async function runInteractionMatrix({ browser, configuredProxy, tmpdir }) {
   return observations;
 }
 
+function prepareVisualArtifactDir() {
+  const artifactDir = process.env.NIMPROXY_LAYOUT_ARTIFACT_DIR
+    || fs.mkdtempSync(path.join(os.tmpdir(), 'nim-proxy-task9-visual-'));
+  const resolved = path.resolve(artifactDir);
+  const allowedPrefix = path.join(os.tmpdir(), 'nim-proxy-task9-visual-');
+  if (!resolved.startsWith(allowedPrefix)) {
+    throw new Error('visual artifacts must stay in /tmp/nim-proxy-task9-visual-*');
+  }
+  fs.mkdirSync(resolved, { recursive: true });
+  if (fs.readdirSync(resolved).length) {
+    throw new Error(`visual artifact directory must be empty: ${resolved}`);
+  }
+  return resolved;
+}
+
+function visualRootVisibleExpression(selector) {
+  return `(() => {
+    const node = document.querySelector(${JSON.stringify(selector)});
+    if (!node || node.closest('[hidden]')) return false;
+    const style = getComputedStyle(node);
+    const rect = node.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden'
+      && rect.width > 0 && rect.height > 0;
+  })()`;
+}
+
+function pngDimensions(bytes) {
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  if (bytes.length < 24 || !bytes.subarray(0, 8).equals(signature)
+      || bytes.readUInt32BE(8) !== 13 || bytes.toString('ascii', 12, 16) !== 'IHDR') {
+    throw new Error('visual artifact was not a PNG with an IHDR header');
+  }
+  const width = bytes.readUInt32BE(16);
+  const height = bytes.readUInt32BE(20);
+  if (!width || !height) throw new Error('visual artifact PNG had zero dimensions');
+  return { width, height };
+}
+
+async function visibleInternalVerticalScrollers(context) {
+  return evaluateRaw(context.browser, context.sessionId, `(() => {
+    const visible = node => {
+      if (node.closest('[hidden]')) return false;
+      const style = getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+    };
+    const selector = node => {
+      if (node.id) return '#' + node.id;
+      if (node.classList.contains('scroll') && node.parentElement?.id) return '#' + node.parentElement.id + ' > .scroll';
+      return node.tagName.toLowerCase() + (node.classList.length ? '.' + node.classList[0] : '');
+    };
+    return [...document.querySelectorAll('*')].flatMap(node => {
+      const style = getComputedStyle(node);
+      if (!visible(node) || !/(auto|scroll|overlay)/.test(style.overflowY)
+          || node.scrollHeight <= node.clientHeight + 1) return [];
+      const rect = node.getBoundingClientRect();
+      const directChild = node.firstElementChild?.tagName.toLowerCase() || null;
+      return [{
+        selector: selector(node),
+        geometry: {
+          left: rect.left, top: rect.top, width: rect.width, height: rect.height,
+          scrollHeight: node.scrollHeight, clientHeight: node.clientHeight,
+        },
+        intentionalTable: node.classList.contains('scroll') && node.children.length === 1 && directChild === 'table',
+        directChild,
+      }];
+    });
+  })()`);
+}
+
+async function reachVisualSurface(item, context) {
+  const waitFor = (expression, label) => waitForMatrixCondition(
+    context.browser,
+    context.sessionId,
+    expression,
+    `${item.identity}: ${label}`,
+  );
+  if (item.reach.startsWith('dashboard:')) {
+    const tab = item.reach.slice('dashboard:'.length);
+    await context.evaluate(`document.querySelector('#side [data-tab=${JSON.stringify(tab)}]').click()`);
+    await context.drain();
+    await waitFor(`(() => {
+      const button = document.querySelector('#side [data-tab=${JSON.stringify(tab)}]');
+      const visible = Array.from(document.querySelectorAll('main > section:not([hidden])'));
+      return button?.getAttribute('aria-current') === 'page'
+        && visible.length === 1 && visible[0]?.id === ${JSON.stringify(`tab-${tab}`)};
+    })()`, 'dashboard surface');
+    return;
+  }
+  if (item.reach === 'settings:load-error') {
+    await waitFor(`document.querySelector('#tab-settings')?.hidden === false && ${visualRootVisibleExpression(item.root)}`, 'Settings error surface');
+    return;
+  }
+  if (item.reach.startsWith('settings:')) {
+    const panel = item.reach.slice('settings:'.length);
+    if (await evaluateRaw(context.browser, context.sessionId, `document.querySelector('#tab-settings')?.hidden !== false`)) {
+      await context.evaluate(`document.querySelector('#side [data-tab="settings"]').click()`);
+      await context.drain();
+    }
+    await waitFor(`!!document.querySelector('#setnav button')`, 'Settings navigation');
+    await context.evaluate(`document.querySelector('#setnav [data-sub=${JSON.stringify(panel)}]').click()`);
+    await context.drain();
+    await waitFor(`document.querySelector('#setnav [data-sub=${JSON.stringify(panel)}]')?.getAttribute('aria-current') === 'page' && ${visualRootVisibleExpression(item.root)}`, 'Settings panel');
+    return;
+  }
+  if (item.reach === 'setup:review-after-successful-key') {
+    await context.evaluate(`document.querySelector('#to3').click()`);
+    await context.drain();
+    await waitFor(`${visualRootVisibleExpression(item.root)} && document.querySelector('#review')?.childElementCount > 0`, 'setup review');
+    return;
+  }
+  if (item.reach === 'setup:client-validation-error') {
+    await context.evaluate(`
+      document.querySelector('#username').value='fixture-user';
+      document.querySelector('#password').value='short';
+      document.querySelector('#confirm').value='different';
+      document.querySelector('#to2').click();
+    `);
+    await context.drain();
+    await waitFor(`${visualRootVisibleExpression(item.root)} && document.querySelector('#step1')?.hidden === false`, 'setup validation error');
+    return;
+  }
+  if ([
+    'setup:step1',
+    'setup:step2',
+    'setup:completion',
+    'setup:key-validation-api-error',
+    'setup:submit-api-error',
+    'login:healthy',
+    'login:invalid-credentials',
+  ].includes(item.reach)) {
+    await waitFor(visualRootVisibleExpression(item.root), 'preserved row surface');
+    return;
+  }
+  throw new Error(`unknown visual reach: ${item.reach}`);
+}
+
+async function captureCurrentVisualItems({ items, artifactDir, drafts }, context) {
+  const bySurface = new Map();
+  for (const item of items) {
+    const surfaceItems = bySurface.get(item.surfaceId) || [];
+    surfaceItems.push(item);
+    bySurface.set(item.surfaceId, surfaceItems);
+  }
+  for (const surfaceItems of bySurface.values()) {
+    await reachVisualSurface(surfaceItems[0], context);
+    for (const item of surfaceItems) {
+    const [width, height] = item.viewport.split('x').map(Number);
+    const captureErrors = [];
+    let artifactWritten = false;
+    let absolutePath = path.resolve(artifactDir, item.path);
+    let reached = false;
+    let rootVisible = false;
+    let renderedLocale = '';
+    let layoutProblemsForItem = [];
+    let layoutMeasurements = null;
+    let capture = null;
+    try {
+      if (path.relative(artifactDir, absolutePath).startsWith('..')) {
+        throw new Error(`visual artifact path escapes its directory: ${item.path}`);
+      }
+      await context.browser.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: 1,
+        mobile: false,
+      }, context.sessionId);
+      await context.evaluate(`
+        document.scrollingElement.scrollTop = 0;
+        window.scrollTo(0, 0);
+        document.querySelector('.main')?.scrollTo(0, 0);
+        for (let node = document.querySelector(${JSON.stringify(item.layoutRoot)})?.parentElement; node; node = node.parentElement) {
+          if (node.scrollHeight > node.clientHeight) node.scrollTop = 0;
+        }
+      `);
+      await sleep(75);
+      const state = await evaluateRaw(context.browser, context.sessionId, `(() => {
+        const visible = node => {
+          if (!node || node.closest('[hidden]')) return false;
+          const style = getComputedStyle(node);
+          const rect = node.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden'
+            && rect.width > 0 && rect.height > 0;
+        };
+        const root = document.querySelector(${JSON.stringify(item.root)});
+        const owner = document.querySelector(${JSON.stringify(item.layoutRoot)});
+        return {
+          rootVisible: visible(root),
+          ownerVisible: visible(owner),
+          renderedLocale: document.documentElement.lang,
+        };
+      })()`);
+      rootVisible = state.rootVisible;
+      renderedLocale = state.renderedLocale;
+      reached = state.rootVisible && state.ownerVisible;
+      if (!reached) continue;
+      const geometry = await evaluateRaw(context.browser, context.sessionId, `(() => {
+        ${LAYOUT_CHECKER}
+        const root = document.querySelector(${JSON.stringify(item.layoutRoot)});
+        const boundary = document.querySelector(${JSON.stringify(item.layoutBoundary)});
+        const measure = node => node ? {
+          scrollWidth: node.scrollWidth,
+          scrollHeight: node.scrollHeight,
+          clientWidth: node.clientWidth,
+          clientHeight: node.clientHeight,
+        } : null;
+        return {
+          problems: [
+            ...layoutProblems(${JSON.stringify(item.layoutRoot)}, ${JSON.stringify(item.layoutBoundary)}, ${JSON.stringify(item.identity)}),
+            ...primaryAddRowProblems(${JSON.stringify(item.layoutRoot)}, ${JSON.stringify(item.identity)}, ${width}),
+          ],
+          root: measure(root),
+          boundary: measure(boundary),
+        };
+      })()`);
+      layoutProblemsForItem = geometry.problems;
+      layoutMeasurements = { root: geometry.root, boundary: geometry.boundary };
+      if (fs.existsSync(absolutePath)) {
+        captureErrors.push(`artifact path already exists: ${item.path}`);
+      } else {
+        await context.evaluate(`
+          document.scrollingElement.scrollTo(0, 0);
+          window.scrollTo(0, 0);
+          document.querySelector('.main')?.scrollTo(0, 0);
+        `);
+        await sleep(75);
+        const metrics = await context.browser.send('Page.getLayoutMetrics', {}, context.sessionId);
+        const viewport = metrics.cssLayoutViewport;
+        const content = metrics.cssContentSize;
+        const clip = {
+          x: 0,
+          y: 0,
+          width: viewport.clientWidth,
+          height: Math.max(height, Math.ceil(content.height)),
+          scale: 1,
+        };
+        const internalVerticalScrollers = await visibleInternalVerticalScrollers(context);
+        const screenshot = await context.browser.send(
+          'Page.captureScreenshot',
+          { format: 'png', fromSurface: true, captureBeyondViewport: true, clip },
+          context.sessionId,
+        );
+        const bytes = Buffer.from(screenshot.data, 'base64');
+        if (!bytes.length) {
+          captureErrors.push(`artifact was empty: ${item.path}`);
+        } else {
+          const png = pngDimensions(bytes);
+          capture = {
+            kind: 'document-vertical-v1',
+            requestedViewport: { width, height },
+            cssLayoutViewport: {
+              pageX: viewport.pageX,
+              pageY: viewport.pageY,
+              clientWidth: viewport.clientWidth,
+              clientHeight: viewport.clientHeight,
+            },
+            cssContentSize: { x: content.x, y: content.y, width: content.width, height: content.height },
+            clip,
+            captureBeyondViewport: true,
+            png,
+            internalVerticalScrollers,
+          };
+          fs.writeFileSync(absolutePath, bytes, { flag: 'wx' });
+          artifactWritten = fs.statSync(absolutePath).size > 0;
+          if (!artifactWritten) captureErrors.push(`artifact was empty after write: ${item.path}`);
+        }
+      }
+    } catch (error) {
+      captureErrors.push(error.message);
+    } finally {
+      try {
+        await context.browser.send('Emulation.clearDeviceMetricsOverride', {}, context.sessionId);
+      } catch (error) {
+        captureErrors.push(error.message);
+      }
+    }
+    if (!reached) continue;
+    drafts.push({
+      ...item,
+      absolutePath,
+      artifactWritten,
+      reached,
+      rootVisible,
+      renderedLocale,
+      capture,
+      layoutProblems: layoutProblemsForItem,
+      layoutMeasurements,
+      captureErrors,
+      run: context.run,
+      fixturesConsumed: context.plan.consumed,
+      requests: context.requests,
+      assets: context.assets,
+    });
+    }
+  }
+}
+
+function visualObservationFromDraft(draft) {
+  return {
+    ...draft,
+    fixturesConsumed: [...draft.fixturesConsumed],
+    requests: [...draft.requests],
+    requestedAssets: [...draft.assets],
+    pageErrors: [...draft.run.pageErrors, ...draft.captureErrors],
+    consoleErrors: [...draft.run.consoleErrors],
+    promiseRejections: [...draft.run.promiseRejections],
+    failedAssets: [...draft.run.failedAssets],
+    unexpectedRequests: [...draft.run.unexpectedRequests],
+    unconsumedFixtures: [...draft.run.unconsumedFixtures],
+    run: undefined,
+    captureErrors: undefined,
+    assets: undefined,
+  };
+}
+
+function visualIntegrityProblems(observations) {
+  const problems = [];
+  for (const observation of observations) {
+    for (const field of ['failedAssets', 'unexpectedRequests', 'unconsumedFixtures']) {
+      for (const detail of observation[field] || []) {
+        problems.push(`visual-integrity:${observation.identity}:${field}:${canonicalJson(detail)}`);
+      }
+    }
+  }
+  return problems;
+}
+
+async function runVisualMatrix({ browser, configuredProxy, tmpdir, artifactDir }) {
+  const startedAt = Date.now();
+  const expected = resolveVisualExpectations().items;
+  const drafts = [];
+  const setupDir = path.join(tmpdir, 'matrix-setup');
+  fs.mkdirSync(setupDir);
+  const setupProxy = await startProxy(setupDir, true);
+  let matrixError = null;
+  try {
+    for (const row of INTERACTION_ROWS) {
+      for (const declaration of row.visual || []) {
+        for (const role of declaration.roles) {
+          for (const locale of declaration.locales) {
+            const items = expected.filter(item => item.rowId === row.id
+              && item.caseId === declaration.case
+              && item.locale === locale
+              && item.role === role);
+            if (!items.length) continue;
+            await runMatrixContext({
+              browser,
+              row,
+              role,
+              configuredProxy,
+              setupProxy,
+              visualLocale: locale === 'en-US' ? null : locale,
+              skipDomAssertions: locale !== 'en-US',
+              visualCapture: async context => {
+                await captureCurrentVisualItems({ items, artifactDir, drafts }, context);
+              },
+            });
+          }
+        }
+      }
+    }
+  } catch (error) {
+    matrixError = error;
+  } finally {
+    if (!await stopChild(setupProxy.proc) && !matrixError) {
+      matrixError = new Error('visual setup proxy did not exit');
+    }
+  }
+  const observations = drafts.map(visualObservationFromDraft);
+  const coverageProblems = visualCoverageProblems(observations);
+  const integrityProblems = visualIntegrityProblems(observations);
+  const report = path.join(artifactDir, 'visual-matrix.json');
+  fs.writeFileSync(report, JSON.stringify({
+    expectedCount: expected.length,
+    observedCount: observations.length,
+    observations,
+    coverageProblems,
+    integrityProblems,
+    elapsedMs: Date.now() - startedAt,
+  }, null, 2) + '\n');
+  if (matrixError) throw matrixError;
+  return { observations, coverageProblems, integrityProblems, report };
+}
+
+const SEMANTIC_CHECKER = `
+  function semanticProblems(doc, expectedData) {
+    const problems = [];
+    const controlDescription = control => {
+      if (control.id) return '#' + control.id;
+      for (const attribute of ['data-rpm', 'data-urole']) {
+        if (control.hasAttribute(attribute))
+          return control.tagName.toLowerCase() + '[' + attribute + '=' + JSON.stringify(control.getAttribute(attribute)) + ']';
+      }
+      return control.tagName.toLowerCase();
+    };
+    const hasAccessibleName = control => {
+      if ((control.getAttribute('aria-label') || '').trim()) return true;
+      const labelledBy = (control.getAttribute('aria-labelledby') || '').trim().split(/\\s+/).filter(Boolean);
+      if (labelledBy.some(id => (doc.getElementById(id)?.textContent || '').trim())) return true;
+      return Array.from(control.labels || []).some(label => label.textContent.trim());
+    };
+    const visibleControl = control => control.type !== 'hidden'
+      && !control.closest('[hidden]')
+      && getComputedStyle(control).display !== 'none'
+      && getComputedStyle(control).visibility !== 'hidden';
+    if (doc.querySelectorAll('main').length !== 1) problems.push('invalid-landmark');
+    if (doc.querySelectorAll('h1').length !== 1) problems.push('invalid-landmark');
+    for (const control of doc.querySelectorAll('input,select,textarea')) {
+      if (visibleControl(control) && !hasAccessibleName(control))
+        problems.push('missing-accessible-name:' + controlDescription(control));
+    }
+    if (doc.querySelector('#modal') && doc.querySelector('#modal').tagName !== 'DIALOG') problems.push('invalid-landmark');
+    if (doc.querySelector('[role="tablist"],[role="tab"],[role="switch"]')) problems.push('non-button-action');
+    for (const action of doc.querySelectorAll('[data-tab],[data-range],[data-sub],[data-copy],[data-tog],[data-kdel],[data-ckdel],[data-govdel],[data-semantic-action]')) {
+      if (action.tagName !== 'BUTTON') problems.push('non-button-action');
+      const name = (action.getAttribute('aria-label') || action.getAttribute('title') || action.textContent || '').trim();
+      if (!name) problems.push('missing-accessible-name');
+    }
+    for (const dialog of doc.querySelectorAll('dialog[open]')) {
+      if (!dialog.contains(doc.activeElement)) problems.push('focus-escape');
+    }
+    for (const data of doc.querySelectorAll('[data-semantic-data]')) {
+      if (data.textContent !== data.getAttribute('data-semantic-data')) problems.push('data-mutation');
+    }
+    for (const expected of expectedData || []) {
+      if (![...doc.querySelectorAll(expected.selector)].some(node => node.textContent === expected.text))
+        problems.push('data-mutation');
+    }
+    return [...new Set(problems)];
+  }
+`;
+
+const LAYOUT_CHECKER = `
+  function layoutProblems(rootSelector, boundarySelector, context) {
+    const root = document.querySelector(rootSelector);
+    const boundary = boundarySelector === '@viewport' ? null : document.querySelector(boundarySelector);
+    if (!root || (!boundary && boundarySelector !== '@viewport')) return ['layout-unreachable:' + context + ':' + rootSelector + ':' + boundarySelector];
+    const visible = node => {
+      const style = getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      return !node.closest('[hidden]')
+        && style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+    };
+    const describe = node => {
+      if (node.id) return '#' + node.id;
+      for (const attribute of ['data-rpm', 'data-tog', 'data-kdel', 'data-ckdel']) {
+        if (node.hasAttribute(attribute)) return node.tagName.toLowerCase() + '[' + attribute + '=' + JSON.stringify(node.getAttribute(attribute)) + ']';
+      }
+      return node.tagName.toLowerCase() + (node.classList.length ? '.' + node.classList[0] : '');
+    };
+    const boundaryRect = boundary ? boundary.getBoundingClientRect() : {
+      left: 0, top: 0, right: innerWidth, bottom: innerHeight,
+    };
+    const problems = [];
+    const seen = new Set();
+    const candidates = [
+      ...root.querySelectorAll('input,select,textarea,button'),
+      ...root.querySelectorAll('*'),
+    ].filter(node => {
+      if (!visible(node)) return false;
+      if (/^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(node.tagName)) return true;
+      return node.children.length === 0 && node.textContent.trim();
+    });
+    for (const node of candidates) {
+      if (seen.has(node)) continue;
+      seen.add(node);
+      const rect = node.getBoundingClientRect();
+      const outside = rect.left < boundaryRect.left - 1 || rect.right > boundaryRect.right + 1
+        || rect.top < boundaryRect.top - 1 || rect.bottom > boundaryRect.bottom + 1;
+      const intrinsic = !/^(INPUT|SELECT|TEXTAREA)$/.test(node.tagName)
+        && getComputedStyle(node).textOverflow !== 'ellipsis'
+        && node.clientWidth > 0 && node.scrollWidth > node.clientWidth + 1;
+      let maskedBy = '';
+      let horizontallyReachable = false;
+      for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+        const style = getComputedStyle(parent);
+        const parentRect = parent.getBoundingClientRect();
+        if (/(auto|scroll)/.test(style.overflowX) && parent.scrollWidth > parent.clientWidth + 1) {
+          horizontallyReachable = true;
+          break;
+        }
+        if (/(hidden|clip)/.test(style.overflowX)
+            && (rect.left < parentRect.left - 1 || rect.right > parentRect.right + 1)) {
+          maskedBy = describe(parent);
+          break;
+        }
+        if (parent === boundary) break;
+      }
+      if (intrinsic || (!horizontallyReachable && outside && (maskedBy || boundarySelector === '@viewport'))) {
+        problems.push('layout-clipped:' + context + ':' + describe(node)
+          + ':' + (intrinsic ? 'intrinsic' : maskedBy ? 'masked-by-' + maskedBy : 'outside-viewport'));
+      }
+    }
+    return problems;
+  }
+
+  function primaryAddRowProblems(rootSelector, context, viewportWidth = innerWidth) {
+    const root = document.querySelector(rootSelector);
+    if (!root) return ['layout-unreachable:' + context + ':' + rootSelector];
+    if (viewportWidth > 500) return [];
+    return [...root.querySelectorAll('.addrow > input:not([type="number"])')]
+      .filter(node => {
+        const style = getComputedStyle(node);
+        const rect = node.getBoundingClientRect();
+        return !node.closest('[hidden]')
+          && style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+      })
+      .flatMap(node => {
+        const row = node.parentElement.getBoundingClientRect();
+        const field = node.getBoundingClientRect();
+        if (field.left <= row.left + 1 && field.right >= row.right - 1) return [];
+        const label = node.id ? '#' + node.id : node.tagName.toLowerCase();
+        return ['layout-unusable:' + context + ':' + label + ':primary-not-own-row:'
+          + Math.round(field.width) + '/' + Math.round(row.width)];
+      });
+  }
+`;
+
 async function main() {
   const chrome = findChrome();
   if (!chrome) {
@@ -4341,6 +5266,25 @@ async function main() {
   const { targetId } = await browser.send('Target.createTarget', { url: 'about:blank' });
   const { sessionId } = await browser.send('Target.attachToTarget', { targetId, flatten: true });
   const S = sessionId;
+
+  if (visualMatrix) {
+    await browser.send('Target.closeTarget', { targetId });
+    const artifactDir = prepareVisualArtifactDir();
+    const startedAt = Date.now();
+    const matrix = await runVisualMatrix({
+      browser,
+      configuredProxy: proxy,
+      tmpdir,
+      artifactDir,
+    });
+    console.log(`[visual-matrix] artifact-dir=${artifactDir} report=${matrix.report} observed=${matrix.observations.length} expected=${resolveVisualExpectations().items.length} elapsed-ms=${Date.now() - startedAt}`);
+    if (matrix.coverageProblems.length || matrix.integrityProblems.length) {
+      const first = matrix.coverageProblems[0] || matrix.integrityProblems[0];
+      console.error(`[visual-matrix] ${first}`);
+      throw reportedFailure();
+    }
+    return;
+  }
 
   const errors = [];
   const consoleErrors = [];
@@ -4481,7 +5425,7 @@ async function main() {
     else if (url.pathname === '/api/dashboard/now')
       body = fixtures['dashboard-now-initial.json'];
     else if (url.pathname === '/api/dashboard')
-      body = fixtures['dashboard-healthy.json'];
+      body = fixtures[LAYOUT_RANGE_FIXTURES[layoutState] || 'dashboard-healthy.json'];
     else if (url.pathname === '/setup/validate-key' && request.method === 'POST')
       body = fixtures['validate-success.json'];
     else if (url.pathname === '/setup' && request.method === 'POST')
@@ -4966,6 +5910,12 @@ async function main() {
     return r.result.value;
   };
 
+  if (layoutReport) {
+    await browser.send('Emulation.setDeviceMetricsOverride', {
+      width: 390, height: 844, deviceScaleFactor: 1, mobile: false,
+    }, S);
+  }
+
   if (IS_LOGIN) {
     const selectedLoginMessages = localeArg
       ? publicCatalogProjection(loadTestLocaleCatalog(localeArg)).messages
@@ -4992,16 +5942,44 @@ async function main() {
     }
     const operatorRequests = [...requestedPresentation]
       .filter(pathname => pathname.startsWith('/assets/operator/'));
+    const semanticProblems = semanticSelftest
+      ? await evaluate(`(() => { ${SEMANTIC_CHECKER}; return semanticProblems(document, []); })()`)
+      : [];
+    const loginArtifacts = [];
+    if (layoutReport) {
+      const artifactDir = process.env.NIMPROXY_LAYOUT_ARTIFACT_DIR
+        || fs.mkdtempSync(path.join(os.tmpdir(), 'nim-proxy-task9-layout-'));
+      if (!path.resolve(artifactDir).startsWith(path.join(os.tmpdir(), 'nim-proxy-task9-')))
+        throw new Error('layout artifacts must stay in /tmp/nim-proxy-task9-*');
+      fs.mkdirSync(artifactDir, { recursive: true });
+      for (const [width, height] of [[390, 844], [768, 1024], [900, 1000], [1440, 1000]]) {
+        await browser.send('Emulation.setDeviceMetricsOverride', {
+          width, height, deviceScaleFactor: 1, mobile: false,
+        }, S);
+        await sleep(150);
+        const screenshot = await browser.send('Page.captureScreenshot', { format: 'png' }, S);
+        const locale = localeArg ? `-${localeArg}` : '';
+        const artifact = path.join(artifactDir, `login-healthy${locale}-${width}x${height}.png`);
+        fs.writeFileSync(artifact, Buffer.from(screenshot.data, 'base64'));
+        loginArtifacts.push({ viewport: `${width}x${height}`, artifact });
+      }
+      await browser.send('Emulation.clearDeviceMetricsOverride', {}, S);
+    }
     await cleanupRun();
-    if (loginFailure || operatorRequests.length || errors.length || consoleErrors.length) {
+    if (loginFailure || operatorRequests.length || semanticProblems.length || errors.length || consoleErrors.length) {
       console.error('FAIL — login render violated its public catalog boundary');
       if (loginFailure) console.error(`  ${loginFailure}`);
+      if (semanticProblems.length) console.error(`  semantic: ${semanticProblems.join(', ')}`);
       for (const pathname of operatorRequests) {
         console.error(`  requested operator asset ${pathname}`);
       }
       for (const error of errors) console.error(`  ${error.text}`);
       for (const error of consoleErrors) console.error(`  console: ${error}`);
       throw reportedFailure();
+    }
+    if (semanticSelftest) console.log('semantic served-page check ok — login landmark and labeled native form');
+    for (const artifact of loginArtifacts) {
+      console.log(`[layout-report] state=login-healthy viewport=${artifact.viewport} path=${artifact.artifact}`);
     }
     console.log('rendered anonymous login from the public catalog');
     console.log('render ok — no uncaught page errors');
@@ -5261,6 +6239,39 @@ async function main() {
   const untranslatedByTab = new Map();
   const dataDerived = new Set();
   const hovered = [];
+  const semanticSurfaceProblems = [];
+  const layoutSurfaceProblems = [];
+  const layoutSurfaceEvidence = [];
+  const captureSemanticSurface = async context => {
+    if (!semanticSelftest) return;
+    semanticSurfaceProblems.push(...await evaluate(`(() => {
+      ${SEMANTIC_CHECKER}
+      return semanticProblems(document, []).map(problem => ${JSON.stringify('surface:')} + ${JSON.stringify(context)} + ':' + problem);
+    })()`));
+  };
+  const captureLayoutSurface = async (context, rootSelector, boundarySelector = '.main') => {
+    if (!layoutReport) return;
+    const result = await evaluate(`(() => {
+      ${LAYOUT_CHECKER}
+      const root = document.querySelector(${JSON.stringify(rootSelector)});
+      const boundary = ${JSON.stringify(boundarySelector)} === '@viewport'
+        ? document.documentElement : document.querySelector(${JSON.stringify(boundarySelector)});
+      return {
+        problems: [
+          ...layoutProblems(${JSON.stringify(rootSelector)}, ${JSON.stringify(boundarySelector)}, ${JSON.stringify(context)}),
+          ...primaryAddRowProblems(${JSON.stringify(rootSelector)}, ${JSON.stringify(context)}),
+        ],
+        visible: root ? Array.from(root.querySelectorAll('*')).filter(node => {
+          const style = getComputedStyle(node), rect = node.getBoundingClientRect();
+          return !node.closest('[hidden]') && style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+        }).length : 0,
+        root: root ? { scrollWidth: root.scrollWidth, clientWidth: root.clientWidth } : null,
+        boundary: boundary ? { scrollWidth: boundary.scrollWidth, clientWidth: boundary.clientWidth } : null,
+      };
+    })()`);
+    layoutSurfaceProblems.push(...result.problems);
+    layoutSurfaceEvidence.push({ context, rootSelector, boundarySelector, ...result });
+  };
   for (const tab of TABS) {
     // Tabs switch on click. `location.hash` is assigned BY that handler, and
     // the hash-to-click bridge runs once at load, so setting the hash after
@@ -5283,6 +6294,11 @@ async function main() {
       throw reportedFailure();
     }
     await sleep(1200);
+    await captureSemanticSurface(IS_SETUP ? `setup-${tab}` : `dashboard-${tab}`);
+    if (IS_SETUP) {
+      const surface = tab === 'errors' ? 'step1' : tab === 'step1' ? 'step2' : tab;
+      await captureLayoutSurface(`setup-${surface}`, '#wiz', '@viewport');
+    }
 
     // Real pointer input, at the real coordinates of each rendered chart.
     const rects = await evaluate(`
@@ -5339,11 +6355,202 @@ async function main() {
     }
   }
 
+  if (layoutReport && IS_DASHBOARD) {
+    await evaluate(`document.querySelector('#side nav button[data-tab="settings"]')?.click()`);
+    await sleep(200);
+    await captureLayoutSurface('settings-access', '#setbody');
+  }
+
+  if (semanticSelftest && IS_DASHBOARD) {
+    const customRangeVisible = await evaluate(`(() => {
+      document.querySelector('#ranges [data-range="custom"]')?.click();
+      return document.querySelector('#custom')?.classList.contains('show') ?? false;
+    })()`);
+    if (!customRangeVisible) semanticSurfaceProblems.push('surface:dashboard-custom-range:unreachable');
+    else await captureSemanticSurface('dashboard-custom-range');
+
+    await evaluate(`document.querySelector('#side nav button[data-tab="settings"]')?.click()`);
+    await sleep(200);
+    const settingsPanels = await evaluate(`Array.from(document.querySelectorAll('#setnav button[data-sub]')).map(button => button.dataset.sub)`);
+    if (!settingsPanels.length) semanticSurfaceProblems.push('surface:settings:unreachable');
+    for (const panel of settingsPanels) {
+      const reached = await evaluate(`(() => {
+        const button = document.querySelector('#setnav button[data-sub=${JSON.stringify(panel)}]');
+        button?.click();
+        return !!button && document.querySelector('#setnav button[data-sub=${JSON.stringify(panel)}]')?.getAttribute('aria-current') === 'page';
+      })()`);
+      if (!reached) semanticSurfaceProblems.push('surface:settings-' + panel + ':unreachable');
+      else {
+        await sleep(100);
+        await captureSemanticSurface('settings-' + panel);
+      }
+    }
+  }
+
+  // Task 9's browser checks deliberately inspect the served DOM rather than
+  // source spelling. The checker is also fed isolated DOM mutations below so
+  // its five failure ids cannot go green merely because this page happens to
+  // avoid them today.
+  if (semanticSelftest) {
+    const semanticSelftestFailures = await evaluate(`(() => {
+      ${SEMANTIC_CHECKER}
+      const base = () => {
+        const doc = document.implementation.createHTMLDocument('semantic-selftest');
+        doc.body.innerHTML = '<main><h1>Heading</h1></main><button data-semantic-action aria-label="Action"></button>';
+        return doc;
+      };
+      const cases = [];
+      { const doc = base(); doc.querySelector('button').removeAttribute('aria-label'); cases.push(['missing-accessible-name', semanticProblems(doc).some(problem => problem.startsWith('missing-accessible-name'))]); }
+      { const doc = base(); doc.body.insertAdjacentHTML('beforeend', '<input id="visible-control">'); cases.push(['visible-control-name', semanticProblems(doc).some(problem => problem === 'missing-accessible-name:#visible-control')]); }
+      { const doc = base(); doc.body.insertAdjacentHTML('beforeend', '<input id="hidden-control" hidden>'); cases.push(['hidden-control-excluded', !semanticProblems(doc).some(problem => problem === 'missing-accessible-name:#hidden-control')]); }
+      { const doc = base(); doc.querySelector('main').remove(); cases.push(['invalid-landmark', semanticProblems(doc).includes('invalid-landmark')]); }
+      { const doc = base(); const action = doc.querySelector('button'); const replacement = doc.createElement('div'); replacement.setAttribute('data-semantic-action', ''); replacement.setAttribute('aria-label', 'Action'); action.replaceWith(replacement); cases.push(['non-button-action', semanticProblems(doc).includes('non-button-action')]); }
+      { const doc = base(); const dialog = doc.createElement('dialog'); dialog.open = true; doc.body.append(dialog); cases.push(['focus-escape', semanticProblems(doc).includes('focus-escape')]); }
+      { const doc = base(); const data = doc.createElement('span'); data.setAttribute('data-semantic-data', 'alpha'); data.textContent = 'Alpha'; doc.body.append(data); cases.push(['data-mutation', semanticProblems(doc).includes('data-mutation')]); }
+      return cases.filter(([, observed]) => !observed).map(([name]) => name);
+    })()`);
+    if (semanticSelftestFailures.length) {
+      console.error('[semantic-selftest] checker missed: ' + semanticSelftestFailures.join(', '));
+      throw reportedFailure();
+    }
+    console.log('semantic selftest ok — missing-accessible-name, invalid-landmark, non-button-action, focus-escape, data-mutation observed');
+  }
+
+  if (layoutSelftest) {
+    const layoutSelftestFailures = await evaluate(`(() => {
+      ${LAYOUT_CHECKER}
+      const boundary = document.createElement('div');
+      boundary.id = 'layout-selftest-boundary';
+      boundary.style.cssText = 'position:fixed;left:0;top:0;width:120px;height:120px;overflow:hidden';
+      const clipped = document.createElement('span');
+      clipped.id = 'layout-selftest-clipped';
+      clipped.style.cssText = 'display:block;width:40px;height:10px';
+      clipped.textContent = 'clipped';
+      const input = document.createElement('input');
+      input.id = 'layout-selftest-input';
+      input.style.cssText = 'display:block;width:20px;box-sizing:border-box';
+      input.value = 'a deliberately long editable value';
+      const ellipsis = document.createElement('span');
+      ellipsis.id = 'layout-selftest-ellipsis';
+      ellipsis.style.cssText = 'display:block;width:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+      ellipsis.textContent = 'a deliberately long display value';
+      const scroll = document.createElement('div');
+      scroll.id = 'layout-selftest-scroll';
+      scroll.style.cssText = 'display:block;width:120px;overflow:auto';
+      const scrollable = document.createElement('span');
+      scrollable.id = 'layout-selftest-scrollable';
+      scrollable.style.cssText = 'display:block;width:240px;height:10px';
+      scrollable.textContent = 'reachable through horizontal scrolling';
+      scroll.append(scrollable);
+      const addrow = document.createElement('div');
+      addrow.className = 'addrow';
+      addrow.style.cssText = 'display:flex;width:100px';
+      const addInput = document.createElement('input');
+      addInput.id = 'layout-selftest-add-input';
+      addInput.style.cssText = 'width:20px;box-sizing:border-box';
+      addrow.append(addInput);
+      boundary.append(clipped);
+      boundary.append(input, ellipsis, scroll, addrow);
+      document.body.append(boundary);
+      const problems = layoutProblems('#layout-selftest-boundary', '#layout-selftest-boundary', 'layout-selftest');
+      const widePrimary = primaryAddRowProblems('#layout-selftest-boundary', 'layout-selftest-wide', 768);
+      const narrowPrimary = primaryAddRowProblems('#layout-selftest-boundary', 'layout-selftest-narrow', 390);
+      boundary.remove();
+      const failures = [];
+      if (!problems.some(problem => problem.startsWith('layout-clipped:layout-selftest:#layout-selftest-clipped')))
+        failures.push('clipped-element');
+      if (problems.some(problem => problem.includes('#layout-selftest-input:intrinsic')))
+        failures.push('input-intrinsic-exemption');
+      if (problems.some(problem => problem.includes('#layout-selftest-ellipsis:intrinsic')))
+        failures.push('ellipsis-intrinsic-exemption');
+      if (problems.some(problem => problem.includes('#layout-selftest-scrollable')))
+        failures.push('horizontal-scroll-reachability-exemption');
+      if (widePrimary.some(problem => problem.includes('#layout-selftest-add-input:primary-not-own-row')))
+        failures.push('wide-primary-row-exemption');
+      if (!narrowPrimary.some(problem => problem.includes('#layout-selftest-add-input:primary-not-own-row')))
+        failures.push('narrow-primary-row-preserved');
+      return failures;
+    })()`);
+    if (layoutSelftestFailures.length) {
+      console.error('[layout-selftest] checker missed: ' + layoutSelftestFailures.join(', '));
+      throw reportedFailure();
+    }
+    console.log('layout selftest ok — clipped element observed');
+  }
+
+  let task9SemanticProblems = [];
+  let task9LayoutProblems = [...layoutSurfaceProblems];
+  let task9LayoutMeasurements = [];
+  let task9Artifacts = [];
+  if (semanticSelftest) {
+    task9SemanticProblems = [
+      ...semanticSurfaceProblems,
+      ...await evaluate(`(() => { ${SEMANTIC_CHECKER}; return semanticProblems(document, ${IS_DASHBOARD ? "[{ selector: '#m-toolcalls .bname', text: 'alpha' }]" : '[]'}); })()`),
+    ];
+  }
+  if ((semanticSelftest || layoutReport) && IS_DASHBOARD) {
+    await evaluate(`document.querySelector('#side nav button[data-tab="models"]').click()`);
+    await sleep(200);
+    if (layoutReport && layoutState === 'extreme')
+      await captureLayoutSurface('dashboard-extreme-models', '#m-kpis');
+    task9LayoutProblems = [...layoutSurfaceProblems];
+    if (semanticSelftest || layoutState === 'healthy') {
+      for (const [width, height] of [[1440, 1000], [900, 1000]]) {
+        await browser.send('Emulation.setDeviceMetricsOverride', {
+          width, height, deviceScaleFactor: 1, mobile: false,
+        }, S);
+        await sleep(150);
+        const measurement = await evaluate(`(() => {
+          const value = document.querySelector('#m-toolcalls .bval');
+          if (!value) return { missing: true };
+          return { text: value.textContent, scrollWidth: value.scrollWidth, clientWidth: value.clientWidth, scrollHeight: value.scrollHeight, clientHeight: value.clientHeight };
+        })()`);
+        task9LayoutMeasurements.push({ width, height, ...measurement });
+      }
+    }
+    await browser.send('Emulation.clearDeviceMetricsOverride', {}, S);
+  }
+
+  if (layoutReport) {
+    const artifactDir = process.env.NIMPROXY_LAYOUT_ARTIFACT_DIR
+      || fs.mkdtempSync(path.join(os.tmpdir(), 'nim-proxy-task9-layout-'));
+    if (!path.resolve(artifactDir).startsWith(path.join(os.tmpdir(), 'nim-proxy-task9-')))
+      throw new Error('layout artifacts must stay in /tmp/nim-proxy-task9-*');
+    fs.mkdirSync(artifactDir, { recursive: true });
+    const captures = IS_DASHBOARD ? [['models', 'dashboard'], ['settings', 'settings']] : [[null, pageArg]];
+    for (const [tab, surface] of captures) {
+      if (tab) {
+        await evaluate(`document.querySelector('#side nav button[data-tab=${JSON.stringify(tab)}]').click()`);
+        await sleep(150);
+      }
+      for (const [width, height] of [[390, 844], [768, 1024], [900, 1000], [1440, 1000]]) {
+        await browser.send('Emulation.setDeviceMetricsOverride', {
+          width, height, deviceScaleFactor: 1, mobile: false,
+        }, S);
+        await sleep(150);
+        const screenshot = await browser.send('Page.captureScreenshot', { format: 'png' }, S);
+        const locale = localeArg ? `-${localeArg}` : '';
+        const filename = `${surface}-${layoutState}${locale}-${width}x${height}.png`;
+        const artifact = path.join(artifactDir, filename);
+        fs.writeFileSync(artifact, Buffer.from(screenshot.data, 'base64'));
+        const measurement = await evaluate(`(() => {
+          const value = document.querySelector('#m-toolcalls .bval');
+          return value ? { text: value.textContent, scrollWidth: value.scrollWidth, clientWidth: value.clientWidth, scrollHeight: value.scrollHeight, clientHeight: value.clientHeight } : { missing: true };
+        })()`);
+        task9Artifacts.push({ viewport: `${width}x${height}`, state: `${surface}-${layoutState}${locale}`, artifact, ...measurement });
+      }
+    }
+    await browser.send('Emulation.clearDeviceMetricsOverride', {}, S);
+    const report = path.join(artifactDir, 'layout-report.json');
+    fs.writeFileSync(report, JSON.stringify({ page: pageArg, measurements: task9Artifacts }, null, 2) + '\n');
+    task9Artifacts.push({ report });
+  }
+
   // The poll loop re-applies the last hover on every live re-render, which is
   // how a hover throw escalates from "no tooltip" to "the tab stops updating".
   await sleep(3500);
   if (process.env.DEBUG) console.log('DEBUG hovered:', JSON.stringify(hovered));
-  if (IS_DASHBOARD) {
+  if (IS_DASHBOARD && !layoutReport) {
     const expectedHovered = [
       'overview/o-kpis',
       'overview/o-kpis',
@@ -5554,6 +6761,45 @@ async function main() {
       console.error(`    .${d.el}  ${JSON.stringify(d.text)}`);
     }
     throw reportedFailure();
+  }
+
+  if (task9SemanticProblems.length) {
+    console.error('\nFAIL — semantic DOM checks disagreed: ' + task9SemanticProblems.join(', '));
+    throw reportedFailure();
+  }
+
+  if (task9LayoutProblems.length) {
+    console.error('\nFAIL — layout DOM checks disagreed: ' + task9LayoutProblems.join(', '));
+    throw reportedFailure();
+  }
+
+  if (layoutReport) {
+    for (const evidence of layoutSurfaceEvidence) {
+      console.log(`[layout-report] geometry=${evidence.context} visible=${evidence.visible} `
+        + `root=${evidence.root?.scrollWidth}x${evidence.root?.clientWidth} `
+        + `boundary=${evidence.boundary?.scrollWidth}x${evidence.boundary?.clientWidth}`);
+    }
+    for (const artifact of task9Artifacts) {
+      if (artifact.report) console.log(`[layout-report] report=${artifact.report}`);
+      else console.log(`[layout-report] state=${artifact.state} viewport=${artifact.viewport} path=${artifact.artifact} `
+        + `scroll=${artifact.scrollWidth}x${artifact.scrollHeight} client=${artifact.clientWidth}x${artifact.clientHeight}`);
+    }
+  }
+
+  if (task9LayoutMeasurements.length) {
+    const layoutProblems = task9LayoutMeasurements.filter(measurement =>
+      measurement.missing
+      || measurement.scrollWidth > measurement.clientWidth
+      || measurement.scrollHeight > measurement.clientHeight);
+    if (layoutProblems.length) {
+      console.error('\nFAIL — tool-call value does not fit without wrapping');
+      for (const measurement of layoutProblems) {
+        console.error(`  [layout-toolcall-${measurement.width}] ${measurement.text || 'missing'} `
+          + `scroll=${measurement.scrollWidth}x${measurement.scrollHeight} `
+          + `client=${measurement.clientWidth}x${measurement.clientHeight}`);
+      }
+      throw reportedFailure();
+    }
   }
 
   if (errors.length || consoleErrors.length) {

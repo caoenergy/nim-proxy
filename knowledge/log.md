@@ -6,6 +6,31 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-30] component — applicable full-document visual matrix
+
+Task 9 extends the served-browser gate with 224 explicitly applicable visual
+surfaces rather than an impossible page/state Cartesian product. It captures
+168 `en-US` and 56 generated `en-XA` full-document PNGs at 390, 768, 900, and
+1440 CSS-pixel widths and records locale provenance, layout boundaries, CDP
+capture geometry, parsed PNG dimensions, internal vertical scrollers, and
+clean runtime observations in one JSON report. Mechanical geometry remains
+separate from required human inspection. The final controller and unanchored
+independent passes inspected every top/middle/bottom contact sheet and found no
+actionable visual defect. See [Dashboard](architecture/dashboard.md), the
+[test strategy](testing/test-strategy.md), and the
+[Task 9 plan](../docs/plans/v0.6.6-foundation-implementation.md).
+
+## [2026-07-30] decision — stabilize native UI semantics and machine fidelity
+
+Task 9 replaced incomplete ARIA tab/switch emulation with native navigation
+buttons and pressed buttons, added a native one-time-secret dialog with focus
+containment and return, and gave public pages native main landmarks. The
+Models tool-call composite is non-wrapping, and model components now preserve
+the raw API bytes after the vendor split. The served-page semantic self-test
+has independent DOM mutations for accessible-name, landmark, action, focus,
+and data-fidelity failures. See [Dashboard](architecture/dashboard.md) and the
+[test strategy](testing/test-strategy.md).
+
 ## [2026-07-30] fix — align Rust asset proof with catalog ownership
 
 The history-settings asset e2e test now proves that Settings references its

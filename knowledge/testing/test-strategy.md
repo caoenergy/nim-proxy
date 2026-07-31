@@ -77,7 +77,7 @@ that proof.
   or `scenarios.json#scenario`, never a JavaScript wire body. Two explicitly
   named resilience rows apply an in-memory transform to a generated body: one
   removes an API error message and one raises Settings integers above 10,000.
-  `--all-states` runs 54 named rows against the served application: exact ordered requests,
+  `--all-states` runs 55 named rows against the served application: exact ordered requests,
   DOM observations, and clean page-error, console-error, promise-rejection,
   asset, unexpected-request, and fixture-consumption observations. Its loading
   row holds the real bootstrap response until the hidden-state assertion.
@@ -117,6 +117,20 @@ that proof.
 - **Layout:** use mechanical overflow probes where available plus explicit
   human review under rendered data and supported widths. Behavior passing does
   not prove fit.
+- **Task 9 semantics and responsive fidelity:** `node scripts/render_check.js
+  --semantic-selftest` drives the served Dashboard with Rust-owned fixtures,
+  proves the checker independently catches missing accessible name, invalid
+  landmark, non-button action, dialog-focus escape, and data mutation, then
+  checks native landmarks/actions and raw model-component text. Run it for
+  Setup and Login when changing public markup. `--visual-matrix` resolves 224
+  applicable page/state/viewport/locale items, rather than pretending every
+  Cartesian combination can exist, and captures one full-document PNG per
+  item. The current contract is 168 `en-US` and 56 generated `en-XA` artifacts
+  at 390×844, 768×1024, 900×1000, and 1440×1000. Its JSON report records locale
+  provenance, layout root/boundary, requested and actual viewport geometry,
+  CDP full-document capture geometry, parsed PNG dimensions, allowlisted
+  internal vertical scrollers, and clean runtime observations. This is
+  mechanical evidence for review, never a claim of human visual approval.
 - **Before push:** `cargo fmt --check`.
 
 CI runs the automated checks configured in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml);
@@ -263,7 +277,7 @@ Dashboard changes get two more checks.
 **Automated — `node scripts/render_check.js`.** Starts the real binary, loads
 its served page/assets, and fulfills the 21 Rust-generated typed JSON
 fixtures in `tests/fixtures/ui/` at the API boundary. `--all-states` walks the
-54 named request/DOM/clean-run interactions (including loading via a held
+55 named request/DOM/clean-run interactions (including loading via a held
 bootstrap response), every dashboard tab, and chart hovers; it is not a layout
 test or a claim that every application path is covered. Regenerate deliberately
 with `UPDATE_UI_FIXTURES=1 cargo test api::tests::ui_fixtures --lib`, then
@@ -308,5 +322,8 @@ catalog, never the retired English literal inside JavaScript.
 **Human — screenshots, still.** Real-browser screenshots under live traffic
 (the UI is dark-only since the operator-console redesign), inspected by eye —
 as superuser/admin/user, confirming each role sees the right Settings sections.
-Clipping is a layout property and no script judges it; the `.bval` wrap on the
-Models tab at 900px was found by eye and clips in English already.
+The visual matrix mechanically rejects named overflow, clipping, capture,
+runtime, and coverage failures, but it cannot judge hierarchy, density, or
+whether a valid wrap remains readable. Inspect the retained full-document
+artifacts across all four widths and both locale classes; record who inspected
+them and any originals opened from a contact-sheet pass.
