@@ -60,7 +60,7 @@ details input { margin-top:8px; }
   .steps { gap:8px; }
   .steps span { min-width:0; white-space:normal; }
   .steps span:not(:first-child) { flex:1 1 120px; }
-  .addrow input.key { min-width:0; }
+  .addrow input.key { flex:1 0 100%; min-width:0; }
 }
 
 .login-page {
