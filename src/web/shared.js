@@ -920,9 +920,7 @@ function publisher(model) {
   return { name, slug: null, color: '#5A6150' };
 }
 function prettyName(model) {
-  const raw = model.includes('/') ? model.split('/').slice(1).join('/') : model;
-  return raw.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-    .replace(/\bAi\b/g, 'AI').replace(/\bIt\b/g, 'IT');
+  return model.includes('/') ? model.split('/').slice(1).join('/') : model;
 }
 const initialsOf = name => name.replace(/[^A-Za-z0-9 ]/g, ' ').trim().split(/\s+/)
   .map(w => w[0]).join('').slice(0, 2).toUpperCase() || '?';

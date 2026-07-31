@@ -992,7 +992,10 @@ $('live').addEventListener('click', async () => {
 applyStatic(document);
 for (const b of document.querySelectorAll('#side nav button')) {
   b.addEventListener('click', () => {
-    for (const o of document.querySelectorAll('#side nav button')) o.setAttribute('aria-selected', o === b);
+    for (const o of document.querySelectorAll('#side nav button')) {
+      if (o === b) o.setAttribute('aria-current', 'page');
+      else o.removeAttribute('aria-current');
+    }
     for (const s of document.querySelectorAll('main > section')) s.hidden = s.id !== 'tab-' + b.dataset.tab;
     activeTab = b.dataset.tab;
     setMessageText($('pagetitle'), TITLES[activeTab]);

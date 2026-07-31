@@ -14,13 +14,13 @@
     <!-- nim-proxy-icon -->
     <span class="wordmark" aria-label="NIM Proxy" data-i18n-attr="aria-label:common.app_name"><b>NIM</b> <span data-i18n="dashboard.brand.proxy">Proxy</span></span>
   </div>
-  <nav role="tablist">
-    <button role="tab" data-tab="overview" aria-selected="true"><span class="nbar"></span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8.5L8 3l6 5.5M3.5 7.5V13h9V7.5"/></svg><span class="label" data-i18n="dashboard.nav.tab.overview">Overview</span></button>
-    <button role="tab" data-tab="models" aria-selected="false"><span class="nbar"></span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13V7M8 13V3M12 13V9"/></svg><span class="label" data-i18n="dashboard.nav.tab.models">Models</span></button>
-    <button role="tab" data-tab="clients" aria-selected="false"><span class="nbar"></span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5l-2.5 3L4 11M12 5l2.5 3L12 11M9.5 3l-3 10"/></svg><span class="label" data-i18n="dashboard.nav.tab.clients">Clients</span></button>
-    <button role="tab" data-tab="reliability" aria-selected="false"><span class="nbar"></span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.5l5 2v4c0 3.5-2.4 6-5 7-2.6-1-5-3.5-5-7v-4z"/></svg><span class="label" data-i18n="dashboard.nav.tab.reliability">Reliability</span></button>
-    <button role="tab" data-tab="capacity" aria-selected="false"><span class="nbar"></span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 11a6 6 0 0112 0M8 11l3-3.5"/></svg><span class="label" data-i18n="dashboard.nav.tab.capacity">Capacity</span></button>
-    <button role="tab" data-tab="settings" aria-selected="false"><span class="nbar"></span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.4"/><path d="M8 1.6v2.1M8 12.3v2.1M1.6 8h2.1M12.3 8h2.1M3.5 3.5L5 5M11 11l1.5 1.5M12.5 3.5L11 5M5 11l-1.5 1.5"/></svg><span class="label" data-i18n="dashboard.nav.tab.settings">Settings</span></button>
+  <nav>
+    <button data-tab="overview" aria-current="page"><span class="nbar"></span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8.5L8 3l6 5.5M3.5 7.5V13h9V7.5"/></svg><span class="label" data-i18n="dashboard.nav.tab.overview">Overview</span></button>
+    <button data-tab="models"><span class="nbar"></span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13V7M8 13V3M12 13V9"/></svg><span class="label" data-i18n="dashboard.nav.tab.models">Models</span></button>
+    <button data-tab="clients"><span class="nbar"></span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5l-2.5 3L4 11M12 5l2.5 3L12 11M9.5 3l-3 10"/></svg><span class="label" data-i18n="dashboard.nav.tab.clients">Clients</span></button>
+    <button data-tab="reliability"><span class="nbar"></span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.5l5 2v4c0 3.5-2.4 6-5 7-2.6-1-5-3.5-5-7v-4z"/></svg><span class="label" data-i18n="dashboard.nav.tab.reliability">Reliability</span></button>
+    <button data-tab="capacity"><span class="nbar"></span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 11a6 6 0 0112 0M8 11l3-3.5"/></svg><span class="label" data-i18n="dashboard.nav.tab.capacity">Capacity</span></button>
+    <button data-tab="settings"><span class="nbar"></span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.4"/><path d="M8 1.6v2.1M8 12.3v2.1M1.6 8h2.1M12.3 8h2.1M3.5 3.5L5 5M11 11l1.5 1.5M12.5 3.5L11 5M5 11l-1.5 1.5"/></svg><span class="label" data-i18n="dashboard.nav.tab.settings">Settings</span></button>
   </nav>
   <div class="foot">
     <button class="live" id="live" title="Click to freeze/resume the selected time range" data-i18n-attr="title:dashboard.nav.live.tooltip"><span class="dot"></span><span id="liveText" data-i18n="dashboard.nav.live.connecting">connecting</span></button>
@@ -31,7 +31,7 @@
 
 <div class="main">
   <div class="topbar">
-    <span id="pagetitle" data-i18n="dashboard.nav.tab.overview">Overview</span>
+    <h1 id="pagetitle" data-i18n="dashboard.nav.tab.overview">Overview</h1>
     <div class="tright">
       <span id="rangeinfo"></span>
       <div class="pills" id="ranges">
@@ -268,14 +268,14 @@
 
   <section id="tab-settings" hidden>
     <div class="setwrap">
-      <nav class="setnav" id="setnav" role="tablist"></nav>
+      <nav class="setnav" id="setnav"></nav>
       <div class="setbody" id="setbody"></div>
     </div>
   </section>
   </main>
 </div>
 <div id="tooltip"></div>
-<div id="modal"><div class="box"><h3 class="modal-heading" data-i18n="dashboard.modal.secret.heading">One-time secret</h3><div id="modal-body"></div></div></div>
+<dialog id="modal"><div class="box"><h3 class="modal-heading" data-i18n="dashboard.modal.secret.heading">One-time secret</h3><div id="modal-body"></div></div></dialog>
 
 <script src="/assets/operator/shared.js"></script>
 </body>

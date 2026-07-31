@@ -46,7 +46,7 @@ function renderSettings() {
     .filter(([id]) => id === 'access' || id === 'account' || (id === 'server' ? !!SET.server : !!SET.users));
   if (!subs.some(([id]) => id === setSub)) setSub = 'access';
   $('setnav').innerHTML = subs.map(([id, label]) =>
-    `<button role="tab" data-sub="${id}" aria-selected="${id === setSub}"><span class="nbar"></span>${SICONS[id]}<span data-i18n="${label}"></span></button>`).join('');
+    `<button data-sub="${id}"${id === setSub ? ' aria-current="page"' : ''}><span class="nbar"></span>${SICONS[id]}<span data-i18n="${label}"></span></button>`).join('');
   applyStatic($('setnav'));
   for (const b of $('setnav').querySelectorAll('button'))
     b.addEventListener('click', () => { setSub = b.dataset.sub; renderSettings(); });
@@ -81,8 +81,12 @@ function showSecret(name, secret) {
     </div>`;
   applyStatic($('modal-body'));
   $('modal-copy').addEventListener('click', () => copyText(secret, $('modal-copy')));
-  $('modal-done').addEventListener('click', () => $('modal').classList.remove('show'));
-  $('modal').classList.add('show');
+  $('modal-done').addEventListener('click', () => {
+    $('modal').close();
+    $('ck-add')?.focus();
+  });
+  $('modal').showModal();
+  $('modal-copy').focus();
 }
 
 function renderAccess() {
@@ -107,7 +111,7 @@ function renderAccess() {
       </div>
       <span class="${st.cls}" data-ksfp="${escapeHtml(k.fingerprint)}">${escapeHtml(catalogMessage(st.id, st.params))}</span>
       <span class="rpmwrap"><input class="sin num" type="number" min="1" max="10000" value="${+k.rpm}" data-rpm="${i}"><span class="unitl">rpm</span></span>
-      <button class="tog" role="switch" aria-checked="${!!k.enabled}" data-tog="${i}" data-i18n-attr="title:${k.enabled ? 'settings.key.toggle.disable' : 'settings.key.toggle.enable'}"></button>
+      <button class="tog" type="button" aria-pressed="${!!k.enabled}" data-tog="${i}" data-i18n-attr="title:${k.enabled ? 'settings.key.toggle.disable' : 'settings.key.toggle.enable'},aria-label:${k.enabled ? 'settings.key.toggle.disable' : 'settings.key.toggle.enable'}"></button>
       ${k.guarded
         ? `<span class="klock" data-i18n-attr="title:settings.key.guarded">${LOCK}</span>`
         : `<button class="dbtn icon" data-kdel="${i}" data-i18n-attr="title:settings.key.remove">${TRASH}</button>`}
@@ -265,7 +269,7 @@ function renderServer() {
         ${num('sv-inflight', 'settings.server.limit.max_inflight', L.max_inflight, '')}
       </div>
       <div data-style="display:flex;align-items:center;gap:10px;margin-top:16px">
-        <button class="tog" role="switch" id="sv-strict" aria-checked="${!!L.strict_passthrough}"></button>
+        <button class="tog" type="button" id="sv-strict" aria-pressed="${!!L.strict_passthrough}" data-i18n-attr="aria-label:settings.server.strict_passthrough"></button>
         <span data-style="font-size:12.5px"><span data-i18n="settings.server.strict_passthrough"></span> <span class="kmeta" data-style="display:inline" data-i18n="settings.server.strict_note"></span></span>
       </div>
       <div class="serr" id="limits-err"></div>
@@ -273,7 +277,7 @@ function renderServer() {
     <div class="card mb">
       <h2><span data-i18n="settings.server.model_limits"></span>
         <span data-style="margin-left:auto;display:inline-flex;align-items:center;gap:8px"><span class="kmeta" data-i18n="settings.server.adaptive"></span>
-        <button class="tog" role="switch" id="gov-tog" aria-checked="${!!sv.governor.enabled}"></button></span></h2>
+        <button class="tog" type="button" id="gov-tog" aria-pressed="${!!sv.governor.enabled}" data-i18n-attr="aria-label:settings.server.adaptive"></button></span></h2>
       <p class="shint" data-i18n="settings.server.model_limits_help"></p>
       <div>${ovr.map(([m, cap], i) =>
         `<span class="ochip"><span title="${escapeHtml(m)}">${escapeHtml(m)}</span><b>${+cap} <span data-i18n="settings.server.unit.limit"></span></b><button data-govdel="${i}" data-i18n-attr="title:settings.server.remove_override">×</button></span>`).join('')
@@ -309,14 +313,14 @@ function renderServer() {
     catch (e) { note('mode-err', e.message); }
   });
   $('sv-strict').addEventListener('click', () =>
-    $('sv-strict').setAttribute('aria-checked', $('sv-strict').getAttribute('aria-checked') !== 'true'));
+    $('sv-strict').setAttribute('aria-pressed', $('sv-strict').getAttribute('aria-pressed') !== 'true'));
   $('save-limits').addEventListener('click', async () => {
     const base = $('sv-base').value.trim();
     const nums = {
       max_wait_secs: 'sv-maxwait', heartbeat_secs: 'sv-heartbeat', models_ttl_secs: 'sv-ttl',
       stream_idle_secs: 'sv-idle', request_timeout_secs: 'sv-timeout', max_inflight: 'sv-inflight',
     };
-    const limits = { strict_passthrough: $('sv-strict').getAttribute('aria-checked') === 'true' };
+    const limits = { strict_passthrough: $('sv-strict').getAttribute('aria-pressed') === 'true' };
     for (const [field, id] of Object.entries(nums)) {
       const n = Math.round(+$(id).value);
       if (!isFinite(n) || n < 0) return noteMessage('limits-err', 'settings.validation.limits');
