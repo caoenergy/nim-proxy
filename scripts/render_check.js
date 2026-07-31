@@ -4459,6 +4459,7 @@ async function runMatrixContext({ browser, row, role, configuredProxy, setupProx
         requests,
         assets,
         evaluate,
+        drain,
       });
     }
     run.pageErrors.push(...await evaluateRaw(
@@ -4588,8 +4589,94 @@ function prepareVisualArtifactDir() {
   return resolved;
 }
 
+function visualRootVisibleExpression(selector) {
+  return `(() => {
+    const node = document.querySelector(${JSON.stringify(selector)});
+    if (!node || node.closest('[hidden]')) return false;
+    const style = getComputedStyle(node);
+    const rect = node.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden'
+      && rect.width > 0 && rect.height > 0;
+  })()`;
+}
+
+async function reachVisualSurface(item, context) {
+  const waitFor = (expression, label) => waitForMatrixCondition(
+    context.browser,
+    context.sessionId,
+    expression,
+    `${item.identity}: ${label}`,
+  );
+  if (item.reach.startsWith('dashboard:')) {
+    const tab = item.reach.slice('dashboard:'.length);
+    await context.evaluate(`document.querySelector('#side [data-tab=${JSON.stringify(tab)}]').click()`);
+    await context.drain();
+    await waitFor(`(() => {
+      const button = document.querySelector('#side [data-tab=${JSON.stringify(tab)}]');
+      const visible = Array.from(document.querySelectorAll('main > section:not([hidden])'));
+      return button?.getAttribute('aria-current') === 'page'
+        && visible.length === 1 && visible[0]?.id === ${JSON.stringify(`tab-${tab}`)};
+    })()`, 'dashboard surface');
+    return;
+  }
+  if (item.reach === 'settings:load-error') {
+    await waitFor(`document.querySelector('#tab-settings')?.hidden === false && ${visualRootVisibleExpression(item.root)}`, 'Settings error surface');
+    return;
+  }
+  if (item.reach.startsWith('settings:')) {
+    const panel = item.reach.slice('settings:'.length);
+    if (await evaluateRaw(context.browser, context.sessionId, `document.querySelector('#tab-settings')?.hidden !== false`)) {
+      await context.evaluate(`document.querySelector('#side [data-tab="settings"]').click()`);
+      await context.drain();
+    }
+    await waitFor(`!!document.querySelector('#setnav button')`, 'Settings navigation');
+    await context.evaluate(`document.querySelector('#setnav [data-sub=${JSON.stringify(panel)}]').click()`);
+    await context.drain();
+    await waitFor(`document.querySelector('#setnav [data-sub=${JSON.stringify(panel)}]')?.getAttribute('aria-current') === 'page' && ${visualRootVisibleExpression(item.root)}`, 'Settings panel');
+    return;
+  }
+  if (item.reach === 'setup:review-after-successful-key') {
+    await context.evaluate(`document.querySelector('#to3').click()`);
+    await context.drain();
+    await waitFor(`${visualRootVisibleExpression(item.root)} && document.querySelector('#review')?.childElementCount > 0`, 'setup review');
+    return;
+  }
+  if (item.reach === 'setup:client-validation-error') {
+    await context.evaluate(`
+      document.querySelector('#username').value='fixture-user';
+      document.querySelector('#password').value='short';
+      document.querySelector('#confirm').value='different';
+      document.querySelector('#to2').click();
+    `);
+    await context.drain();
+    await waitFor(`${visualRootVisibleExpression(item.root)} && document.querySelector('#step1')?.hidden === false`, 'setup validation error');
+    return;
+  }
+  if ([
+    'setup:step1',
+    'setup:step2',
+    'setup:completion',
+    'setup:key-validation-api-error',
+    'setup:submit-api-error',
+    'login:healthy',
+    'login:invalid-credentials',
+  ].includes(item.reach)) {
+    await waitFor(visualRootVisibleExpression(item.root), 'preserved row surface');
+    return;
+  }
+  throw new Error(`unknown visual reach: ${item.reach}`);
+}
+
 async function captureCurrentVisualItems({ items, artifactDir, drafts }, context) {
+  const bySurface = new Map();
   for (const item of items) {
+    const surfaceItems = bySurface.get(item.surfaceId) || [];
+    surfaceItems.push(item);
+    bySurface.set(item.surfaceId, surfaceItems);
+  }
+  for (const surfaceItems of bySurface.values()) {
+    await reachVisualSurface(surfaceItems[0], context);
+    for (const item of surfaceItems) {
     const [width, height] = item.viewport.split('x').map(Number);
     const captureErrors = [];
     let artifactWritten = false;
@@ -4609,8 +4696,12 @@ async function captureCurrentVisualItems({ items, artifactDir, drafts }, context
         mobile: false,
       }, context.sessionId);
       await context.evaluate(`
-        document.querySelector(${JSON.stringify(item.layoutRoot)}).scrollIntoView({ block: 'start' });
+        document.scrollingElement.scrollTop = 0;
         window.scrollTo(0, 0);
+        document.querySelector('.main')?.scrollTo(0, 0);
+        for (let node = document.querySelector(${JSON.stringify(item.layoutRoot)})?.parentElement; node; node = node.parentElement) {
+          if (node.scrollHeight > node.clientHeight) node.scrollTop = 0;
+        }
       `);
       await sleep(75);
       const state = await evaluateRaw(context.browser, context.sessionId, `(() => {
@@ -4690,6 +4781,7 @@ async function captureCurrentVisualItems({ items, artifactDir, drafts }, context
       requests: context.requests,
       assets: context.assets,
     });
+    }
   }
 }
 
@@ -4865,9 +4957,14 @@ const LAYOUT_CHECKER = `
         && getComputedStyle(node).textOverflow !== 'ellipsis'
         && node.clientWidth > 0 && node.scrollWidth > node.clientWidth + 1;
       let maskedBy = '';
+      let horizontallyReachable = false;
       for (let parent = node.parentElement; parent; parent = parent.parentElement) {
         const style = getComputedStyle(parent);
         const parentRect = parent.getBoundingClientRect();
+        if (/(auto|scroll)/.test(style.overflowX) && parent.scrollWidth > parent.clientWidth + 1) {
+          horizontallyReachable = true;
+          break;
+        }
         if (/(hidden|clip)/.test(style.overflowX)
             && (rect.left < parentRect.left - 1 || rect.right > parentRect.right + 1)) {
           maskedBy = describe(parent);
@@ -4875,7 +4972,7 @@ const LAYOUT_CHECKER = `
         }
         if (parent === boundary) break;
       }
-      if (intrinsic || (outside && (maskedBy || boundarySelector === '@viewport'))) {
+      if (intrinsic || (!horizontallyReachable && outside && (maskedBy || boundarySelector === '@viewport'))) {
         problems.push('layout-clipped:' + context + ':' + describe(node)
           + ':' + (intrinsic ? 'intrinsic' : maskedBy ? 'masked-by-' + maskedBy : 'outside-viewport'));
       }
@@ -6128,6 +6225,14 @@ async function main() {
       ellipsis.id = 'layout-selftest-ellipsis';
       ellipsis.style.cssText = 'display:block;width:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
       ellipsis.textContent = 'a deliberately long display value';
+      const scroll = document.createElement('div');
+      scroll.id = 'layout-selftest-scroll';
+      scroll.style.cssText = 'display:block;width:120px;overflow:auto';
+      const scrollable = document.createElement('span');
+      scrollable.id = 'layout-selftest-scrollable';
+      scrollable.style.cssText = 'display:block;width:240px;height:10px';
+      scrollable.textContent = 'reachable through horizontal scrolling';
+      scroll.append(scrollable);
       const addrow = document.createElement('div');
       addrow.className = 'addrow';
       addrow.style.cssText = 'display:flex;width:100px';
@@ -6136,7 +6241,7 @@ async function main() {
       addInput.style.cssText = 'width:20px;box-sizing:border-box';
       addrow.append(addInput);
       boundary.append(clipped);
-      boundary.append(input, ellipsis, addrow);
+      boundary.append(input, ellipsis, scroll, addrow);
       document.body.append(boundary);
       const problems = layoutProblems('#layout-selftest-boundary', '#layout-selftest-boundary', 'layout-selftest');
       const widePrimary = primaryAddRowProblems('#layout-selftest-boundary', 'layout-selftest-wide', 768);
@@ -6149,6 +6254,8 @@ async function main() {
         failures.push('input-intrinsic-exemption');
       if (problems.some(problem => problem.includes('#layout-selftest-ellipsis:intrinsic')))
         failures.push('ellipsis-intrinsic-exemption');
+      if (problems.some(problem => problem.includes('#layout-selftest-scrollable')))
+        failures.push('horizontal-scroll-reachability-exemption');
       if (widePrimary.some(problem => problem.includes('#layout-selftest-add-input:primary-not-own-row')))
         failures.push('wide-primary-row-exemption');
       if (!narrowPrimary.some(problem => problem.includes('#layout-selftest-add-input:primary-not-own-row')))
