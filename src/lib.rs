@@ -539,11 +539,17 @@ pub async fn run() {
 
     // Metrics history: finish indexing before the listener can report ready,
     // then sample the registry with contemporaneous pool capacity.
-    let hist = Arc::new(history::History::load(
-        Some(data_dir.clone()),
+    let hist = match history::History::open(
+        data_dir.clone(),
         stored.history.days,
         capacity_snapshot(&pool.read().unwrap()),
-    ));
+    ) {
+        Ok(history) => Arc::new(history),
+        Err(error) => {
+            eprintln!("\nnim-proxy cannot start: canonical history is unusable: {error}\n");
+            std::process::exit(1);
+        }
+    };
     {
         let hist = hist.clone();
         let prom = prometheus.clone();

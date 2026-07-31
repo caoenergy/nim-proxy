@@ -41,10 +41,12 @@ history and embedded dashboard should remain lightweight.
 
 Choose option 5.
 
-- Future JSONL records carry an explicit random boot id, boot marker, and
-  sample-time capacity. Existing v1 records stay readable; counter decreases
-  and a no-counters-to-counters transition receive best-effort legacy reset
-  inference with diagnostics.
+- Canonical JSONL records carry a store-owned random boot id, boot marker, and
+  sample-time capacity. Existing valid v1 records stay readable; canonical
+  file order is strict, with nondecreasing timestamps and a matching boot
+  before every sample or checkpoint. Counter decreases and a
+  no-counters-to-counters transition receive best-effort reset inference with
+  diagnostics inside the canonical index.
 - Startup synchronously scans the complete physical JSONL before listening,
   normalizes all valid samples so the retention boundary has a baseline, and
   indexes only retained gauges, deltas, and capacity. Startup latency is
@@ -93,6 +95,15 @@ Choose option 5.
   ([retention decision](history-retention-days-not-size.md)).
 - The old `/api/history` and `/dash/config.json` dashboard transports are
   removed. Prometheus `/metrics` remains for authenticated scrapers.
+
+The v0.6.6 canonical writer establishes its new boot before listening. The
+first sample/checkpoint uses that store-owned id; unchanged normalized state
+writes a checkpoint, while changed state writes a full sample with the live
+capacity supplied at that write. Experimental `history.jsonl` is intentionally
+not an "old v1" reader input and therefore cannot contribute inferred epochs.
+The store streams validation before moving records into the index, and a
+runtime durable-write failure poisons later writes rather than extending a
+partial tail.
 
 See [metrics-history](../architecture/metrics-history.md),
 [dashboard](../architecture/dashboard.md), and

@@ -1,9 +1,8 @@
-//! Metrics history: the sampler appends one full Prometheus snapshot at
-//! startup and every 5 minutes thereafter when a data dir is writable, then
-//! normalizes it into a typed in-memory index. Dashboard range queries consume
-//! exact totals plus bounded rollup points from that index. Snapshot size
-//! varies with registry cardinality; retention is an operator-facing time
-//! boundary rather than a predicted byte cap.
+//! Metrics history uses a canonical, newline-delimited v1 store. It publishes
+//! a boot record before listeners start, then writes normalized state samples
+//! or idle checkpoints as the sampler runs. Dashboard range queries consume a
+//! typed in-memory index reconstructed from the store's already-validated
+//! records. The prior `history.jsonl` format remains opaque reset evidence.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -19,6 +18,9 @@ use utoipa::ToSchema;
 // it to storage; until then no runtime caller constructs canonical records.
 #[allow(dead_code)]
 pub mod codec;
+pub mod store;
+
+pub type MetricState = codec::StateEntry;
 
 pub const SAMPLE_SECS: u64 = 300;
 const MAX_EXPOSITION_LINE_BYTES: usize = 1024 * 1024;
@@ -295,6 +297,84 @@ fn normalize(
     }
 }
 
+fn canonical_capacity(capacity: &CapacitySnapshot) -> codec::Capacity {
+    codec::Capacity {
+        capacity_rpm: capacity.capacity_rpm,
+        enabled_keys: capacity.enabled_lanes,
+        key_rpms: capacity.rpms.clone(),
+    }
+}
+
+fn canonical_state(snapshot: &ParsedSnapshot) -> Vec<MetricState> {
+    let mut state = Vec::with_capacity(snapshot.counters.len() + snapshot.gauges.len());
+    for (key, value) in &snapshot.counters {
+        state.push(MetricState {
+            kind: codec::StateKind::Counter,
+            metric: key.metric.clone(),
+            labels: key.labels.clone(),
+            value: *value,
+        });
+    }
+    for (key, value) in &snapshot.gauges {
+        state.push(MetricState {
+            kind: codec::StateKind::Gauge,
+            metric: key.metric.clone(),
+            labels: key.labels.clone(),
+            value: *value,
+        });
+    }
+    state
+}
+
+fn parsed_canonical_state(state: &[MetricState]) -> ParsedSnapshot {
+    let mut parsed = ParsedSnapshot::default();
+    for entry in state {
+        let key = MetricKey {
+            metric: entry.metric.clone(),
+            labels: entry.labels.clone(),
+        };
+        match entry.kind {
+            codec::StateKind::Counter => {
+                parsed.counters.insert(key, entry.value);
+            }
+            codec::StateKind::Gauge => {
+                parsed.gauges.insert(key, entry.value);
+            }
+        }
+    }
+    parsed
+}
+
+fn ingest_canonical_sample(
+    inner: &mut HistoryInner,
+    timestamp: u64,
+    boot_id: String,
+    capacity: codec::Capacity,
+    current: ParsedSnapshot,
+    cutoff: Option<u64>,
+) {
+    let reset =
+        inner.last_parsed.is_some() && inner.last_sample_boot.as_deref() != Some(boot_id.as_str());
+    let normalized = normalize(inner.last_parsed.as_ref(), &current, reset);
+    inner.diagnostics.valid_samples += 1;
+    inner.diagnostics.normalized_series += normalized.deltas.len() + normalized.gauges.len();
+    if cutoff.is_none_or(|cutoff| timestamp >= cutoff) {
+        inner.points.push(IndexedPoint {
+            t: timestamp,
+            deltas: normalized.deltas,
+            gauges: normalized.gauges,
+            capacity: Some(CapacitySnapshot {
+                enabled_lanes: capacity.enabled_keys,
+                rpms: capacity.key_rpms,
+                capacity_rpm: capacity.capacity_rpm,
+            }),
+        });
+    }
+    inner.revision = inner.revision.wrapping_add(1);
+    inner.last_parsed = Some(current);
+    inner.last_sample_boot = Some(boot_id);
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CapacitySnapshot {
     pub enabled_lanes: usize,
@@ -456,9 +536,90 @@ pub struct History {
     boot_id: String,
     boot_t: u64,
     initial_capacity: CapacitySnapshot,
+    canonical: Option<Mutex<store::HistoryStore>>,
 }
 
 impl History {
+    /// Open the canonical store before any listener exists. The legacy reader
+    /// is intentionally not consulted here: `history.jsonl` remains opaque
+    /// reset evidence, not input to the new format.
+    pub fn open(
+        dir: PathBuf,
+        days: u64,
+        initial_capacity: CapacitySnapshot,
+    ) -> Result<Self, store::OpenError> {
+        let timestamp = unix_now();
+        let capacity = canonical_capacity(&initial_capacity);
+        if let Ok(count) = store::stale_temporary_count(&dir) {
+            if count > 0 {
+                tracing::warn!("stale canonical history temporaries: count={count}");
+            }
+        }
+        let mut canonical = store::HistoryStore::open(&dir, timestamp, capacity)?;
+        let legacy = dir.join("history.jsonl");
+        if let Ok(metadata) = fs::metadata(&legacy) {
+            tracing::warn!(
+                "legacy history ignored: path={} bytes={}",
+                legacy.display(),
+                metadata.len()
+            );
+        }
+        let mut history = Self::load(None, days, initial_capacity);
+        let records = canonical.take_replay_records();
+        history.load_canonical(&records, days);
+        history.boot_id = canonical.boot_id().to_owned();
+        history.boot_t = timestamp;
+        history.canonical = Some(Mutex::new(canonical));
+        Ok(history)
+    }
+
+    fn load_canonical(&mut self, records: &[codec::Record], days: u64) {
+        let cutoff = (days > 0).then(|| unix_now().saturating_sub(days.saturating_mul(86_400)));
+        let mut current_boot = None;
+        let mut current_state = None;
+        let mut inner = self.inner.lock().unwrap();
+
+        for record in records {
+            match record {
+                codec::Record::Boot(boot) => {
+                    current_boot = Some(boot.boot_id.clone());
+                    current_state = None;
+                }
+                codec::Record::Sample(sample) => {
+                    let parsed = parsed_canonical_state(&sample.state);
+                    ingest_canonical_sample(
+                        &mut inner,
+                        sample.timestamp,
+                        sample.boot_id.clone(),
+                        sample.capacity.clone(),
+                        parsed,
+                        cutoff,
+                    );
+                    current_boot = Some(sample.boot_id.clone());
+                    current_state = Some(sample.state.clone());
+                }
+                codec::Record::Checkpoint(checkpoint)
+                    if current_boot.as_deref() == Some(checkpoint.boot_id.as_str()) =>
+                {
+                    if let Some(state) = &current_state {
+                        let parsed = parsed_canonical_state(state);
+                        ingest_canonical_sample(
+                            &mut inner,
+                            checkpoint.timestamp,
+                            checkpoint.boot_id.clone(),
+                            checkpoint.capacity.clone(),
+                            parsed,
+                            cutoff,
+                        );
+                    }
+                }
+                codec::Record::Checkpoint(_) => {}
+            }
+        }
+        inner.available_from = inner.points.first().map(|point| point.t);
+        inner.available_to = inner.points.last().map(|point| point.t);
+    }
+
     pub fn load(dir: Option<PathBuf>, days: u64, initial_capacity: CapacitySnapshot) -> Self {
         let started = std::time::Instant::now();
         let boot_t = unix_now();
@@ -577,6 +738,7 @@ impl History {
             boot_id,
             boot_t,
             initial_capacity,
+            canonical: None,
         };
         history.persist_boot_marker();
         let inner = history.inner.lock().unwrap();
@@ -636,11 +798,21 @@ impl History {
             (inner.available_from, inner.available_to)
         };
         let compaction_pending = self.compaction_pending.load(Ordering::SeqCst);
-        let file_bytes = self
-            .file
-            .as_ref()
-            .and_then(|path| fs::metadata(path).ok())
-            .map_or(0, |metadata| metadata.len());
+        let file_bytes = self.canonical.as_ref().map_or_else(
+            || {
+                self.file
+                    .as_ref()
+                    .and_then(|path| fs::metadata(path).ok())
+                    .map_or(0, |metadata| metadata.len())
+            },
+            |store| {
+                store
+                    .lock()
+                    .ok()
+                    .and_then(|store| store.file_bytes().ok())
+                    .unwrap_or(0)
+            },
+        );
         HistoryStatus {
             available_from,
             available_to,
@@ -651,6 +823,7 @@ impl History {
 
     pub fn append(self: &Arc<Self>, t: u64, snapshot: &str, capacity: CapacitySnapshot) {
         let current = parse_exposition(snapshot);
+        let canonical_state = canonical_state(&current);
         let mut inner = self.inner.lock().unwrap();
         // Wall clocks can move backward, and a retained file can contain a
         // future-dated point. Keep ingestion order without fabricating time:
@@ -686,22 +859,36 @@ impl History {
         inner.last_sample_boot = Some(self.boot_id.clone());
         drop(inner);
 
-        let line = serde_json::to_string(&SampleRecord {
-            v: 2,
-            t,
-            boot: &self.boot_id,
-            capacity: &capacity,
-            m: snapshot,
-        })
-        .expect("history sample record serializes");
-        self.persist_sample(&line);
+        if self.file.is_some() {
+            let line = serde_json::to_string(&SampleRecord {
+                v: 2,
+                t,
+                boot: &self.boot_id,
+                capacity: &capacity,
+                m: snapshot,
+            })
+            .expect("history sample record serializes");
+            self.persist_sample(&line);
+        }
 
-        if self.compaction_pending.load(Ordering::SeqCst) {
-            self.start_pending_compaction();
-        } else if days > 0
-            && *self.dropped_since_compact.lock().unwrap() > COMPACT_AFTER_EXPIRED_SAMPLES
-        {
-            self.request_compaction(t.saturating_sub(days.saturating_mul(86_400)));
+        if let Some(store) = &self.canonical {
+            if let Err(error) = store.lock().unwrap().append_sample(
+                t,
+                canonical_capacity(&capacity),
+                canonical_state,
+            ) {
+                tracing::warn!("canonical history append failed: {error}");
+            }
+        }
+
+        if self.file.is_some() {
+            if self.compaction_pending.load(Ordering::SeqCst) {
+                self.start_pending_compaction();
+            } else if days > 0
+                && *self.dropped_since_compact.lock().unwrap() > COMPACT_AFTER_EXPIRED_SAMPLES
+            {
+                self.request_compaction(t.saturating_sub(days.saturating_mul(86_400)));
+            }
         }
     }
 
@@ -1165,6 +1352,7 @@ mod tests {
             boot_id: "00000000000000000000000000000000".to_owned(),
             boot_t: 0,
             initial_capacity: capacity(40),
+            canonical: None,
         })
     }
 
@@ -1419,6 +1607,22 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         assert_eq!(history.status().available_to, Some(300));
         let rollup = history.rollup(299, 300, 20);
         assert_eq!(value(&rollup.totals, "requests_total"), 15.0);
+    }
+
+    #[tokio::test]
+    async fn canonical_history_never_schedules_legacy_compaction() {
+        let dir = TestDir::new();
+        let history = Arc::new(History::open(dir.0.clone(), 1, capacity(40)).unwrap());
+        *history.dropped_since_compact.lock().unwrap() = COMPACT_AFTER_EXPIRED_SAMPLES + 1;
+
+        history.append(unix_now(), SNAPSHOT, capacity(40));
+
+        assert_eq!(
+            history.compaction_generation.load(Ordering::SeqCst),
+            0,
+            "canonical history must not schedule the legacy compactor"
+        );
+        assert!(!history.compaction_pending.load(Ordering::SeqCst));
     }
 
     /// A unique per-test scratch dir (std-only; removed on drop).

@@ -34,6 +34,15 @@ that proof.
   prompt, completion, or client-selected value. This unit proof does not open
   a history file or establish stream ordering; storage/startup and recovery
   proofs are separate work.
+- **Canonical history store:** `cargo test history::store::tests --lib`
+  exercises hard-link first publication, concurrent creators, stale temporary
+  preservation, newline and stream-order refusal, fresh restart boot
+  boundaries, poisoned partial runtime writes, changed-sample versus
+  idle-checkpoint writes, live capacity, and each test-local filesystem failure
+  point. `cargo test --test e2e history_startup_is_fail_closed -- --exact`
+  proves the real binary never listens with empty, corrupt, or future canonical
+  history; the named stale-temporary and config-history E2E checks prove opaque
+  count-only warning and live canonical `file_bytes` reporting.
 - **Handlers or wire types:** `UPDATE_OPENAPI=1 cargo test --test openapi`,
   then verify that `openapi.json` has only the deliberate diff.
 - **HTTP trust boundaries:** `cargo test routes::tests --lib` proves the

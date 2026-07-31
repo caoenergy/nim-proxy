@@ -58,8 +58,9 @@ default to 30 days. The default window must be at least one day. Retention `0`
 is unlimited; finite retention must be at least the default window. The SLO
 must be a finite percentage greater than 0 and at most 100. A combined save is
 all-or-nothing: any invalid field leaves the persisted and live configuration
-unchanged. Reducing retention trims the visible index immediately and
-schedules atomic background compaction of `history.jsonl`.
+unchanged. Reducing retention trims the visible index immediately. Task 11
+does not compact canonical `history-v1.jsonl` or experimental `history.jsonl`;
+Task 13 owns the atomic canonical-compaction protocol.
 
 **Legacy env vars are ignored.** `NIM_API_KEYS`, `PROXY_API_KEYS`,
 `ADMIN_PASSWORD`, `INSECURE_NO_AUTH`, `NIM_BASE_URL`, `RPM_PER_KEY`,
