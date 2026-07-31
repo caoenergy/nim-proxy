@@ -110,7 +110,7 @@ function renderAccess() {
         <div class="kmeta">fp ${escapeHtml(String(k.fingerprint).slice(0, 8))} · ${k.lane != null ? escapeHtml(catalogMessage('settings.key.slot', { n: NUM_GROUPED.format(+k.lane + 1) })) : k.enabled ? escapeHtml(catalogMessage('settings.key.state.unassigned')) : escapeHtml(catalogMessage('settings.key.off'))}</div>
       </div>
       <span class="${st.cls}" data-ksfp="${escapeHtml(k.fingerprint)}">${escapeHtml(catalogMessage(st.id, st.params))}</span>
-      <span class="rpmwrap"><input class="sin num" type="number" min="1" max="10000" value="${+k.rpm}" data-rpm="${i}"><span class="unitl">rpm</span></span>
+      <span class="rpmwrap"><input class="sin num" type="number" min="1" max="10000" value="${+k.rpm}" data-rpm="${i}" data-i18n-attr="aria-label:settings.key.rpm"><span class="unitl">rpm</span></span>
       <button class="tog" type="button" aria-pressed="${!!k.enabled}" data-tog="${i}" data-i18n-attr="title:${k.enabled ? 'settings.key.toggle.disable' : 'settings.key.toggle.enable'},aria-label:${k.enabled ? 'settings.key.toggle.disable' : 'settings.key.toggle.enable'}"></button>
       ${k.guarded
         ? `<span class="klock" data-i18n-attr="title:settings.key.guarded">${LOCK}</span>`
@@ -130,8 +130,8 @@ function renderAccess() {
       <p class="shint" data-i18n="${admin ? 'settings.key.notice.admin' : 'settings.key.notice.mine'}"></p>
       <div>${keyRows || '<div class="empty" data-i18n="settings.key.empty"></div>'}</div>
       <div class="addrow">
-        <input id="nk-key" class="sin" data-style="flex:1;min-width:200px" type="password" data-i18n-attr="placeholder:settings.key.placeholder" autocomplete="off" spellcheck="false">
-        <span class="rpmwrap"><input id="nk-rpm" class="sin num" type="number" min="1" max="10000" value="40"><span class="unitl">rpm</span></span>
+        <input id="nk-key" class="sin" data-style="flex:1;min-width:200px" type="password" data-i18n-attr="placeholder:settings.key.placeholder,aria-label:settings.key.placeholder" autocomplete="off" spellcheck="false">
+        <span class="rpmwrap"><input id="nk-rpm" class="sin num" type="number" min="1" max="10000" value="40" data-i18n-attr="aria-label:settings.key.rpm"><span class="unitl">rpm</span></span>
         <button class="pbtn" id="nk-add" data-i18n="settings.key.validate_add"></button>
         <button class="gbtn" id="nk-force" hidden data-i18n="settings.key.add_anyway"></button>
       </div>
@@ -141,7 +141,7 @@ function renderAccess() {
       <h2><span data-i18n="${admin ? 'settings.client_key.heading.all' : 'settings.client_key.heading.mine'}"></span> <span class="note" data-i18n="settings.client_key.note"></span></h2>
       <div>${ckRows || '<div class="empty" data-i18n="settings.client_key.empty"></div>'}</div>
       <div class="addrow">
-        <input id="ck-name" class="sin" data-style="flex:1;min-width:200px" data-i18n-attr="placeholder:settings.client_key.placeholder" maxlength="64" autocomplete="off" spellcheck="false">
+        <input id="ck-name" class="sin" data-style="flex:1;min-width:200px" data-i18n-attr="placeholder:settings.client_key.placeholder,aria-label:settings.client_key.placeholder" maxlength="64" autocomplete="off" spellcheck="false">
         <button class="pbtn" id="ck-add" data-i18n="settings.client_key.generate"></button>
       </div>
       <div class="serr" id="ck-err"></div>
@@ -227,7 +227,7 @@ function renderAccess() {
 
 function renderServer() {
   const sv = SET.server, L = sv.limits;
-  const num = (id, label, val, unit, step) => `<div><div class="slabel" data-i18n="${label}"></div>
+  const num = (id, label, val, unit, step) => `<div><label class="slabel" for="${id}" data-i18n="${label}"></label>
     <span class="rpmwrap" data-style="display:flex"><input id="${id}" class="sin" data-style="width:100%;text-align:right" type="number" min="0"${step ? ` step="${step}"` : ''} value="${+val}">${unit ? `<span class="unitl" data-i18n="${unit}"></span>` : ''}</span></div>`;
   const ovr = Object.entries(sv.governor.overrides || {});
   const retainedFrom = sv.history.available_from == null
@@ -259,7 +259,7 @@ function renderServer() {
     <div class="card mb">
       <h2><span data-i18n="settings.server.upstream_limits"></span> <button class="pbtn" id="save-limits" data-style="margin-left:auto" data-i18n="settings.common.save"></button></h2>
       <div class="slabel" data-i18n="settings.server.base_url_note"></div>
-      <input id="sv-base" class="sin" data-style="width:100%" value="${escapeHtml(sv.base_url)}" spellcheck="false">
+      <input id="sv-base" class="sin" data-style="width:100%" value="${escapeHtml(sv.base_url)}" data-i18n-attr="aria-label:settings.server.base_url" spellcheck="false">
       <div class="limgrid">
         ${num('sv-maxwait', 'settings.server.limit.max_wait', L.max_wait_secs, 'settings.server.unit.seconds')}
         ${num('sv-heartbeat', 'settings.server.limit.heartbeat', L.heartbeat_secs, 'settings.server.unit.seconds')}
@@ -283,8 +283,8 @@ function renderServer() {
         `<span class="ochip"><span title="${escapeHtml(m)}">${escapeHtml(m)}</span><b>${+cap} <span data-i18n="settings.server.unit.limit"></span></b><button data-govdel="${i}" data-i18n-attr="title:settings.server.remove_override">×</button></span>`).join('')
         || '<span class="kmeta" data-i18n="settings.server.no_overrides"></span>'}</div>
       <div class="addrow">
-        <input id="gov-model" class="sin" data-style="flex:1;min-width:200px" data-i18n-attr="placeholder:settings.server.model_placeholder" autocomplete="off" spellcheck="false">
-        <span class="rpmwrap"><input id="gov-cap" class="sin num" type="number" min="1" max="10000" value="8"><span class="unitl" data-i18n="settings.server.unit.limit"></span></span>
+        <input id="gov-model" class="sin" data-style="flex:1;min-width:200px" data-i18n-attr="placeholder:settings.server.model_placeholder,aria-label:settings.server.model_placeholder" autocomplete="off" spellcheck="false">
+        <span class="rpmwrap"><input id="gov-cap" class="sin num" type="number" min="1" max="10000" value="8" data-i18n-attr="aria-label:settings.server.model_concurrency"><span class="unitl" data-i18n="settings.server.unit.limit"></span></span>
         <button class="gbtn" id="gov-add" data-i18n="settings.server.add_override"></button>
       </div>
       <div class="serr" id="gov-err"></div>
@@ -292,11 +292,11 @@ function renderServer() {
     <div class="card">
       <h2><span data-i18n="settings.server.history.heading"></span> <button class="pbtn" id="save-history" data-style="margin-left:auto" data-i18n="settings.common.save"></button></h2>
       <div class="limgrid" data-style="margin-top:6px">
-        <div><div class="slabel" data-i18n="settings.server.history.default_range"></div>
+        <div><label class="slabel" for="sv-default-days" data-i18n="settings.server.history.default_range"></label>
           <span class="rpmwrap" data-style="display:flex"><input id="sv-default-days" class="sin" data-style="width:100%;text-align:right" type="number" min="1" step="1" value="${+sv.dashboard.default_window_days}"><span class="unitl" data-i18n="settings.server.days"></span></span></div>
-        <div><div class="slabel" data-i18n="settings.server.history.retention"></div>
+        <div><label class="slabel" for="sv-retention-days" data-i18n="settings.server.history.retention"></label>
           <span class="rpmwrap" data-style="display:flex"><input id="sv-retention-days" class="sin" data-style="width:100%;text-align:right" type="number" min="0" step="1" value="${+sv.history.days}"><span class="unitl" data-i18n="settings.server.days"></span></span></div>
-        <div><div class="slabel" data-i18n="settings.server.history.slo"></div>
+        <div><label class="slabel" for="sv-slo" data-i18n="settings.server.history.slo"></label>
           <span class="rpmwrap" data-style="display:flex"><input id="sv-slo" class="sin" data-style="width:100%;text-align:right" type="number" min="0.1" max="100" step="0.1" value="${+sv.dashboard.slo_target_percent}"><span class="unitl">%</span></span></div>
       </div>
       <div class="congrid" data-style="margin-top:16px">
@@ -401,7 +401,7 @@ function renderUsers() {
     </div>
     <span class="rbadge ${RCLS[u.role] || 'user'}" data-style="margin-left:auto">${escapeHtml(String(u.role))}</span>
     ${u.role !== 'superuser' ? `<button class="gbtn" data-urp="${i}" data-i18n="settings.users.reset_password"></button>
-      <select class="sin" data-urole="${i}" data-i18n-attr="title:settings.users.role">
+      <select class="sin" data-urole="${i}" data-i18n-attr="title:settings.users.role,aria-label:settings.users.role">
         <option value="admin"${u.role === 'admin' ? ' selected' : ''}>admin</option>
         <option value="user"${u.role === 'user' ? ' selected' : ''}>user</option>
       </select>
@@ -412,8 +412,8 @@ function renderUsers() {
     <h2><span data-i18n="settings.users.heading"></span> <span class="note" data-i18n="settings.users.note"></span></h2>
     <div>${rows}</div>
     <div class="addrow">
-      <input id="u-name" class="sin" data-style="flex:1;min-width:150px" data-i18n-attr="placeholder:settings.users.username_placeholder" autocomplete="off" spellcheck="false">
-      <input id="u-pass" class="sin" data-style="flex:1;min-width:150px" type="password" data-i18n-attr="placeholder:settings.users.password_placeholder" autocomplete="new-password">
+      <input id="u-name" class="sin" data-style="flex:1;min-width:150px" data-i18n-attr="placeholder:settings.users.username_placeholder,aria-label:settings.users.username_placeholder" autocomplete="off" spellcheck="false">
+      <input id="u-pass" class="sin" data-style="flex:1;min-width:150px" type="password" data-i18n-attr="placeholder:settings.users.password_placeholder,aria-label:settings.users.password_placeholder" autocomplete="new-password">
       <span class="pills"><button data-urolepick="user" aria-pressed="true">user</button><button data-urolepick="admin" aria-pressed="false">admin</button></span>
       <button class="pbtn" id="u-add" data-i18n="settings.users.add"></button>
     </div>
@@ -460,13 +460,13 @@ function renderAccount() {
   $('setbody').innerHTML = `<div class="card" data-style="max-width:560px">
     <h2 data-i18n="settings.account.heading"></h2>
     <div class="slabel" data-i18n="settings.account.username"></div>
-    <input class="sin" data-style="width:100%" value="${escapeHtml(SET.username)}" disabled>
+    <input class="sin" data-style="width:100%" value="${escapeHtml(SET.username)}" data-i18n-attr="aria-label:settings.account.username" disabled>
     <div class="slabel" data-style="margin-top:14px" data-i18n="settings.account.current_password"></div>
-    <input id="a-cur" class="sin" data-style="width:100%" type="password" autocomplete="current-password">
+    <input id="a-cur" class="sin" data-style="width:100%" type="password" data-i18n-attr="aria-label:settings.account.current_password" autocomplete="current-password">
     <div class="slabel" data-style="margin-top:14px" data-i18n="settings.account.new_password"></div>
-    <input id="a-new" class="sin" data-style="width:100%" type="password" autocomplete="new-password">
+    <input id="a-new" class="sin" data-style="width:100%" type="password" data-i18n-attr="aria-label:settings.account.new_password" autocomplete="new-password">
     <div class="slabel" data-style="margin-top:14px" data-i18n="settings.account.confirm_password"></div>
-    <input id="a-conf" class="sin" data-style="width:100%" type="password" autocomplete="new-password">
+    <input id="a-conf" class="sin" data-style="width:100%" type="password" data-i18n-attr="aria-label:settings.account.confirm_password" autocomplete="new-password">
     <p class="shint" data-style="margin-top:14px" data-i18n="settings.account.note"></p>
     <button class="pbtn" id="a-save" data-i18n="settings.account.update"></button>
     <div class="serr" id="a-err"></div>

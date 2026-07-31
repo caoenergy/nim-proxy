@@ -981,10 +981,20 @@
       "desc": "Button, imperative verb. Applies the entered range.",
       "hash": "31e392d1"
     },
+    "dashboard.topbar.custom.from": {
+      "en": "From",
+      "desc": "Accessible name for the start of a custom dashboard time range.",
+      "hash": "21819769"
+    },
     "dashboard.topbar.custom.to": {
       "en": "to",
       "desc": "Separator between the from and to datetime inputs. Preposition, not a verb.",
       "hash": "663ea1bf"
+    },
+    "dashboard.topbar.custom.to_label": {
+      "en": "To",
+      "desc": "Accessible name for the end of a custom dashboard time range.",
+      "hash": "f4b06ef6"
     },
     "dashboard.topbar.error.load": {
       "en": "Failed to load time range",
@@ -1226,6 +1236,11 @@
       "en": "Remove NIM API key",
       "hash": "d15bafa9"
     },
+    "settings.key.rpm": {
+      "en": "Requests per minute",
+      "desc": "Accessible name for a NIM API key rate-limit input.",
+      "hash": "aa6d477f"
+    },
     "settings.key.slot": {
       "en": "Slot {n}",
       "hash": "18616a78"
@@ -1327,6 +1342,11 @@
       "en": "Add override",
       "hash": "fafc22c3"
     },
+    "settings.server.base_url": {
+      "en": "Upstream base URL",
+      "desc": "Accessible name for the configurable upstream base URL.",
+      "hash": "a3b55051"
+    },
     "settings.server.base_url_note": {
       "en": "Saving changes the upstream base URL and clears the model catalog cache.",
       "hash": "eefdd484"
@@ -1420,6 +1440,11 @@
     "settings.server.limit.stream_idle": {
       "en": "Stream idle timeout",
       "hash": "c81a6778"
+    },
+    "settings.server.model_concurrency": {
+      "en": "Model concurrency limit",
+      "desc": "Accessible name for a per-model governor override limit.",
+      "hash": "c1032472"
     },
     "settings.server.model_limits": {
       "en": "Model limits",
@@ -1709,6 +1734,11 @@
       "en": "Advanced — upstream base URL",
       "hash": "8dd07757"
     },
+    "setup.step2.base_url": {
+      "en": "Upstream base URL",
+      "desc": "Accessible name for the optional setup upstream URL input.",
+      "hash": "a3b55051"
+    },
     "setup.step2.error.key_duplicate": {
       "en": "That key is already added.",
       "desc": "Validation error: the same NIM key is already in the list.",
@@ -1734,10 +1764,20 @@
       "desc": "Explains pool sharing and the default per-key rate limit.",
       "hash": "de52a624"
     },
+    "setup.step2.key_label": {
+      "en": "NIM API key",
+      "desc": "Accessible name for the setup NIM API key input.",
+      "hash": "48470460"
+    },
     "setup.step2.key_meta": {
       "en": "{models} models · {rpm} rpm",
       "desc": "Meta line on an added key: how many models the key reached, then its per-minute limit. 'rpm' is a unit and must survive verbatim.",
       "hash": "026c787c"
+    },
+    "setup.step2.rpm_label": {
+      "en": "Requests per minute",
+      "desc": "Accessible name for the setup NIM API key rate-limit input.",
+      "hash": "aa6d477f"
     },
     "setup.step2.validating": {
       "en": "Validating…",
