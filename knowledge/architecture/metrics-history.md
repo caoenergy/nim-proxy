@@ -1,7 +1,7 @@
 ---
 type: Component
 title: Metrics & history (src/history.rs)
-description: Prometheus registry, versioned JSONL snapshots, reset-aware startup index, exact range rollups, and atomic retention compaction.
+description: Prometheus registry, versioned JSONL snapshots, reset-aware startup index, exact range rollups, and deferred canonical retention compaction.
 tags: [metrics, history, prometheus]
 timestamp: 2026-07-02T00:00:00Z
 ---
@@ -17,9 +17,15 @@ longer downloads or parses its raw exposition.
 ## Persisted format
 
 Task 10 defines the canonical successor format, `nimproxy-history/v1`; Task
-11 owns publication and runtime use. Until then, the checked-in runtime still
-uses its experimental history behavior and this codec does not open, read, or
-write any history path.
+11 publishes and appends it at runtime. `HistoryStore::open` streams existing
+canonical rows strictly before appending one fresh boot boundary, or publishes
+the first boot through a unique same-directory temporary, file sync,
+no-overwrite hard link, temporary-name removal, and directory sync. Any empty,
+unterminated, malformed, future-version, mis-sequenced, or timestamp-regressing
+canonical history refuses startup without repair or truncation. A startup
+attempt whose fresh boot append or sync fails also refuses; a sync failure can
+leave a complete valid boot record, while a partial failed tail remains
+evidence.
 
 Every canonical JSONL row begins, in this exact order, with
 `format:"nimproxy-history"`, `v:1`, and `kind`. The complete field order is:
@@ -42,10 +48,19 @@ An unknown `format` or `v` is explicitly `unsupported_format` or
 `unsupported_version`, not corrupt-line recovery; Task 11 uses those errors to
 refuse startup.
 
-The canonical destination is `history-v1.jsonl`. The production runtime must
-never read, rename, truncate, delete, or migrate experimental `history.jsonl`.
-Timestamp stream ordering, startup refusal, checkpoint expansion, and recovery
-semantics are intentionally outside this codec and belong to Tasks 11–12.
+The canonical destination is `history-v1.jsonl`. The production runtime never
+reads, renames, truncates, deletes, migrates, or compacts experimental
+`history.jsonl`; it emits one startup warning containing only that path and
+byte length. Stale same-directory canonical temporaries are likewise opaque
+evidence; startup emits at most one warning containing their count, and never
+their names or contents. A nonempty canonical record must end with a newline;
+file order is authoritative, timestamps never decrease, and every sample or
+checkpoint must follow a matching boot. Canonical samples replay into the
+in-memory dashboard index, and a checkpoint carries forward the latest sample
+only inside its boot epoch. A runtime encode/write/flush/sync failure poisons
+the writer, so later ticks cannot append after partial evidence. `file_bytes`
+is live metadata from the canonical writer. Task 12 owns malformed-stream
+recovery semantics; Task 13 owns compaction.
 
 ### Sanitized corpus evidence
 
@@ -68,14 +83,13 @@ values.
 ## Startup index and range rollups
 
 History indexing is a synchronous startup task and completes before the
-server listens. The parser scans and sorts the complete physical JSONL,
-enforcing exposition metric-line and series bounds. It normalizes every valid
-sample so a pre-retention sample can supply the boundary baseline, then indexes
-only the retained points (or all points when retention is unlimited). Stale
-disk rows may remain until compaction. Startup logs bytes, valid samples,
-skipped records/metric lines, normalized series, inferred resets, and
-duration. This is the only precomputation: page-specific dashboard models are
-deliberately not cached
+server listens. The canonical store streams and validates the physical JSONL
+in file order, then moves its validated records once into the typed index; it
+does not sort, repair, or reread raw rows. It normalizes every valid sample so
+a pre-retention sample can supply the boundary baseline, then indexes only the
+retained points (or all points when retention is unlimited). Canonical startup
+does not promise the older detailed byte/sample diagnostic summary. This is the
+only precomputation: page-specific dashboard models are deliberately not cached
 ([reset-aware decision](../decisions/reset-aware-dashboard-history.md)).
 
 `History::rollup(from, to, points)` returns:
@@ -110,18 +124,9 @@ range revision, so a newly persisted sample cannot be double-counted.
 long as the default dashboard window.
 
 Changing retention in Settings validates and persists the complete config,
-then immediately trims the visible in-memory index. File compaction runs
-off the async executor and writes a temporary file, flushes it, atomically
-renames it, and syncs the directory. It preserves the newest pre-cutoff
-sample as a hidden baseline plus the relevant boot marker, which keeps the
-first retained counter delta exact. A pre-replacement failure leaves the old
-file untouched and the retry pending; a post-rename directory-sync failure is
-reported as committed-but-pending.
-
-At boot, expired rows are excluded from the index immediately and exposed as
-compaction debt for a subsequent append. Routine append-driven compaction also
-starts after more than 288 expired samples accumulate (about one day at the
-five-minute interval). A history-file write failure warns and leaves the
-in-memory index operating, while an unusable `DATA_DIR` or config store is
-still a hard boot error
+then immediately trims the visible in-memory index. Task 11 deliberately does
+not compact canonical history; Task 13 owns the atomic replacement protocol
+and its recovery proof. A canonical history-file write failure warns and
+leaves the in-memory index operating, but poisons further durable writes for
+that process; an unusable `DATA_DIR` or config store is still a hard boot error
 ([configuration](../ops/configure-env.md)).

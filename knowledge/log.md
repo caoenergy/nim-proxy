@@ -6,6 +6,22 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-31] component — canonical history-v1 fail-closed store
+
+Task 11 publishes `history-v1.jsonl` through a synced same-directory temporary
+and no-overwrite hard link, then appends/syncs a store-owned boot before the
+server listens. Existing canonical bytes are streamed strictly: records must
+be newline-terminated, ordered by nondecreasing timestamp, and sequenced under
+a matching boot. An invalid file or failed startup boot append/sync refuses;
+sync may leave a complete valid boot while a partial tail remains evidence.
+Runtime encode/write/flush/sync failure poisons later writes. Legacy
+`history.jsonl` is only warned by path and size, never parsed or changed;
+stale canonical temporaries are counted once without inspection. Samples carry
+live capacity; unchanged normalized state becomes checkpoints. See
+[metrics history](architecture/metrics-history.md), the
+[reset-aware decision](decisions/reset-aware-dashboard-history.md), and the
+[test strategy](testing/test-strategy.md).
+
 ## [2026-07-31] component — canonical history-v1 codec foundation
 
 Task 10 defines the exact `nimproxy-history/v1` boot, sample, and checkpoint
