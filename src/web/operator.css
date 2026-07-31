@@ -322,4 +322,5 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
   .krow .rpmwrap { flex: 1 1 100px; min-width: 0; }
   .krow .sin { max-width: 100%; }
   .addrow > input { min-width: 0; }
+  #setbody .addrow > input:not([type="number"]) { flex: 1 0 100%; }
 }
