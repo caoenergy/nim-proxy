@@ -1838,6 +1838,327 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         history
     }
 
+    fn canonical_capacity(rpms: &[usize]) -> codec::Capacity {
+        codec::Capacity {
+            capacity_rpm: rpms.iter().sum(),
+            enabled_keys: rpms.len(),
+            key_rpms: rpms.to_vec(),
+        }
+    }
+
+    fn canonical_snapshot(capacity: &codec::Capacity) -> CapacitySnapshot {
+        CapacitySnapshot {
+            enabled_lanes: capacity.enabled_keys,
+            rpms: capacity.key_rpms.clone(),
+            capacity_rpm: capacity.capacity_rpm,
+        }
+    }
+
+    fn canonical_state(counter: f64, gauge: f64) -> Vec<codec::StateEntry> {
+        let labels: BTreeMap<_, _> = [("client".to_owned(), "equivalence".to_owned())]
+            .into_iter()
+            .collect();
+        vec![
+            codec::StateEntry {
+                kind: codec::StateKind::Counter,
+                metric: "nimproxy_requests_total".to_owned(),
+                labels: labels.clone(),
+                value: counter,
+            },
+            codec::StateEntry {
+                kind: codec::StateKind::Gauge,
+                metric: "nimproxy_active_requests".to_owned(),
+                labels,
+                value: gauge,
+            },
+        ]
+    }
+
+    fn canonical_boot(t: u64, boot_id: &str, capacity: &codec::Capacity) -> codec::Record {
+        codec::Record::Boot(codec::BootRecord {
+            timestamp: t,
+            boot_id: boot_id.to_owned(),
+            capacity: capacity.clone(),
+        })
+    }
+
+    fn canonical_sample(
+        t: u64,
+        boot_id: &str,
+        capacity: &codec::Capacity,
+        counter: f64,
+        gauge: f64,
+    ) -> codec::Record {
+        codec::Record::Sample(codec::SampleRecord {
+            timestamp: t,
+            boot_id: boot_id.to_owned(),
+            capacity: capacity.clone(),
+            state: canonical_state(counter, gauge),
+        })
+    }
+
+    fn canonical_checkpoint(t: u64, boot_id: &str, capacity: &codec::Capacity) -> codec::Record {
+        codec::Record::Checkpoint(codec::CheckpointRecord {
+            timestamp: t,
+            boot_id: boot_id.to_owned(),
+            capacity: capacity.clone(),
+        })
+    }
+
+    fn open_canonical_equivalence_history(
+        records: &[codec::Record],
+        days: u64,
+        initial_capacity: CapacitySnapshot,
+    ) -> (TestDir, Arc<History>) {
+        let dir = TestDir::new();
+        let mut bytes = Vec::new();
+        for record in records {
+            bytes.extend(codec::encode_record(record).unwrap());
+            bytes.push(b'\n');
+        }
+        fs::write(dir.0.join("history-v1.jsonl"), bytes).unwrap();
+        let history = Arc::new(History::open(dir.0.clone(), days, initial_capacity).unwrap());
+        (dir, history)
+    }
+
+    fn rollup_difference(
+        left: &HistoryWindow<Rollup>,
+        right: &HistoryWindow<Rollup>,
+    ) -> Option<&'static str> {
+        if left.complete != right.complete {
+            Some("complete")
+        } else if left.data.available_from != right.data.available_from
+            || left.data.available_to != right.data.available_to
+        {
+            Some("available_bounds")
+        } else if left.data.effective_from != right.data.effective_from
+            || left.data.effective_to != right.data.effective_to
+        {
+            Some("effective_bounds")
+        } else if left.data.totals != right.data.totals {
+            Some("totals")
+        } else if left.data.latest != right.data.latest {
+            Some("latest")
+        } else if left.data.points != right.data.points {
+            Some("points")
+        } else if left.data.history_revision != right.data.history_revision {
+            Some("history_revision")
+        } else {
+            None
+        }
+    }
+
+    fn assert_rollup_equivalent(
+        label: &str,
+        left: &HistoryWindow<Rollup>,
+        right: &HistoryWindow<Rollup>,
+    ) {
+        assert_eq!(
+            rollup_difference(left, right),
+            None,
+            "{label}: paired canonical encodings diverged"
+        );
+    }
+
+    fn assert_tail_equivalent(label: &str, left: &Tail, right: &Tail) {
+        assert_eq!(
+            left.base_history_revision, right.base_history_revision,
+            "{label}: revision"
+        );
+        assert_eq!(left.from, right.from, "{label}: from");
+        assert_eq!(left.to, right.to, "{label}: to");
+        assert_eq!(left.totals, right.totals, "{label}: totals");
+    }
+
+    #[test]
+    fn canonical_checkpoint_encoding_matches_repeated_samples_across_resets_capacities_and_budgets()
+    {
+        let now = unix_now();
+        let start = now - 100;
+        let first_capacity = canonical_capacity(&[40]);
+        let changed_capacity = canonical_capacity(&[30, 30]);
+        let reset_capacity = canonical_capacity(&[20, 30]);
+        let live_checkpoint_capacity = canonical_capacity(&[35, 35]);
+        let repeated = [
+            canonical_boot(start, "boot-a", &first_capacity),
+            canonical_sample(start + 10, "boot-a", &first_capacity, 10.0, 1.0),
+            canonical_sample(start + 20, "boot-a", &changed_capacity, 10.0, 1.0),
+            canonical_sample(start + 30, "boot-a", &changed_capacity, 15.0, 2.0),
+            canonical_boot(start + 40, "boot-b", &reset_capacity),
+            canonical_sample(start + 50, "boot-b", &reset_capacity, 3.0, 3.0),
+            canonical_sample(start + 60, "boot-b", &live_checkpoint_capacity, 3.0, 3.0),
+        ];
+        let checkpointed = [
+            canonical_boot(start, "boot-a", &first_capacity),
+            canonical_sample(start + 10, "boot-a", &first_capacity, 10.0, 1.0),
+            canonical_checkpoint(start + 20, "boot-a", &changed_capacity),
+            canonical_sample(start + 30, "boot-a", &changed_capacity, 15.0, 2.0),
+            canonical_boot(start + 40, "boot-b", &reset_capacity),
+            canonical_sample(start + 50, "boot-b", &reset_capacity, 3.0, 3.0),
+            canonical_checkpoint(start + 60, "boot-b", &live_checkpoint_capacity),
+        ];
+        let initial_capacity = canonical_snapshot(&first_capacity);
+        let (_repeated_dir, repeated_history) =
+            open_canonical_equivalence_history(&repeated, 0, initial_capacity.clone());
+        let (_checkpointed_dir, checkpointed_history) =
+            open_canonical_equivalence_history(&checkpointed, 0, initial_capacity);
+
+        for budget in [2, 1000] {
+            let repeated_rollup = repeated_history.rollup(start, start + 60, budget);
+            let checkpointed_rollup = checkpointed_history.rollup(start, start + 60, budget);
+            assert_rollup_equivalent(
+                "checkpoint equivalence",
+                &repeated_rollup,
+                &checkpointed_rollup,
+            );
+            assert_ne!(
+                repeated_rollup.diagnostics, checkpointed_rollup.diagnostics,
+                "physical record diagnostics distinguish samples from checkpoints"
+            );
+            assert_eq!(
+                value(&repeated_rollup.data.totals, "nimproxy_requests_total"),
+                18.0
+            );
+            assert_eq!(
+                value(&repeated_rollup.data.latest, "nimproxy_active_requests"),
+                3.0
+            );
+        }
+
+        let coarse = repeated_history.rollup(start, start + 60, 2);
+        let fine = repeated_history.rollup(start, start + 60, 1000);
+        assert_eq!(coarse.data.totals, fine.data.totals);
+        assert_eq!(coarse.data.latest, fine.data.latest);
+        assert_eq!(coarse.data.history_revision, fine.data.history_revision);
+        assert!(coarse.data.points.len() <= 2);
+        assert!(fine.data.points.len() > coarse.data.points.len());
+        assert_eq!(
+            fine.data.points.last().unwrap().capacity,
+            Some(CapacityRollup {
+                average_rpm: 70.0,
+                latest_rpms: vec![35, 35],
+            })
+        );
+
+        let runtime = unix_now() + 2;
+        let runtime_snapshot = "# TYPE nimproxy_requests_total counter\n\
+            nimproxy_requests_total{client=\"equivalence\"} 4\n\
+            # TYPE nimproxy_active_requests gauge\n\
+            nimproxy_active_requests{client=\"equivalence\"} 4\n";
+        let before_repeated = repeated_history.current(runtime, || runtime_snapshot.to_owned());
+        let before_checkpointed =
+            checkpointed_history.current(runtime, || runtime_snapshot.to_owned());
+        assert_eq!(
+            before_repeated.tail.base_history_revision,
+            repeated_history.revision()
+        );
+        assert_tail_equivalent(
+            "current tail before append",
+            &before_repeated.tail,
+            &before_checkpointed.tail,
+        );
+        repeated_history.append(
+            runtime,
+            runtime_snapshot,
+            canonical_snapshot(&live_checkpoint_capacity),
+        );
+        checkpointed_history.append(
+            runtime,
+            runtime_snapshot,
+            canonical_snapshot(&live_checkpoint_capacity),
+        );
+        let after_repeated = repeated_history.current(runtime + 1, || runtime_snapshot.to_owned());
+        let after_checkpointed =
+            checkpointed_history.current(runtime + 1, || runtime_snapshot.to_owned());
+        assert_tail_equivalent(
+            "current tail after append",
+            &after_repeated.tail,
+            &after_checkpointed.tail,
+        );
+        assert_eq!(
+            after_repeated.tail.base_history_revision,
+            before_repeated.tail.base_history_revision + 1,
+            "append advances the current-tail baseline revision"
+        );
+    }
+
+    #[test]
+    fn canonical_checkpoint_encoding_preserves_the_retention_boundary_baseline() {
+        let now = unix_now();
+        let cutoff = now - 86_400;
+        let initial_capacity = canonical_capacity(&[40]);
+        let old = cutoff - 100;
+        let retained = cutoff + 10;
+        let repeated = [
+            canonical_boot(old - 10, "boot-a", &initial_capacity),
+            canonical_sample(old, "boot-a", &initial_capacity, 10.0, 1.0),
+            canonical_sample(old + 10, "boot-a", &initial_capacity, 10.0, 1.0),
+            canonical_sample(retained, "boot-a", &initial_capacity, 15.0, 2.0),
+        ];
+        let checkpointed = [
+            canonical_boot(old - 10, "boot-a", &initial_capacity),
+            canonical_sample(old, "boot-a", &initial_capacity, 10.0, 1.0),
+            canonical_checkpoint(old + 10, "boot-a", &initial_capacity),
+            canonical_sample(retained, "boot-a", &initial_capacity, 15.0, 2.0),
+        ];
+        let initial_snapshot = canonical_snapshot(&initial_capacity);
+        let (_repeated_dir, repeated_history) =
+            open_canonical_equivalence_history(&repeated, 1, initial_snapshot.clone());
+        let (_checkpointed_dir, checkpointed_history) =
+            open_canonical_equivalence_history(&checkpointed, 1, initial_snapshot);
+
+        for budget in [2, 1000] {
+            let repeated_rollup = repeated_history.rollup(old - 10, retained, budget);
+            let checkpointed_rollup = checkpointed_history.rollup(old - 10, retained, budget);
+            assert_rollup_equivalent(
+                "retention-boundary equivalence",
+                &repeated_rollup,
+                &checkpointed_rollup,
+            );
+            assert_eq!(repeated_rollup.data.available_from, Some(retained));
+            assert_eq!(repeated_rollup.data.effective_from, Some(retained));
+            assert_eq!(
+                repeated_rollup.data.totals,
+                vec![MetricValue {
+                    labels: [("client".to_owned(), "equivalence".to_owned())]
+                        .into_iter()
+                        .collect(),
+                    metric: "nimproxy_requests_total".to_owned(),
+                    value: 5.0,
+                }]
+            );
+        }
+    }
+
+    #[test]
+    fn rollup_equivalence_checker_rejects_a_semantically_different_stream_by_totals() {
+        let start = unix_now() - 30;
+        let capacity = canonical_capacity(&[40]);
+        let expected = [
+            canonical_boot(start, "boot-a", &capacity),
+            canonical_sample(start + 10, "boot-a", &capacity, 10.0, 1.0),
+            canonical_sample(start + 20, "boot-a", &capacity, 15.0, 1.0),
+        ];
+        let different = [
+            canonical_boot(start, "boot-a", &capacity),
+            canonical_sample(start + 10, "boot-a", &capacity, 10.0, 1.0),
+            canonical_sample(start + 20, "boot-a", &capacity, 16.0, 1.0),
+        ];
+        let initial = canonical_snapshot(&capacity);
+        let (_expected_dir, expected_history) =
+            open_canonical_equivalence_history(&expected, 0, initial.clone());
+        let (_different_dir, different_history) =
+            open_canonical_equivalence_history(&different, 0, initial);
+
+        assert_eq!(
+            rollup_difference(
+                &expected_history.rollup(start, start + 20, 1000),
+                &different_history.rollup(start, start + 20, 1000),
+            ),
+            Some("totals")
+        );
+    }
+
     fn value(values: &[MetricValue], name: &str) -> f64 {
         values
             .iter()
