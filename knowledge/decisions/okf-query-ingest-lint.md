@@ -62,6 +62,29 @@ The operating loop is:
    log. A code/knowledge mismatch is investigated rather than silently resolved
    in either direction.
 
+### Delegation contract
+
+Delegation is a management boundary, not an accountability transfer. The
+delegating agent remains responsible for the result and supplies a complete
+initial contract instead of using repeated reminders as a control plane. Every
+handoff names:
+
+- the working directory, branch/worktree, relevant live processes, and other
+  operating-environment facts;
+- Outcome, Proof, Constraint, and Ponytail Rung;
+- the exact files, artifacts, commit range, or surface in scope and explicit
+  exclusions;
+- authorized read/write/external actions; and
+- exhaustion behavior: what evidence to return, what mutation to stop, and how
+  to report the blocker or remaining work when the delegate runs out of
+  in-scope actions.
+
+Task size is part of that contract. A broad or ambiguous assignment is split
+before delegation. If a delegate diverges, the first suspected defect is the
+manager's context, boundaries, or exhaustion instructions; correct or split
+the handoff before adding reminders. The delegate never expands scope merely
+to stay busy.
+
 ### Schema contract
 
 - Store one durable concept per Markdown file.
@@ -86,6 +109,8 @@ The operating loop is:
   ingest requires a log entry.
 - Maintainers preserve useful cross-links and lint memory drift instead of
   treating code or knowledge as automatically authoritative over the other.
+- Delegated work is evaluated as a managed contract: divergence improves the
+  next handoff and task boundary rather than becoming a worker blame record.
 - No generator, database, or retrieval service exists. Repository text search,
   relative links, and Git history are the complete mechanism.
 - Changing verification commands remain centralized in the

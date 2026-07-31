@@ -6,6 +6,17 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-30] decision — make delegation a managed contract
+
+The stable agent guide now treats delegation as a management boundary rather
+than an accountability transfer. A handoff must define its operating
+environment, Outcome, Proof, Constraint, Ponytail Rung, exact scope and
+exclusions, authorized actions, and exhaustion behavior. Divergence first
+indicts task sizing, context, and ambiguity; managers correct or split the
+contract instead of layering reminders or recording worker blame. See the
+[OKF memory decision](decisions/okf-query-ingest-lint.md) and the
+[agent-instruction plan](../docs/plans/agent-instructions-okf-memory-implementation.md).
+
 ## [2026-07-30] component — applicable full-document visual matrix
 
 Task 9 extends the served-browser gate with 224 explicitly applicable visual
