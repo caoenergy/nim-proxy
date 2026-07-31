@@ -2122,6 +2122,7 @@ function interactionSelftest() {
       observation.run[field].push(`${field} fixture`);
     });
   }
+  failures.push(...visualCoverageSelftest());
 
   if (failures.length) {
     for (const failure of failures) console.error(`[interaction-selftest] ${failure}`);
