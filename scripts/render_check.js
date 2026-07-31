@@ -833,17 +833,17 @@ const INTERACTION_ROWS = [
 
 const VISUAL_VIEWPORTS = ['390x844', '768x1024', '900x1000', '1440x1000'];
 const DASHBOARD_VISUAL_SURFACES = [
-  { id: 'dashboard-overview', root: '#tab-overview', reach: 'dashboard:overview', layoutRoot: '#tab-overview', layoutBoundary: '.main' },
-  { id: 'dashboard-models', root: '#tab-models', reach: 'dashboard:models', layoutRoot: '#tab-models', layoutBoundary: '.main' },
-  { id: 'dashboard-clients', root: '#tab-clients', reach: 'dashboard:clients', layoutRoot: '#tab-clients', layoutBoundary: '.main' },
-  { id: 'dashboard-reliability', root: '#tab-reliability', reach: 'dashboard:reliability', layoutRoot: '#tab-reliability', layoutBoundary: '.main' },
-  { id: 'dashboard-capacity', root: '#tab-capacity', reach: 'dashboard:capacity', layoutRoot: '#tab-capacity', layoutBoundary: '.main' },
+  { id: 'dashboard-overview', root: '#tab-overview', reach: 'dashboard:overview', layoutRoot: '.main', layoutBoundary: '.main' },
+  { id: 'dashboard-models', root: '#tab-models', reach: 'dashboard:models', layoutRoot: '.main', layoutBoundary: '.main' },
+  { id: 'dashboard-clients', root: '#tab-clients', reach: 'dashboard:clients', layoutRoot: '.main', layoutBoundary: '.main' },
+  { id: 'dashboard-reliability', root: '#tab-reliability', reach: 'dashboard:reliability', layoutRoot: '.main', layoutBoundary: '.main' },
+  { id: 'dashboard-capacity', root: '#tab-capacity', reach: 'dashboard:capacity', layoutRoot: '.main', layoutBoundary: '.main' },
 ];
 const SETTINGS_VISUAL_SURFACES = [
-  { id: 'settings-access', root: '#nk-key', reach: 'settings:access', layoutRoot: '#setbody', layoutBoundary: '.main' },
-  { id: 'settings-server', root: '#sv-base', reach: 'settings:server', layoutRoot: '#setbody', layoutBoundary: '.main' },
-  { id: 'settings-users', root: '#u-add', reach: 'settings:users', layoutRoot: '#setbody', layoutBoundary: '.main' },
-  { id: 'settings-account', root: '#a-cur', reach: 'settings:account', layoutRoot: '#setbody', layoutBoundary: '.main' },
+  { id: 'settings-access', root: '#nk-key', reach: 'settings:access', layoutRoot: '.main', layoutBoundary: '.main' },
+  { id: 'settings-server', root: '#sv-base', reach: 'settings:server', layoutRoot: '.main', layoutBoundary: '.main' },
+  { id: 'settings-users', root: '#u-add', reach: 'settings:users', layoutRoot: '.main', layoutBoundary: '.main' },
+  { id: 'settings-account', root: '#a-cur', reach: 'settings:account', layoutRoot: '.main', layoutBoundary: '.main' },
 ];
 const VISUAL_SURFACE_FAMILIES = {
   'dashboard-tabs': DASHBOARD_VISUAL_SURFACES,
@@ -852,7 +852,7 @@ const VISUAL_SURFACE_FAMILIES = {
 const VISUAL_SURFACES = new Map([
   ...DASHBOARD_VISUAL_SURFACES,
   ...SETTINGS_VISUAL_SURFACES,
-  { id: 'settings-load-error', root: '#setbody .empty', reach: 'settings:load-error', layoutRoot: '#setbody', layoutBoundary: '.main' },
+  { id: 'settings-load-error', root: '#setbody .empty', reach: 'settings:load-error', layoutRoot: '.main', layoutBoundary: '.main' },
   { id: 'setup-step1', root: '#step1', reach: 'setup:step1', layoutRoot: '#step1', layoutBoundary: 'main' },
   { id: 'setup-step2', root: '#step2', reach: 'setup:step2', layoutRoot: '#step2', layoutBoundary: 'main' },
   { id: 'setup-step3', root: '#step3', reach: 'setup:review-after-successful-key', layoutRoot: '#step3', layoutBoundary: 'main' },
@@ -1037,6 +1037,10 @@ function visualCoverageSelftest() {
   const failures = [];
   const complete = completeVisualObservations();
   if (visualCoverageProblems(complete).length) failures.push('visual complete observation set did not pass');
+  if (complete.filter(item => item.surfaceId.startsWith('dashboard-') || item.surfaceId.startsWith('settings-'))
+    .some(item => item.layoutRoot !== '.main')) {
+    failures.push('operator visual layout root is not .main');
+  }
   const target = complete.find(item => item.identity
     === 'state-long-machine-values:long-machine-values:settings-users:en-US:superuser:390x844');
   if (!target) {
