@@ -4408,6 +4408,26 @@ const LAYOUT_CHECKER = `
     }
     return problems;
   }
+
+  function primaryAddRowProblems(rootSelector, context) {
+    const root = document.querySelector(rootSelector);
+    if (!root) return ['layout-unreachable:' + context + ':' + rootSelector];
+    return [...root.querySelectorAll('.addrow > input:not([type="number"])')]
+      .filter(node => {
+        const style = getComputedStyle(node);
+        const rect = node.getBoundingClientRect();
+        return !node.closest('[hidden]')
+          && style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+      })
+      .flatMap(node => {
+        const row = node.parentElement.getBoundingClientRect();
+        const field = node.getBoundingClientRect();
+        if (field.left <= row.left + 1 && field.right >= row.right - 1) return [];
+        const label = node.id ? '#' + node.id : node.tagName.toLowerCase();
+        return ['layout-unusable:' + context + ':' + label + ':primary-not-own-row:'
+          + Math.round(field.width) + '/' + Math.round(row.width)];
+      });
+  }
 `;
 
 async function main() {
@@ -5437,7 +5457,10 @@ async function main() {
       const boundary = ${JSON.stringify(boundarySelector)} === '@viewport'
         ? document.documentElement : document.querySelector(${JSON.stringify(boundarySelector)});
       return {
-        problems: layoutProblems(${JSON.stringify(rootSelector)}, ${JSON.stringify(boundarySelector)}, ${JSON.stringify(context)}),
+        problems: [
+          ...layoutProblems(${JSON.stringify(rootSelector)}, ${JSON.stringify(boundarySelector)}, ${JSON.stringify(context)}),
+          ...primaryAddRowProblems(${JSON.stringify(rootSelector)}, ${JSON.stringify(context)}),
+        ],
         visible: root ? Array.from(root.querySelectorAll('*')).filter(node => {
           const style = getComputedStyle(node), rect = node.getBoundingClientRect();
           return !node.closest('[hidden]') && style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
