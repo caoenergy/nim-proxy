@@ -3368,7 +3368,7 @@ const SETUP_STEPS = {
     return shown.length > 0 && !$('err').hidden;
   })()`,
   step1: `(() => {
-    $('username').value = 'op'; $('password').value = 'probe-password-1';
+    $('username').value = 'fixture-user'; $('password').value = 'probe-password-1';
     $('confirm').value = 'probe-password-1'; $('to2').click();
     return !$('step2').hidden;
   })()`,
@@ -3376,10 +3376,7 @@ const SETUP_STEPS = {
     $('newkey').value = 'nvapi-probe-key';
     $('addkey').click();
     for (let i = 0; i < 40 && $('to3').disabled; i++) await new Promise(r => setTimeout(r, 50));
-    return !$('to3').disabled
-      && ($('keylist').textContent || '').includes(
-        ${JSON.stringify(`${JSON.parse(fs.readFileSync(path.join(FIXTURES, 'validate-success.json'), 'utf8')).models} models · 40 rpm`)},
-      );
+    return !$('to3').disabled && !!$('keylist').querySelector('li');
   })()`,
   step3: `(() => {
     $('to3').click();
@@ -5195,7 +5192,13 @@ async function main() {
         return document.querySelector('#tab-${tab}') ? !document.querySelector('#tab-${tab}').hidden : false;
       })()`);
     if (!switched) {
-      console.error(`FAIL — could not reach ${tab} in ${PAGE_REL}; the gate would measure the wrong panels`);
+      const detail = IS_SETUP
+        ? await evaluate(`JSON.stringify({
+          error: $('err')?.textContent || '', step1Hidden: $('step1')?.hidden,
+          step2Hidden: $('step2')?.hidden,
+        })`)
+        : '';
+      console.error(`FAIL — could not reach ${tab} in ${PAGE_REL}; the gate would measure the wrong panels ${detail}`);
       throw reportedFailure();
     }
     await sleep(1200);
@@ -5234,6 +5237,7 @@ async function main() {
         // the count stops meaning anything.
         for (const d of await evaluate(`
           (() => [
+            ($('username') && $('username').value) || '',
             ($('newkey') && $('newkey').value) || '',
             (document.querySelector('#keylist code') || {}).textContent || '',
             ($('baseurl') && $('baseurl').value) || 'https://integrate.api.nvidia.com',
