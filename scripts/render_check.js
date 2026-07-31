@@ -925,10 +925,12 @@ const DOM_CONTRACTS = {
   'dialog-client-secret-open': [
     domContract('dialog-open', `document.querySelector('#modal')?.open ?? false`, true),
     domContract('done-control-present', `!!document.querySelector('#modal-done')`, true),
+    domContract('dialog-focus-contained', `document.activeElement?.matches('#modal-copy') ?? false`, true),
     domContract('secret-byte-exact', `document.querySelector('#modal-body .secretbox')?.textContent ?? null`, 'npk_fixture_secret'),
   ],
   'dialog-client-secret-close': [
     domContract('dialog-closed', `document.querySelector('#modal')?.open ?? null`, false),
+    domContract('dialog-focus-returned', `document.activeElement?.matches('#ck-add') ?? false`, true),
   ],
   'dialog-confirm-cancel-focus-return': [
     domContract('destructive-control-retained', `!!document.querySelector('[data-kdel="0"]')`, true),
@@ -5032,10 +5034,14 @@ async function main() {
     }
     const operatorRequests = [...requestedPresentation]
       .filter(pathname => pathname.startsWith('/assets/operator/'));
+    const semanticProblems = semanticSelftest
+      ? await evaluate(`(() => { ${SEMANTIC_CHECKER}; return semanticProblems(document, []); })()`)
+      : [];
     await cleanupRun();
-    if (loginFailure || operatorRequests.length || errors.length || consoleErrors.length) {
+    if (loginFailure || operatorRequests.length || semanticProblems.length || errors.length || consoleErrors.length) {
       console.error('FAIL — login render violated its public catalog boundary');
       if (loginFailure) console.error(`  ${loginFailure}`);
+      if (semanticProblems.length) console.error(`  semantic: ${semanticProblems.join(', ')}`);
       for (const pathname of operatorRequests) {
         console.error(`  requested operator asset ${pathname}`);
       }
@@ -5043,6 +5049,7 @@ async function main() {
       for (const error of consoleErrors) console.error(`  console: ${error}`);
       throw reportedFailure();
     }
+    if (semanticSelftest) console.log('semantic served-page check ok — login landmark and labeled native form');
     console.log('rendered anonymous login from the public catalog');
     console.log('render ok — no uncaught page errors');
     return;
