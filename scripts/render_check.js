@@ -6112,16 +6112,45 @@ async function main() {
       ${LAYOUT_CHECKER}
       const boundary = document.createElement('div');
       boundary.id = 'layout-selftest-boundary';
-      boundary.style.cssText = 'position:fixed;left:0;top:0;width:20px;height:20px;overflow:hidden';
+      boundary.style.cssText = 'position:fixed;left:0;top:0;width:120px;height:120px;overflow:hidden';
       const clipped = document.createElement('span');
       clipped.id = 'layout-selftest-clipped';
       clipped.style.cssText = 'display:block;width:40px;height:10px';
       clipped.textContent = 'clipped';
+      const input = document.createElement('input');
+      input.id = 'layout-selftest-input';
+      input.style.cssText = 'display:block;width:20px;box-sizing:border-box';
+      input.value = 'a deliberately long editable value';
+      const ellipsis = document.createElement('span');
+      ellipsis.id = 'layout-selftest-ellipsis';
+      ellipsis.style.cssText = 'display:block;width:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+      ellipsis.textContent = 'a deliberately long display value';
+      const addrow = document.createElement('div');
+      addrow.className = 'addrow';
+      addrow.style.cssText = 'display:flex;width:100px';
+      const addInput = document.createElement('input');
+      addInput.id = 'layout-selftest-add-input';
+      addInput.style.cssText = 'width:20px;box-sizing:border-box';
+      addrow.append(addInput);
       boundary.append(clipped);
+      boundary.append(input, ellipsis, addrow);
       document.body.append(boundary);
       const problems = layoutProblems('#layout-selftest-boundary', '#layout-selftest-boundary', 'layout-selftest');
+      const widePrimary = primaryAddRowProblems('#layout-selftest-boundary', 'layout-selftest-wide', 768);
+      const narrowPrimary = primaryAddRowProblems('#layout-selftest-boundary', 'layout-selftest-narrow', 390);
       boundary.remove();
-      return problems.some(problem => problem.startsWith('layout-clipped:layout-selftest:#layout-selftest-clipped')) ? [] : ['clipped-element'];
+      const failures = [];
+      if (!problems.some(problem => problem.startsWith('layout-clipped:layout-selftest:#layout-selftest-clipped')))
+        failures.push('clipped-element');
+      if (problems.some(problem => problem.includes('#layout-selftest-input:intrinsic')))
+        failures.push('input-intrinsic-exemption');
+      if (problems.some(problem => problem.includes('#layout-selftest-ellipsis:intrinsic')))
+        failures.push('ellipsis-intrinsic-exemption');
+      if (widePrimary.some(problem => problem.includes('#layout-selftest-add-input:primary-not-own-row')))
+        failures.push('wide-primary-row-exemption');
+      if (!narrowPrimary.some(problem => problem.includes('#layout-selftest-add-input:primary-not-own-row')))
+        failures.push('narrow-primary-row-preserved');
+      return failures;
     })()`);
     if (layoutSelftestFailures.length) {
       console.error('[layout-selftest] checker missed: ' + layoutSelftestFailures.join(', '));
