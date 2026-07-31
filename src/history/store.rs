@@ -4,7 +4,7 @@
 mod tests {
     use std::fs;
 
-    use super::{open_with_test_failure, FailurePoint, HistoryStore, OpenError};
+    use super::{append_with_test_failure, open_with_test_failure, FailurePoint, HistoryStore, OpenError};
     use crate::history::codec::{decode_record, Capacity, Record, StateEntry, StateKind};
 
     fn capacity() -> Capacity {
@@ -80,6 +80,41 @@ mod tests {
         let error = HistoryStore::open(&dir, 1_000, capacity()).unwrap_err();
         assert!(matches!(error, OpenError::InvalidCanonical { .. }));
         assert_eq!(fs::read(path).unwrap(), before);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn structurally_invalid_canonical_streams_refuse_before_fresh_boot_append() {
+        let boot = b"{\"format\":\"nimproxy-history\",\"v\":1,\"kind\":\"boot\",\"timestamp\":10,\"boot_id\":\"boot-a\",\"capacity\":{\"capacity_rpm\":80,\"enabled_keys\":2,\"key_rpms\":[40,40]}}\n";
+        let sample_a = b"{\"format\":\"nimproxy-history\",\"v\":1,\"kind\":\"sample\",\"timestamp\":11,\"boot_id\":\"boot-a\",\"capacity\":{\"capacity_rpm\":80,\"enabled_keys\":2,\"key_rpms\":[40,40]},\"state\":[]}\n";
+        let sample_b = b"{\"format\":\"nimproxy-history\",\"v\":1,\"kind\":\"sample\",\"timestamp\":11,\"boot_id\":\"boot-b\",\"capacity\":{\"capacity_rpm\":80,\"enabled_keys\":2,\"key_rpms\":[40,40]},\"state\":[]}\n";
+        let checkpoint_b = b"{\"format\":\"nimproxy-history\",\"v\":1,\"kind\":\"checkpoint\",\"timestamp\":11,\"boot_id\":\"boot-b\",\"capacity\":{\"capacity_rpm\":80,\"enabled_keys\":2,\"key_rpms\":[40,40]}}\n";
+        let checkpoint_a = b"{\"format\":\"nimproxy-history\",\"v\":1,\"kind\":\"checkpoint\",\"timestamp\":11,\"boot_id\":\"boot-a\",\"capacity\":{\"capacity_rpm\":80,\"enabled_keys\":2,\"key_rpms\":[40,40]}}\n";
+        let sample_mismatch = [boot.as_slice(), sample_b.as_slice()].concat();
+        let checkpoint_mismatch = [boot.as_slice(), checkpoint_b.as_slice()].concat();
+        let regression = [boot.as_slice(), sample_a.as_slice(), boot.as_slice()].concat();
+        for (name, bytes) in [("sample-before-boot", sample_a.as_slice()), ("sample-boot-mismatch", sample_mismatch.as_slice()), ("checkpoint-boot-mismatch", checkpoint_mismatch.as_slice()), ("timestamp-regression", regression.as_slice())] {
+            let dir = test_dir(name);
+            let path = dir.join("history-v1.jsonl");
+            fs::write(&path, bytes).unwrap();
+            assert!(HistoryStore::open(&dir, 20, capacity()).is_err(), "{name}");
+            assert_eq!(fs::read(&path).unwrap(), bytes, "{name} stays evidence");
+            let _ = fs::remove_dir_all(dir);
+        }
+        let dir = test_dir("checkpoint-after-boot");
+        fs::write(dir.join("history-v1.jsonl"), [boot.as_slice(), checkpoint_a.as_slice()].concat()).unwrap();
+        HistoryStore::open(&dir, 20, capacity()).unwrap();
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn final_canonical_record_requires_a_terminating_newline() {
+        let dir = test_dir("unterminated-record");
+        let path = dir.join("history-v1.jsonl");
+        let bytes = b"{\"format\":\"nimproxy-history\",\"v\":1,\"kind\":\"boot\",\"timestamp\":1,\"boot_id\":\"boot-a\",\"capacity\":{\"capacity_rpm\":80,\"enabled_keys\":2,\"key_rpms\":[40,40]}}";
+        fs::write(&path, bytes).unwrap();
+        assert!(HistoryStore::open(&dir, 2, capacity()).is_err());
+        assert_eq!(fs::read(path).unwrap(), bytes);
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -242,23 +277,23 @@ mod tests {
     fn publication_failures_preserve_their_actual_crash_state_and_fire() {
         // This catches tests that merely configure a failure without proving
         // the intended operation was actually reached.
-        for point in [FailurePoint::Create, FailurePoint::Write, FailurePoint::Sync, FailurePoint::Link] {
+        for point in [FailurePoint::TempCreate, FailurePoint::TempWrite, FailurePoint::TempSync, FailurePoint::HardLink] {
             let dir = test_dir("injected");
             let canonical = dir.join("history-v1.jsonl");
             let failure = open_with_test_failure(&dir, 1, capacity(), point);
             assert!(failure.result.is_err(), "{point:?} must reject startup");
             assert_eq!(failure.fired, Some(point), "{point:?} injection must fire");
             assert!(!canonical.exists(), "{point:?} occurs before publication");
-            if point != FailurePoint::Create {
+            if point != FailurePoint::TempCreate {
                 assert!(fs::read_dir(&dir).unwrap().any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with("history-v1.jsonl.tmp-")));
             }
             let _ = fs::remove_dir_all(dir);
         }
         let dir = test_dir("directory-sync");
         let canonical = dir.join("history-v1.jsonl");
-        let failure = open_with_test_failure(&dir, 1, capacity(), FailurePoint::DirectorySync);
+        let failure = open_with_test_failure(&dir, 1, capacity(), FailurePoint::ParentDirectorySync);
         assert!(failure.result.is_err());
-        assert_eq!(failure.fired, Some(FailurePoint::DirectorySync));
+        assert_eq!(failure.fired, Some(FailurePoint::ParentDirectorySync));
         let Record::Boot(_) = decode_record(&fs::read(&canonical).unwrap()).unwrap() else { panic!("directory-sync failure retains linked boot") };
         let _ = fs::remove_dir_all(dir);
     }
@@ -266,7 +301,7 @@ mod tests {
     #[test]
     fn append_and_sync_failures_do_not_hide_partial_tail_evidence() {
         // This catches truncate/repair after a failed restart boot append.
-        for point in [FailurePoint::Append, FailurePoint::Sync] {
+        for point in [FailurePoint::RestartBootAppend, FailurePoint::RestartBootSync] {
             let dir = test_dir("restart-failure");
             HistoryStore::open(&dir, 1, capacity()).unwrap();
             let before = fs::read(dir.join("history-v1.jsonl")).unwrap();
@@ -275,12 +310,26 @@ mod tests {
             assert_eq!(failure.fired, Some(point));
             let after = fs::read(dir.join("history-v1.jsonl")).unwrap();
             assert!(after.starts_with(&before), "failed tail remains evidence");
-            if point == FailurePoint::Append {
+            if point == FailurePoint::RestartBootAppend {
                 assert_eq!(after, before, "append failure writes no new tail");
             } else {
                 assert!(after.len() > before.len(), "sync failure retains partial new boot tail");
             }
             let _ = fs::remove_dir_all(dir);
         }
+    }
+
+    #[test]
+    fn runtime_partial_append_poison_prevents_the_next_tick_from_mutating_history() {
+        let dir = test_dir("runtime-poison");
+        let mut store = HistoryStore::open(&dir, 1, capacity()).unwrap();
+        let path = dir.join("history-v1.jsonl");
+        let failed = append_with_test_failure(&mut store, 2, capacity(), state(1.0), FailurePoint::RuntimePartialAppend);
+        assert!(failed.result.is_err());
+        assert_eq!(failed.fired, Some(FailurePoint::RuntimePartialAppend));
+        let after_failed_tick = fs::read(&path).unwrap();
+        assert!(store.append_sample(3, capacity(), state(2.0)).is_err());
+        assert_eq!(fs::read(path).unwrap(), after_failed_tick);
+        let _ = fs::remove_dir_all(dir);
     }
 }

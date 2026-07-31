@@ -3178,7 +3178,7 @@ async fn history_startup_is_fail_closed() {
         ("corrupt", b"{not canonical}\n".as_slice()),
         (
             "future",
-            br#"{"format":"nimproxy-history","v":2,"kind":"boot","timestamp":1,"boot_id":"future","capacity":{"capacity_rpm":80,"enabled_keys":2,"key_rpms":[40,40]}}\n"#,
+            b"{\"format\":\"nimproxy-history\",\"v\":2,\"kind\":\"boot\",\"timestamp\":1,\"boot_id\":\"future\",\"capacity\":{\"capacity_rpm\":80,\"enabled_keys\":2,\"key_rpms\":[40,40]}}\n",
         ),
     ] {
         let data_dir = scratch_data_dir();
@@ -3244,6 +3244,73 @@ async fn legacy_history_is_warned_once_without_parsing_or_mutating_it() {
     assert!(stderr.contains(&legacy_bytes.len().to_string()), "{stderr}");
     assert_eq!(std::fs::read(&legacy).unwrap(), legacy_bytes);
     let _ = std::fs::remove_dir_all(data_dir);
+}
+
+#[tokio::test]
+async fn stale_canonical_temporaries_are_counted_once_without_inspection_or_deletion() {
+    let mock = start_mock().await;
+    let data_dir = scratch_data_dir();
+    std::fs::write(
+        data_dir.join("config.json"),
+        serde_json::to_vec_pretty(&StoreOpts::default().json(&mock.url)).unwrap(),
+    )
+    .unwrap();
+    let stale = data_dir.join("history-v1.jsonl.tmp-crash-evidence");
+    let stale_bytes = b"partial canonical temporary";
+    std::fs::write(&stale, stale_bytes).unwrap();
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_nim-proxy"))
+        .env_clear()
+        .current_dir(std::env::temp_dir())
+        .env("PORT", port.to_string())
+        .env("DATA_DIR", &data_dir)
+        .env("RUST_LOG", "nim_proxy=warn")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if client()
+            .get(format!("http://127.0.0.1:{port}/health"))
+            .send()
+            .await
+            .is_ok_and(|response| response.status().is_success())
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "proxy did not become healthy");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    child.kill().unwrap();
+    let output = child.wait_with_output().unwrap();
+    let output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.matches("stale canonical history temporaries").count(), 1, "{output}");
+    assert!(!output.contains(&stale.display().to_string()), "{output}");
+    assert_eq!(std::fs::read(&stale).unwrap(), stale_bytes);
+    let _ = std::fs::remove_dir_all(data_dir);
+}
+
+#[tokio::test]
+async fn api_config_history_file_bytes_reports_canonical_history() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[("HISTORY_SAMPLE_SECS", "3600")]).await;
+    let cookie = login(&proxy).await;
+    let configured = api_config(&proxy, &cookie).await;
+    let canonical_bytes = std::fs::metadata(proxy.data_dir.join("history-v1.jsonl"))
+        .unwrap()
+        .len();
+    assert!(canonical_bytes > 0);
+    assert_eq!(configured["server"]["history"]["file_bytes"], canonical_bytes);
+    assert!(!proxy.data_dir.join("history.jsonl").exists());
 }
 
 #[tokio::test]
