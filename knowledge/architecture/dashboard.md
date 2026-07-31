@@ -148,7 +148,7 @@ The browser fixture authority is the 21 stable JSON files in
 production response types. Dashboard metric fixtures derive histogram bounds
 from the same `HISTOGRAM_BUCKETS` registry the recorder uses, with concrete
 samples producing their bucket counts and sums; the browser does not maintain
-another metric model. The 54-row served-app matrix consumes those files or
+another metric model. The 55-row served-app matrix consumes those files or
 `scenarios.json#scenario` at the HTTP boundary and records exact requests,
 DOM results, and clean-run observations. Its rows include Settings dialogs,
 validation/toast transitions, raw API errors, the catalog-owned status fallback,
@@ -230,11 +230,20 @@ than dashboard compact-number formatting.
 The operator page has one native `main` and page heading, native navigation
 buttons (not incomplete ARIA tabs), native tables, and a native `dialog` for
 the one-time client secret. Opening that dialog focuses Copy; Done closes it
-and returns focus to the client-key action. Settings' compact toggles remain
-native buttons with `aria-pressed` and catalog-owned accessible names.
+and returns focus to the client-key action. Escape follows the same close and
+focus-return path. Settings' compact toggles remain native buttons with
+`aria-pressed` and catalog-owned accessible names.
 
 The Models tool-call value is an atomic formatted value: it may claim the
 space it needs but never wraps its count/separator/rate composite. Model
 presentation keeps the vendor/model split, while the rendered model component
 is byte-for-byte the raw component supplied by the API—no title casing,
 separator rewriting, or localization.
+
+Responsive layout is content-driven rather than locale-specific. Range
+controls and status text may wrap, fixed-width form controls may shrink, and
+Settings stacks before translated labels or machine values clip. The visual
+gate resolves 224 applicable page/state/viewport/locale surfaces, captures each
+full document at 390, 768, 900, and 1440 CSS-pixel widths, and records layout
+and PNG geometry for mechanical verification. Human review of those artifacts
+remains required because clean geometry does not prove visual hierarchy.
