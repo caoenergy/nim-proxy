@@ -1068,3 +1068,27 @@ order. The pre-fix date parser rejected the trailing `2026-07-30` entry and
 the placement assertion rejected Task 3 as the first dated heading; after the
 fix, both focused assertions plus the guide self-test, normal validator, and
 `git diff --check` passed. Independent review found no findings.
+
+---
+
+## Delegation-contract amendment — 2026-07-30
+
+- **Outcome:** make delegated work a complete management contract so ambiguous
+  context, oversized tasks, and missing exhaustion instructions are corrected
+  at the delegating agent rather than converted into repeated reminders or
+  worker blame.
+- **Proof:** committed RED `1a4f38b` adds an eleventh independent validator
+  fixture and makes normal validation fail on the unchanged guide with
+  `[contract:work] AGENTS.md: missing 'Delegation is a management boundary'`.
+- **Constraint:** keep `AGENTS.md` succinct and stable. Put full rationale in
+  the existing OKF agent-instruction decision; add no new concept, schema,
+  dependency, generated index, or agent-management machinery.
+- **Ponytail Rung:** 2. Extend the existing guide contract, validator, OKF
+  decision, semantic index path, and chronology.
+- [x] **Act:** add one compact guide paragraph; define the complete handoff and
+  exhaustion boundary in `okf-query-ingest-lint.md`; add a newest-first log
+  entry; reconcile Task 9's merged execution state.
+- [x] **Verify:** both agent-guide modes, Python syntax, Cargo formatting, and
+  structural diff are green. Independent semantic review returned APPROVE with
+  no findings after checking every changed file and rerunning both guide modes
+  plus `git diff --check`.

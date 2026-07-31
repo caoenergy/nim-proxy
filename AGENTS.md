@@ -80,6 +80,13 @@ item receives an independent review before commit. If no independent agent
 exists, record that limitation and obtain a fresh-context or owner review;
 never claim independence that did not occur.
 
+Delegation is a management boundary, not an accountability transfer. A
+handoff defines the operating environment, Outcome, Proof, Constraint,
+Ponytail Rung, exact scope and exclusions, authorized actions, and exhaustion
+behavior—what to do when it runs out of can-do. The delegating agent owns task
+sizing and ambiguity; when a delegate diverges, first correct the contract or
+split the task instead of layering reminders or blaming the worker.
+
 ## Memory: Query → Ingest → Lint
 
 - **Query:** active plan → semantic index → `rg -n -i` terms and synonyms →

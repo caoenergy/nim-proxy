@@ -33,6 +33,7 @@ REQUIRED = {
         "Scope deltas",
         "red → green",
         "independent review",
+        "Delegation is a management boundary",
     ),
     "contract:repository": (
         "## Repository operations",
@@ -98,6 +99,12 @@ CASES = {
         "AGENTS.md",
         "independent review",
         "self review",
+    ),
+    "missing-delegation": (
+        "contract:work",
+        "AGENTS.md",
+        "Delegation is a management boundary",
+        "Delegation transfers accountability",
     ),
     "missing-repository": (
         "contract:repository",
