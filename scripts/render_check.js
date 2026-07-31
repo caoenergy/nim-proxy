@@ -972,6 +972,7 @@ function completeVisualObservations(rows = INTERACTION_ROWS) {
     artifactWritten: true,
     reached: true,
     rootVisible: true,
+    renderedLocale: item.locale,
     capture: completeVisualCapture(item),
     layoutProblems: [],
     pageErrors: [],
@@ -1017,6 +1018,11 @@ function visualCoverageProblems(observations, rows = INTERACTION_ROWS) {
       problems.push(`visual-coverage:${item.identity}:root-mismatch`);
     } else if (!observed.reached || !observed.rootVisible) {
       problems.push(`visual-coverage:${item.identity}:root-unreached`);
+    }
+    if (!observed.renderedLocale) {
+      problems.push(`visual-coverage:${item.identity}:locale-provenance-missing`);
+    } else if (observed.renderedLocale !== item.locale) {
+      problems.push(`visual-coverage:${item.identity}:locale-provenance-mismatch:${item.locale}:${observed.renderedLocale}`);
     }
     problems.push(...visualCaptureProblems(item, observed.capture));
     observationDetails(observed, item, 'layoutProblems', 'layout');
@@ -1072,6 +1078,17 @@ function visualCoverageSelftest() {
       capture: { ...item.capture, png: { ...item.capture.png, height: 1199 } },
     } : item),
     `visual-coverage:${target.identity}:png-dimensions-mismatch`);
+  const localeTarget = complete.find(item => item.identity
+    === 'startup-dashboard-healthy:dashboard-healthy:dashboard-overview:en-XA:superuser:390x844');
+  if (!localeTarget) {
+    failures.push('en-XA dashboard visual case is missing');
+  } else {
+    expectOnly('en-XA locale provenance mutation',
+      complete.map(item => item.identity === localeTarget.identity
+        ? { ...item, renderedLocale: 'en-US' }
+        : item),
+      `visual-coverage:${localeTarget.identity}:locale-provenance-mismatch:en-XA:en-US`);
+  }
   const unexpectedScroller = {
     selector: '#unexpected-scroll-pane',
     geometry: { left: 0, top: 0, width: 120, height: 120, scrollHeight: 240, clientHeight: 120 },
@@ -4840,7 +4857,11 @@ async function captureCurrentVisualItems({ items, artifactDir, drafts }, context
         };
         const root = document.querySelector(${JSON.stringify(item.root)});
         const owner = document.querySelector(${JSON.stringify(item.layoutRoot)});
-        return { rootVisible: visible(root), ownerVisible: visible(owner) };
+        return {
+          rootVisible: visible(root),
+          ownerVisible: visible(owner),
+          renderedLocale: document.documentElement.lang,
+        };
       })()`);
       rootVisible = state.rootVisible;
       reached = state.rootVisible && state.ownerVisible;
@@ -4932,6 +4953,7 @@ async function captureCurrentVisualItems({ items, artifactDir, drafts }, context
       artifactWritten,
       reached,
       rootVisible,
+      renderedLocale: state.renderedLocale,
       capture,
       layoutProblems: layoutProblemsForItem,
       layoutMeasurements,
