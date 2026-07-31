@@ -158,7 +158,7 @@ def tagged(source: str, attr: str):
 #   - NEVER_TRANSLATE holds the units and codes that must survive verbatim.
 
 NEVER_TRANSLATE = {
-    "TTFT", "TPOT", "tok/s", "Tools/req", "Msgs/req", "p50 / p95", "p50", "p95",
+    "TTFT", "TPOT", "tok", "tok/s", "Tools/req", "Msgs/req", "p50 / p95", "p50", "p95",
     "requests / min", "req/min", "rpm", "JSON", "HTTP", "POST", "SLO", "NIM",
     "/v1", "%", "429", "401", "503", "504", "5xx",
     "requests/min", "nvapi-\u2026", "npk_\u2026",
@@ -567,6 +567,12 @@ def lint_untagged(name: str, raw: str) -> list:
             # statement boundary in between.
             if gov and not ARG_BOUNDARY.search(window[gov.end():]):
                 continue
+            # className assignments are CSS state, even where a conditional
+            # puts the chosen class farther than the ordinary lookback window.
+            # Keep this to the current statement so it cannot hide a later
+            # display string on the same source line.
+            if re.search(r"\.className\s*=", before.rsplit(";", 1)[-1]):
+                continue
             # `class="logo cdnchip"` is an attribute value, not display text.
             if ATTR_VALUE.search(before):
                 continue
@@ -634,7 +640,7 @@ class _MarkupTextOwnership(HTMLParser):
         text = data.strip()
         if not text or not looks_like_prose(text):
             return
-        if any("data-i18n" in attrs for _, attrs in self.stack):
+        if any(any(key.startswith("data-i18n") for key in attrs) for _, attrs in self.stack):
             return
         line, column = self.getpos()
         offset = sum(len(line) + 1 for line in self.source.splitlines()[:line - 1]) + column
@@ -796,6 +802,8 @@ SELFTEST_CASES = [
     ("css-declaration", "const z = 'display:flex;gap:20px';", None),
     ("css-single-value", "const z = 'position:relative';", None),
     ("class-attribute", 'const z = `<div class="logo cdnchip"></div>`;', None),
+    ("class-assignment", "el.className = ready ? 'live' : 'live idle';", None),
+    ("class-adjacent-display", "el.className = 'live idle'; el.textContent = 'Some fresh label here';", "unowned-ui-string"),
     ("real-machinery", "document.querySelector('#tab-models');", None),
     ("frozen-unit", "const z = 'tok/s';", None),
     ("lowercase-token", "const z = 'sticky';", None),

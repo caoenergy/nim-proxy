@@ -7,6 +7,10 @@
       "desc": "Product name.",
       "hash": "1e2b099a"
     },
+    "dashboard.brand.proxy": {
+      "en": "Proxy",
+      "hash": "a68ee416"
+    },
     "dashboard.capacity.col.429s": {
       "en": "429s",
       "desc": "Column header. '429' is an HTTP status and must survive verbatim.",
@@ -132,6 +136,42 @@
     "dashboard.capacity.row.slots_in_use": {
       "en": "Enabled keys",
       "hash": "226de726"
+    },
+    "dashboard.capacity.slot": {
+      "en": "Slot {n}",
+      "hash": "18616a78"
+    },
+    "dashboard.chart.active": {
+      "en": "Active",
+      "hash": "92340695"
+    },
+    "dashboard.chart.disconnects": {
+      "en": "Disconnects",
+      "hash": "5c92edf8"
+    },
+    "dashboard.chart.errors": {
+      "en": "Errors",
+      "hash": "cb702378"
+    },
+    "dashboard.chart.median": {
+      "en": "median",
+      "hash": "7896a617"
+    },
+    "dashboard.chart.p95": {
+      "en": "p95",
+      "hash": "f771f4d3"
+    },
+    "dashboard.chart.queued": {
+      "en": "Queued",
+      "hash": "661ff40a"
+    },
+    "dashboard.chart.requests_per_min": {
+      "en": "Requests/min",
+      "hash": "ee05a90c"
+    },
+    "dashboard.chart.success": {
+      "en": "Success",
+      "hash": "c88a0b90"
     },
     "dashboard.clients.depth.heading": {
       "en": "Conversation depth",
@@ -415,6 +455,10 @@
       "desc": "Badge on a card heading: this figure is the live instant, not an aggregate over the selected time range. Adverb of time.",
       "hash": "fe18013d"
     },
+    "dashboard.common.value.now": {
+      "en": "{value} now",
+      "hash": "dc1a4806"
+    },
     "dashboard.modal.secret.heading": {
       "en": "One-time secret",
       "hash": "04a195c4"
@@ -449,6 +493,54 @@
     "dashboard.models.col.truncated": {
       "en": "Truncated",
       "hash": "d9d9fcf3"
+    },
+    "dashboard.models.count.few": {
+      "en": "{n} models",
+      "hash": "a394ccda"
+    },
+    "dashboard.models.count.many": {
+      "en": "{n} models",
+      "hash": "a394ccda"
+    },
+    "dashboard.models.count.one": {
+      "en": "{n} model",
+      "hash": "8044e016"
+    },
+    "dashboard.models.count.other": {
+      "en": "{n} models",
+      "hash": "a394ccda"
+    },
+    "dashboard.models.count.two": {
+      "en": "{n} models",
+      "hash": "a394ccda"
+    },
+    "dashboard.models.count.zero": {
+      "en": "{n} models",
+      "hash": "a394ccda"
+    },
+    "dashboard.models.count_with_sort.few": {
+      "en": "{n} models · click a column to sort",
+      "hash": "b8a32ca0"
+    },
+    "dashboard.models.count_with_sort.many": {
+      "en": "{n} models · click a column to sort",
+      "hash": "b8a32ca0"
+    },
+    "dashboard.models.count_with_sort.one": {
+      "en": "{n} model · click a column to sort",
+      "hash": "148617d0"
+    },
+    "dashboard.models.count_with_sort.other": {
+      "en": "{n} models · click a column to sort",
+      "hash": "b8a32ca0"
+    },
+    "dashboard.models.count_with_sort.two": {
+      "en": "{n} models · click a column to sort",
+      "hash": "b8a32ca0"
+    },
+    "dashboard.models.count_with_sort.zero": {
+      "en": "{n} models · click a column to sort",
+      "hash": "b8a32ca0"
     },
     "dashboard.models.empty.no_reasoning": {
       "en": "No reasoning tokens",
@@ -525,6 +617,18 @@
       "en": "top models head to head · best in each column highlighted",
       "hash": "91939a12"
     },
+    "dashboard.models.stat.median": {
+      "en": "median {value}",
+      "hash": "6a59ac2c"
+    },
+    "dashboard.models.stat.p95": {
+      "en": "p95 {value}",
+      "hash": "1b5e500c"
+    },
+    "dashboard.models.stat.tool_calls_per_request": {
+      "en": "{calls} · {per_request}/req",
+      "hash": "321ebcce"
+    },
     "dashboard.models.tokens_per_min.heading": {
       "en": "Completion tokens per minute",
       "hash": "0b7c1721"
@@ -548,6 +652,54 @@
     "dashboard.models.upstream.heading": {
       "en": "Upstream latency",
       "hash": "4d1a7ea7"
+    },
+    "dashboard.nav.footer.api_key_required.few": {
+      "en": "v{version} · {keys} keys · API key required",
+      "hash": "d0138474"
+    },
+    "dashboard.nav.footer.api_key_required.many": {
+      "en": "v{version} · {keys} keys · API key required",
+      "hash": "d0138474"
+    },
+    "dashboard.nav.footer.api_key_required.one": {
+      "en": "v{version} · {keys} key · API key required",
+      "hash": "2495b67e"
+    },
+    "dashboard.nav.footer.api_key_required.other": {
+      "en": "v{version} · {keys} keys · API key required",
+      "hash": "d0138474"
+    },
+    "dashboard.nav.footer.api_key_required.two": {
+      "en": "v{version} · {keys} keys · API key required",
+      "hash": "d0138474"
+    },
+    "dashboard.nav.footer.api_key_required.zero": {
+      "en": "v{version} · {keys} keys · API key required",
+      "hash": "d0138474"
+    },
+    "dashboard.nav.footer.open.few": {
+      "en": "v{version} · {keys} keys · Open (no authentication)",
+      "hash": "6b524fb3"
+    },
+    "dashboard.nav.footer.open.many": {
+      "en": "v{version} · {keys} keys · Open (no authentication)",
+      "hash": "6b524fb3"
+    },
+    "dashboard.nav.footer.open.one": {
+      "en": "v{version} · {keys} key · Open (no authentication)",
+      "hash": "094c6383"
+    },
+    "dashboard.nav.footer.open.other": {
+      "en": "v{version} · {keys} keys · Open (no authentication)",
+      "hash": "6b524fb3"
+    },
+    "dashboard.nav.footer.open.two": {
+      "en": "v{version} · {keys} keys · Open (no authentication)",
+      "hash": "6b524fb3"
+    },
+    "dashboard.nav.footer.open.zero": {
+      "en": "v{version} · {keys} keys · Open (no authentication)",
+      "hash": "6b524fb3"
     },
     "dashboard.nav.live.connecting": {
       "en": "connecting",
@@ -601,6 +753,14 @@
       "en": "Capacity & reliability",
       "hash": "fa267d5d"
     },
+    "dashboard.overview.kpi.success_counts": {
+      "en": "{ok} of {requests}",
+      "hash": "b15c5ac8"
+    },
+    "dashboard.overview.kpi.tokens_in": {
+      "en": "{tokens} in",
+      "hash": "b48a8ba7"
+    },
     "dashboard.overview.perf.higher_is_better": {
       "en": "higher is better",
       "desc": "Note beside a throughput distribution: larger numbers are better. Lowercase, sits under the card heading.",
@@ -619,10 +779,58 @@
       "en": "median & p95 across the time range",
       "hash": "3f0caaba"
     },
+    "dashboard.overview.ring.capacity_sub.few": {
+      "en": "{rpm_now} / {rpm_capacity} rpm · {n} keys",
+      "hash": "9fa2e113"
+    },
+    "dashboard.overview.ring.capacity_sub.many": {
+      "en": "{rpm_now} / {rpm_capacity} rpm · {n} keys",
+      "hash": "9fa2e113"
+    },
+    "dashboard.overview.ring.capacity_sub.one": {
+      "en": "{rpm_now} / {rpm_capacity} rpm · {n} key",
+      "hash": "ba394345"
+    },
+    "dashboard.overview.ring.capacity_sub.other": {
+      "en": "{rpm_now} / {rpm_capacity} rpm · {n} keys",
+      "hash": "9fa2e113"
+    },
+    "dashboard.overview.ring.capacity_sub.two": {
+      "en": "{rpm_now} / {rpm_capacity} rpm · {n} keys",
+      "hash": "9fa2e113"
+    },
+    "dashboard.overview.ring.capacity_sub.zero": {
+      "en": "{rpm_now} / {rpm_capacity} rpm · {n} keys",
+      "hash": "9fa2e113"
+    },
     "dashboard.overview.ring.capacity_used": {
       "en": "Capacity used",
       "desc": "Ring-gauge label. Share of the key pool's configured requests-per-minute currently in use.",
       "hash": "9448656c"
+    },
+    "dashboard.overview.ring.errors.few": {
+      "en": "errors {pct} · {cooldowns} cooldowns",
+      "hash": "17ac4dc4"
+    },
+    "dashboard.overview.ring.errors.many": {
+      "en": "errors {pct} · {cooldowns} cooldowns",
+      "hash": "17ac4dc4"
+    },
+    "dashboard.overview.ring.errors.one": {
+      "en": "errors {pct} · {cooldowns} cooldown",
+      "hash": "0e735443"
+    },
+    "dashboard.overview.ring.errors.other": {
+      "en": "errors {pct} · {cooldowns} cooldowns",
+      "hash": "17ac4dc4"
+    },
+    "dashboard.overview.ring.errors.two": {
+      "en": "errors {pct} · {cooldowns} cooldowns",
+      "hash": "17ac4dc4"
+    },
+    "dashboard.overview.ring.errors.zero": {
+      "en": "errors {pct} · {cooldowns} cooldowns",
+      "hash": "17ac4dc4"
     },
     "dashboard.overview.top_clients.heading": {
       "en": "Top clients",
@@ -778,6 +986,14 @@
       "desc": "Separator between the from and to datetime inputs. Preposition, not a verb.",
       "hash": "663ea1bf"
     },
+    "dashboard.topbar.error.load": {
+      "en": "Failed to load time range",
+      "hash": "3f4d86a6"
+    },
+    "dashboard.topbar.error.resume": {
+      "en": "Failed to resume time range",
+      "hash": "5bcd9d8e"
+    },
     "dashboard.topbar.range.all_time": {
       "en": "All time",
       "hash": "9755c8d7"
@@ -791,6 +1007,10 @@
       "en": "Default · 30d",
       "desc": "Toggle button. 'Default' is an adjective qualifying the preset time range; 30d is its length.",
       "hash": "4c1bd988"
+    },
+    "dashboard.topbar.range.default_dynamic": {
+      "en": "Default · {days}d",
+      "hash": "b8f2d75f"
     },
     "dashboard.topbar.range.p1h": {
       "en": "1h",
@@ -816,6 +1036,14 @@
       "en": "7d",
       "desc": "Short duration abbreviation on a time-range pill.",
       "hash": "a7c74264"
+    },
+    "dashboard.topbar.scope.absolute": {
+      "en": "○ Absolute {from} – {to}",
+      "hash": "49041a3c"
+    },
+    "dashboard.topbar.scope.following": {
+      "en": "● Live {preset} {from} – {to}",
+      "hash": "f24435d2"
     },
     "login.document.title": {
       "en": "NIM Proxy — Sign in",

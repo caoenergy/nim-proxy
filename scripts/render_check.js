@@ -3285,6 +3285,11 @@ async function startProxy(tmpdir, setupRequired = IS_SETUP) {
 /* ---------- the run -------------------------------------------------------- */
 
 
+const isGeneratedFrozenP95 = text =>
+  /^\[p95 (?:–|(?:0|[1-9]\d{0,2}(?:,\d{3})*)\.\d sec|(?:0|[1-9]\d{0,2}(?:,\d{3})*) (?:ms|min)) e\]$/.test(text);
+const isIntlDurationRun = text =>
+  /^(?:(?:0|[1-9]\d{0,2}(?:,\d{3})*) ms|(?:0|[1-9]\d{0,2}(?:,\d{3})*)\.\d sec|(?:0|[1-9]\d{0,2}(?:,\d{3})*) min)$/.test(text);
+
 // A run of ASCII prose with no accented character, under a locale where every
 // translated message is accented, is a string the catalog never reached.
 const SCAN_UNTRANSLATED = `
@@ -3300,6 +3305,7 @@ const SCAN_UNTRANSLATED = `
       const padding = t.endsWith(']') ? t.slice(0, -1) : t;
       if (padding && [...padding].every((ch, i) => ch === pseudoPad[i % pseudoPad.length]))
         continue;
+      if (${isGeneratedFrozenP95.toString()}(t)) continue;
       if (/[\\u00C0-\\u024F]/.test(t)) continue;   // accented: the catalog reached it
       out.push(t);
     }
@@ -3319,7 +3325,7 @@ const dataLabelValues = (() => {
     const doc = JSON.parse(fs.readFileSync(p, 'utf8'));
     for (const bucket of ['totals', 'latest']) {
       for (const r of doc[bucket] || []) {
-        for (const k of ['model', 'client']) {
+        for (const k of ['model', 'client', 'mode']) {
           const v = (r.labels || {})[k];
           if (v && v !== 'none') out.add(v);
         }
@@ -5421,11 +5427,16 @@ async function main() {
     // Exact match only. Substring matching against data values excludes real
     // labels: a "Mo" monogram swallowed the heatmap's "Mon", and any run
     // containing "rpm" swallowed "0 / 24 rpm · 3 keys", whose "keys" is ours.
-    const isData = (t) => dataDerived.has(t);
+    const isData = (t) => dataDerived.has(t) || [...dataDerived].some(value =>
+      t.startsWith(value + ' ') && /^[0-9.,%]+$/.test(t.slice(value.length + 1)));
     // A run is correctly untranslated only if NOTHING of ours is left once the
     // frozen tokens, digits and punctuation are removed. "tok/s" goes; "24 rpm
     // available" stays, because "available" is a word we wrote.
     const isFrozen = (t) => {
+      // These are already-localized output from Intl.NumberFormat or
+      // Intl.DateTimeFormat. A catalog must not own dynamic numeric/date data.
+      if (isIntlDurationRun(t)) return true;
+      if (/^[A-Z][a-z]{2}\s+\d{1,2}$/.test(t)) return true;
       let rest = t;
       for (const f of [...frozen].sort((a, b) => b.length - a.length)) rest = rest.split(f).join(' ');
       return !/[a-zA-Z]{2,}/.test(rest);
@@ -5490,7 +5501,23 @@ async function main() {
   }
 }
 
-if (args.includes('--cleanup-selftest')) {
+if (args.includes('--pseudolocale-selftest')) {
+  const failures = [];
+  if (!isGeneratedFrozenP95('[p95 25.0 sec e]'))
+    failures.push('generated p95 duration was not recognized');
+  if (isGeneratedFrozenP95('[p95 arbitrary English e]'))
+    failures.push('arbitrary bracketed English was accepted');
+  for (const value of ['25 ms', '25.0 sec', '4 min'])
+    if (!isIntlDurationRun(value)) failures.push(`Intl duration ${JSON.stringify(value)} was not recognized`);
+  for (const value of ['25 sec', '25.00 sec', '25 min later'])
+    if (isIntlDurationRun(value)) failures.push(`non-Intl duration ${JSON.stringify(value)} was accepted`);
+  if (failures.length) {
+    for (const failure of failures) console.error(`[pseudolocale] ${failure}`);
+    process.exitCode = 1;
+  } else {
+    console.log('pseudolocale selftest ok — exact generated and Intl-format exemptions only');
+  }
+} else if (args.includes('--cleanup-selftest')) {
   cleanupSelftest().then(code => process.exit(code)).catch((e) => {
     console.error('cleanup selftest failed to run: ' + e.message);
     process.exit(2);
