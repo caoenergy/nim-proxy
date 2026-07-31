@@ -589,10 +589,9 @@ const LANE_COLORS = ['#76B900', '#4D6BFE', '#D9A521', '#16B8C0', '#615CED', '#EE
    form absent here can never be added by a translation, and ar/ru/pl/cy need
    categories English does not have. Ids are spelled out rather than built from
    the category, so the lint can still see them. */
-const KEY_PLURALS = new Intl.PluralRules(LOCALE);
 const errorCooldownSummary = (share, cooldowns) => {
   const p = { pct: pctOf(share / 100, share && share < 10 ? 1 : 0), cooldowns: fmt(cooldowns) };
-  switch (KEY_PLURALS.select(cooldowns)) {
+  switch (PLURALS.select(cooldowns)) {
     case 'zero': return catalogMessage('dashboard.overview.ring.errors.zero', p);
     case 'one': return catalogMessage('dashboard.overview.ring.errors.one', p);
     case 'two': return catalogMessage('dashboard.overview.ring.errors.two', p);
@@ -603,7 +602,7 @@ const errorCooldownSummary = (share, cooldowns) => {
 };
 const footerInfoId = (keys, auth) => {
   if (auth) {
-    switch (KEY_PLURALS.select(keys)) {
+    switch (PLURALS.select(keys)) {
       case 'zero': return 'dashboard.nav.footer.api_key_required.zero';
       case 'one': return 'dashboard.nav.footer.api_key_required.one';
       case 'two': return 'dashboard.nav.footer.api_key_required.two';
@@ -612,7 +611,7 @@ const footerInfoId = (keys, auth) => {
       default: return 'dashboard.nav.footer.api_key_required.other';
     }
   }
-  switch (KEY_PLURALS.select(keys)) {
+  switch (PLURALS.select(keys)) {
     case 'zero': return 'dashboard.nav.footer.open.zero';
     case 'one': return 'dashboard.nav.footer.open.one';
     case 'two': return 'dashboard.nav.footer.open.two';
@@ -623,7 +622,7 @@ const footerInfoId = (keys, auth) => {
 };
 const capacityKeySummary = (rpmNow, capacity, n) => {
   const p = { rpm_now: fmt(rpmNow), rpm_capacity: fmt(capacity), n: fmt(n) };
-  switch (KEY_PLURALS.select(n)) {
+  switch (PLURALS.select(n)) {
     case 'zero': return catalogMessage('dashboard.overview.ring.capacity_sub.zero', p);
     case 'one': return catalogMessage('dashboard.overview.ring.capacity_sub.one', p);
     case 'two': return catalogMessage('dashboard.overview.ring.capacity_sub.two', p);
@@ -633,7 +632,7 @@ const capacityKeySummary = (rpmNow, capacity, n) => {
   }
 };
 const modelCountId = n => {
-  switch (KEY_PLURALS.select(n)) {
+  switch (PLURALS.select(n)) {
     case 'zero': return 'dashboard.models.count.zero';
     case 'one': return 'dashboard.models.count.one';
     case 'two': return 'dashboard.models.count.two';
@@ -644,7 +643,7 @@ const modelCountId = n => {
 };
 const modelCount = n => catalogMessage(modelCountId(n), { n: fmt(n) });
 const modelCountWithSortId = n => {
-  switch (KEY_PLURALS.select(n)) {
+  switch (PLURALS.select(n)) {
     case 'zero': return 'dashboard.models.count_with_sort.zero';
     case 'one': return 'dashboard.models.count_with_sort.one';
     case 'two': return 'dashboard.models.count_with_sort.two';
@@ -655,7 +654,7 @@ const modelCountWithSortId = n => {
 };
 const enabledKeys = n => {
   const p = { n: fmt(n) };
-  switch (KEY_PLURALS.select(n)) {
+  switch (PLURALS.select(n)) {
     case 'zero': return catalogMessage('dashboard.capacity.note.enabled_keys.zero', p);
     case 'one': return catalogMessage('dashboard.capacity.note.enabled_keys.one', p);
     case 'two': return catalogMessage('dashboard.capacity.note.enabled_keys.two', p);
@@ -668,7 +667,7 @@ const enabledKeys = n => {
    second copy of English grammar in the render path. */
 const unknownIntervals = n => {
   const p = { n: fmt(n) };
-  switch (KEY_PLURALS.select(n)) {
+  switch (PLURALS.select(n)) {
     case 'zero': return catalogMessage('dashboard.capacity.history.no_data.zero', p);
     case 'one': return catalogMessage('dashboard.capacity.history.no_data.one', p);
     case 'two': return catalogMessage('dashboard.capacity.history.no_data.two', p);

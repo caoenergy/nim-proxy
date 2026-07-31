@@ -150,7 +150,7 @@ def tagged(source: str, attr: str):
 # miss in review.
 #
 # Scoped deliberately:
-#   - the settings surface is excluded; its ~79 strings land in 0.6.7
+#   - Settings is included; its static and dynamic strings stay catalog-owned.
 #   - chipHtml's interior is excluded. It interpolates into a URL and (before
 #     this release) a JS context; routing a catalog value through it is the
 #     thing we spent PR 3 removing. Flagging it would invite someone to
@@ -302,6 +302,17 @@ CANONICAL_LOOKUPS = {
     throw new Error\(`forbidden catalog attribute: \$\{attr\}`\);
   node\.setAttribute\(attr, message\(id, params\)\);
 \}""",
+        r"""function confirmMessage\(id, params = \{\}\) \{
+  return confirm\(message\(id, params\)\);
+\}""",
+        r"""function promptMessage\(id, params = \{\}\) \{
+  return prompt\(message\(id, params\)\);
+\}""",
+        r"""const apiError = typeof j\.error === 'string'
+    \? j\.error
+    : \(j\.error && typeof j\.error\.message === 'string' \? j\.error\.message : ''\);
+  if \(!r\.ok \|\| j\.ok === false\)
+    throw new Error\(apiError \|\| message\('settings\.error\.request_failed', \{ status: r\.status \}\)\);""",
     ),
     "src/web/setup.html": (
         r"""function setMessageText\(node, id, params = \{\}\) \{
@@ -573,6 +584,11 @@ def lint_untagged(name: str, raw: str) -> list:
             # display string on the same source line.
             if re.search(r"\.className\s*=", before.rsplit(";", 1)[-1]):
                 continue
+            # `cls:` is the CSS-state field in a returned render descriptor,
+            # never operator copy. Keep the exemption to that exact field;
+            # a later object field remains scanned normally.
+            if re.search(r"\bcls\s*:\s*$", before):
+                continue
             # `class="logo cdnchip"` is an attribute value, not display text.
             if ATTR_VALUE.search(before):
                 continue
@@ -617,6 +633,14 @@ def unowned_ui_string(name: str, source: str, offset: int, detail: str) -> str:
 class _MarkupTextOwnership(HTMLParser):
     """Find ordinary visible markup text that has no catalog-owning ancestor."""
 
+    # HTMLParser emits ordinary ``handle_starttag`` calls for void HTML
+    # elements. They have no end tag to unwind the ownership stack, so pushing
+    # one would let a catalog attribute on an <input> hide every later sibling.
+    VOID_ELEMENTS = {
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr",
+    }
+
     def __init__(self, name: str, source: str):
         super().__init__(convert_charrefs=True)
         self.name = name
@@ -625,7 +649,8 @@ class _MarkupTextOwnership(HTMLParser):
         self.errors = []
 
     def handle_starttag(self, tag, attrs):
-        self.stack.append((tag, dict(attrs)))
+        if tag not in self.VOID_ELEMENTS:
+            self.stack.append((tag, dict(attrs)))
 
     def handle_startendtag(self, tag, attrs):
         pass
@@ -804,6 +829,8 @@ SELFTEST_CASES = [
     ("class-attribute", 'const z = `<div class="logo cdnchip"></div>`;', None),
     ("class-assignment", "el.className = ready ? 'live' : 'live idle';", None),
     ("class-adjacent-display", "el.className = 'live idle'; el.textContent = 'Some fresh label here';", "unowned-ui-string"),
+    ("class-state-field", "const state = { cls: 'kstate dim' };", None),
+    ("class-field-display", "const state = { cls: 'kstate dim', label: 'Some fresh label here' };", "unowned-ui-string"),
     ("real-machinery", "document.querySelector('#tab-models');", None),
     ("frozen-unit", "const z = 'tok/s';", None),
     ("lowercase-token", "const z = 'sticky';", None),
@@ -824,6 +851,10 @@ SOURCE_CLASS_SELFTESTS = [
      "\nconst text = `${cfg.lanes} key${cfg.lanes === 1 ? '' : 's'}`;", lint_plural_suffixes, 2),
     ("settings-label", "src/web/settings.js",
      "\nfunction renderSettings() { const label = 'Unowned settings label'; }", lint_untagged, 2),
+    ("void-tag-does-not-own-following-label", "tests/fixtures/locales/unowned-void.html",
+     '\n<input data-i18n-attr="placeholder:probe"><span>Unowned following label</span>', lint_untagged_markup, 2),
+    ("tagged-ancestor-owns-descendant", "tests/fixtures/locales/owned-ancestor.html",
+     '\n<div data-i18n="probe"><span>Owned descendant label</span></div>', lint_untagged_markup, None),
 ]
 
 SINK_SELFTEST_CASES = [
@@ -1110,7 +1141,12 @@ def selftest() -> int:
 
     for label, name, snippet, check, line in SOURCE_CLASS_SELFTESTS:
         found = check(name, snippet)
-        if (len(found) != 1
+        if line is None:
+            if found:
+                failures.append(f"{label}: expected to pass, got {found!r}")
+            else:
+                print(f"  ok  {label:24} passes")
+        elif (len(found) != 1
                 or "[unowned-ui-string]" not in found[0]
                 or f"{name}:{line}:" not in found[0]):
             failures.append(
@@ -1243,11 +1279,19 @@ def main() -> int:
         # ID-taking sinks or catalogMessage(). The application/json catalog is
         # deliberately excluded, or every orphan would appear referenced.
         js = strip_comments("".join(re.findall(r"<script>(.*?)</script>", raw, re.S)))
-        for m in re.finditer(r"""['"]((?:dashboard|setup|login)\.[a-z0-9_.]+)['"]""", js):
+        for m in re.finditer(r"""['"]((?:dashboard|settings|setup|login)\.[a-z0-9_.]+)['"]""", js):
             mid = m.group(1)
             referenced.add(mid)
             if mid not in catalog:
                 errors.append(f"{name}: message id {mid!r} has no catalog entry")
+        for m in re.finditer(
+            r"""data-i18n(?:-attr)?=["'][^"']*?((?:dashboard|settings|setup|login)\.[a-z0-9_.]+)""",
+            js,
+        ):
+            mid = m.group(1)
+            referenced.add(mid)
+            if mid not in catalog:
+                errors.append(f"{name}: declarative message id {mid!r} has no catalog entry")
 
     for mid in catalog:
         if mid not in referenced:

@@ -69,6 +69,12 @@ and therefore rejected by the production preference APIs.
 **Untagged-string lint.** Fails on a display literal that bypasses `message()`,
 covering attributes as well as text. Without it, English creeps back within two
 PRs, because a hardcoded label looks exactly like the code beside it.
+Its standard-library HTML parser never pushes void elements (`input`, `img`,
+`br`, and the complete HTML void set) onto the owning-ancestor stack: HTMLParser
+does not emit their end tags, so treating a catalog-tagged input as open would
+hide later sibling prose. Negative controls prove both that void-element
+ownership ends immediately and that a normal catalog-tagged ancestor still
+owns its descendants.
 
 **Contextual-sink lint.** Page code passes ids to native DOM helpers and inert
 descriptors to fixed-markup HTML builders. Named self-tests independently
@@ -106,9 +112,8 @@ decoration: nothing establishes it can.
     `applyStatic` aborts on the first throw, one missing helper left the entire
     page untranslated rather than one string — and neither `node --check` nor
     `cargo test` can see it. A dedicated lint now catches that class.
-- The untagged-string lint is deliberately scoped: the settings surface is
-  excluded until foundation Task 7, and `chipHtml`'s interior is excluded
-  permanently.
+- The untagged-string lint covers Settings after foundation Task 7; `chipHtml`'s
+  interior remains excluded permanently.
   Flagging `chipHtml` would invite someone to "fix" it by routing a catalog
   value through the URL and script contexts PR 3 spent its effort removing.
 - `en-XA` proves layout mechanically but not **clipping**, which needs eyes.

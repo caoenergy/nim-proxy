@@ -66,11 +66,15 @@ unreferenced, and the check would then demand their deletion. Writing
 
 ## Consequences
 
-- Six catalog ids per counted message. Two sets so far (`enabled_keys`,
-  `history.no_data`), 12 of the 181 dashboard messages.
-- A third counted label should reuse the `KEY_PLURALS` instance rather than
-  constructing another `Intl.PluralRules`; the formatter-caching reasoning in
-  [intl-formatting](intl-formatting.md) applies unchanged.
+- Six catalog ids per counted message. The Settings surface adds explicit sets
+  for history bytes, validated models, NIM API key counts, and client API key
+  counts; English repeats its `other` wording for the categories it does not
+  distinguish.
+- Every counted label reuses the shared cached `PLURALS` instance rather than
+  constructing another `Intl.PluralRules`. It is initialized with the catalog
+  locale alongside the number/date formatters in `shared.js`, so Settings does
+  not depend on `dashboard.js` execution order. The formatter-caching reasoning
+  in [intl-formatting](intl-formatting.md) applies unchanged.
 - English output is byte-identical to the ternaries **for every count either
   label can reach**, so this is invisible in the shipped locale — which means the
   pseudolocale run is the only check that observes it working.

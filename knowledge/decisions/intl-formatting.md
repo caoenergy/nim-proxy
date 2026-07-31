@@ -39,6 +39,9 @@ as **`1000.0B`**, because there was no tier above `B`.
 **Option 3.** Formatters are constructed once at module scope — `Intl`
 constructors are expensive and these run inside render loops — and read
 `LOCALE` from the shipped catalog rather than the browser.
+`PLURALS` is cached in that same shared formatter layer, so dashboard and
+Settings counted messages select CLDR categories without either constructing a
+second `Intl.PluralRules` or depending on script load order.
 
 Thresholds are deliberately **unchanged**. `Intl`'s own compact notation begins
 at 1,000 (`1K`); this dashboard shows exact counts up to 10,000 because request
@@ -69,6 +72,11 @@ days of history.
 - `secs()` now reads `1.0 sec` rather than `1.0 s`. Slightly longer, but it is
   what `Intl` considers correct for en-US and it matches the `ms`/`min` forms,
   which already used a space and an abbreviation.
+- Settings numbers are a different contract from dashboard compact display:
+  catalog parameters for key slots, rate-window values, pool capacity,
+  validation model counts, and user key counts use `NUM_GROUPED` so every API
+  integer remains exact while adopting the catalog locale's grouping. A value
+  above 10,000 must never become dashboard-style `12K` in Settings.
 - The fixture harness reads formatter bodies straight out of
   `src/web/shared.js` and `src/web/dashboard.js`, plus the locale from the one
   canonical rich English catalog, so it cannot drift from the code and source

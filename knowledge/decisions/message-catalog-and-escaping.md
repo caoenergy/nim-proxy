@@ -35,6 +35,9 @@ value flows:
 1. DOM text, text-bearing attributes, and structured setup copy receive a
    catalog id plus parameters. Their canonical helper performs the lookup and
    immediately writes through its native DOM primitive.
+   Native confirm/prompt dialogs are the one non-DOM text path: their exact
+   canonical wrappers resolve an id and immediately pass it to the browser's
+   text-only dialog primitive.
 2. Fixed-markup dashboard builders receive a frozen, Symbol-branded descriptor
    from `catalogMessage(id, params)`. Its `Symbol.toPrimitive` throws on normal
    coercion, so a URL, style, or native attribute cannot silently stringify it.
@@ -88,6 +91,7 @@ locale may move emphasis but cannot drop, duplicate, or reorder its markers.
 | Ordinary element or mixed text-node content | Catalog id + plain parameters | `setMessageText` → `textContent` |
 | `title`, `placeholder`, `aria-label`, `alt` | Catalog id + plain parameters; `aria-label` is allowed on an ordinary SVG element | `setMessageAttr` → `setAttribute` |
 | Structured setup copy | Catalog id + caller-created fixed nodes | text nodes + `replaceChildren` |
+| Native confirm/prompt dialog | Catalog id + plain parameters | `confirmMessage` / `promptMessage` → browser dialog text |
 | Fixed chart/table/card/list HTML | Branded catalog descriptor or plain machine data | `escapeHtml` → `innerHTML` |
 | SVG geometry or raw SVG markup | Fixed markup, numeric geometry, fixed colors, and machine-formatted axis values | fixed builder or SVG DOM; catalog ids/descriptors forbidden except an allowlisted accessibility-text attribute after creation |
 | URL-bearing values | Fixed URLs or validated machine/config data | catalog ids and descriptors forbidden |
@@ -113,6 +117,10 @@ Task 5 may replace that transport without changing these value classes.
   Any remaining bare `message` identifier—including alias, `call`, or `bind`
   use—is `sink-context`. This intentionally bounded convention replaces owner
   inference.
+- A settings request preserves a usable API `error` message verbatim. If an
+  error response has no usable message, the exact `sPost` canonical body
+  resolves the repository-owned `Request failed (HTTP {status}).` fallback;
+  this prevents a hidden English template literal without rewriting API text.
 - `render_check.js --escape-probe` mutates every value with hostile literal
   entity and markup text. It verifies descriptor inertness and HTML
   resolution, the four-attribute allowlist, literal text/attribute bytes,

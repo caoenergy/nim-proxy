@@ -135,6 +135,14 @@ and “immediate access.” Login adds only the expected title, prompt, field
 labels/placeholders, submit label, and invalid-credentials message. These are
 repository-owned labels; model ids, client/publisher names, persisted values,
 and metric identifiers remain raw.
+Task 7 applies the same distinction to Settings: use **NIM API key**, **client
+API key**, **API key required**, **Open (no authentication)**, **Model limits**,
+**Model cache TTL**, **Stream idle timeout**, and **concurrent** for the
+governor cap. Settings status/validation/dialog copy is repository-owned;
+model ids, usernames, client names, API error messages, persisted role values,
+and numeric API values remain raw (with locale grouping only for numeric
+display). The pool note keeps the standard **Total** label rather than the
+retired `rpm total` run.
 
 ## Consequences
 

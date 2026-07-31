@@ -6,6 +6,32 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-30] fix — align Login render proof with selected catalog
+
+The standalone Login render proof now compares repository-owned DOM text with
+the selected public catalog. Its former en-US literals became stale when
+`--pseudolocale` began selecting generated `en-XA`, causing the harness to
+reject correctly localized output before its untranslated-text scan. The
+anonymous Login/operator-asset boundary remains unchanged. See the
+[test strategy](testing/test-strategy.md) and
+[Task 7 plan](../docs/plans/v0.6.6-foundation-implementation.md).
+
+## [2026-07-30] decision — complete Settings catalog ownership and guard boundaries
+
+Task 7 extends catalog ownership through Settings Access, Server, Users, and
+Account states: repository copy, dialogs, validation/toasts, titles,
+placeholders, explicit CLDR count variants, and fallback HTTP-status errors are
+catalog-owned. API error bodies, model/client/user values, persisted roles, and
+exact numeric values remain raw; Settings applies locale grouping without
+dashboard compaction. Native confirm/prompt wrappers are exact canonical
+text-only sinks. The source guard now treats the full HTML void-element set as
+self-closing so a catalog-tagged input cannot suppress later prose. The
+served-browser matrix has 54 rows, including catalog fallback and >10,000
+Settings-value probes. See [message catalog and escaping](decisions/message-catalog-and-escaping.md),
+[locale guards](decisions/locale-guards.md), [Intl formatting](decisions/intl-formatting.md),
+[standard vocabulary](decisions/standard-vocabulary.md), [Dashboard](architecture/dashboard.md),
+and [test strategy](testing/test-strategy.md).
+
 ## [2026-07-30] component — Rust-owned browser fixtures and interaction matrix
 
 Task 8 makes `tests/fixtures/ui/` a 21-file, typed Rust serialization surface:

@@ -1074,6 +1074,583 @@
       "desc": "Username input placeholder.",
       "hash": "e3b89e9d"
     },
+    "settings.account.confirm_password": {
+      "en": "Confirm new password",
+      "hash": "bf000421"
+    },
+    "settings.account.current_password": {
+      "en": "Current password",
+      "hash": "72ed2bd7"
+    },
+    "settings.account.heading": {
+      "en": "Account",
+      "hash": "7e1b0d56"
+    },
+    "settings.account.new_password": {
+      "en": "New password · at least 10 characters",
+      "hash": "24a62e18"
+    },
+    "settings.account.note": {
+      "en": "Changing your password signs out your other sessions.",
+      "hash": "eff3bf4c"
+    },
+    "settings.account.update": {
+      "en": "Update password",
+      "hash": "fe45b401"
+    },
+    "settings.account.username": {
+      "en": "Username",
+      "hash": "e3b89e9d"
+    },
+    "settings.client_key.empty": {
+      "en": "No client keys yet",
+      "hash": "27a9a0bf"
+    },
+    "settings.client_key.generate": {
+      "en": "+ Generate key",
+      "hash": "92abcd19"
+    },
+    "settings.client_key.heading.all": {
+      "en": "Client API keys",
+      "hash": "d82056dd"
+    },
+    "settings.client_key.heading.mine": {
+      "en": "My client API keys",
+      "hash": "57621a6e"
+    },
+    "settings.client_key.note": {
+      "en": "These bearer tokens authenticate your clients.",
+      "hash": "2cde1ba8"
+    },
+    "settings.client_key.placeholder": {
+      "en": "name this key, e.g. laptop-cli",
+      "hash": "70a0d9c2"
+    },
+    "settings.client_key.revoke": {
+      "en": "Revoke",
+      "hash": "87e6d00b"
+    },
+    "settings.common.done": {
+      "en": "Done",
+      "hash": "11a6767d"
+    },
+    "settings.common.save": {
+      "en": "Save",
+      "hash": "1509f561"
+    },
+    "settings.connection.base_url": {
+      "en": "Client base URL",
+      "hash": "32444228"
+    },
+    "settings.connection.heading": {
+      "en": "Connection",
+      "hash": "639a40e8"
+    },
+    "settings.copy.copied": {
+      "en": "Copied ✓",
+      "hash": "58d73ef4"
+    },
+    "settings.copy.copy": {
+      "en": "Copy",
+      "hash": "e21f935f"
+    },
+    "settings.copy.failed": {
+      "en": "Copy failed",
+      "hash": "5b50e7a6"
+    },
+    "settings.dialog.delete_user": {
+      "en": "Delete {username}? Their NIM API keys leave the pool and their client API keys are revoked.",
+      "hash": "56bdc932"
+    },
+    "settings.dialog.remove_key": {
+      "en": "Remove NIM API key nvapi-••••{last4} from the pool? In-flight requests finish, but its rate-limit window is lost.",
+      "hash": "73435aa0"
+    },
+    "settings.dialog.reset_password": {
+      "en": "New password for {username} (at least 10 characters):",
+      "hash": "338150d4"
+    },
+    "settings.dialog.revoke_client_key": {
+      "en": "Revoke client API key \"{name}\"? Clients using it stop working immediately.",
+      "hash": "5fb2a465"
+    },
+    "settings.error.load": {
+      "en": "Could not load Settings. Reload the page and sign in again.",
+      "hash": "caed8f2c"
+    },
+    "settings.error.request_failed": {
+      "en": "Request failed (HTTP {status}).",
+      "hash": "3692891d"
+    },
+    "settings.key.add_anyway": {
+      "en": "Add anyway",
+      "hash": "d0652ad3"
+    },
+    "settings.key.empty": {
+      "en": "No NIM API keys yet — add one below",
+      "hash": "fa52e200"
+    },
+    "settings.key.guarded": {
+      "en": "Protected: the superuser must keep at least one enabled NIM API key. Add or enable another before removing this one.",
+      "hash": "8f84df6b"
+    },
+    "settings.key.heading.all": {
+      "en": "NIM API keys",
+      "hash": "11fdda21"
+    },
+    "settings.key.heading.mine": {
+      "en": "My NIM API keys",
+      "hash": "af1c4f87"
+    },
+    "settings.key.notice.admin": {
+      "en": "Keys you add are assigned to your account and join the shared pool. Changes take effect immediately. Disabling a key preserves its rate-limit state.",
+      "hash": "4b69ae49"
+    },
+    "settings.key.notice.mine": {
+      "en": "Keys you add are assigned to your account and join the shared pool. Only you and admins can see that they exist. Changes take effect immediately. Disabling a key preserves its rate-limit state.",
+      "hash": "124f2a6c"
+    },
+    "settings.key.off": {
+      "en": "Disabled",
+      "hash": "75081b59"
+    },
+    "settings.key.placeholder": {
+      "en": "Paste a new NIM API key (nvapi-…)",
+      "hash": "4c922c00"
+    },
+    "settings.key.pool_note": {
+      "en": "Pool: {enabled} enabled · Total: {capacity} rpm",
+      "hash": "c2936548"
+    },
+    "settings.key.remove": {
+      "en": "Remove NIM API key",
+      "hash": "d15bafa9"
+    },
+    "settings.key.slot": {
+      "en": "Slot {n}",
+      "hash": "18616a78"
+    },
+    "settings.key.state.cooldown": {
+      "en": "cooldown {seconds}s",
+      "hash": "b35f8e5e"
+    },
+    "settings.key.state.disabled": {
+      "en": "Disabled",
+      "hash": "75081b59"
+    },
+    "settings.key.state.in_window": {
+      "en": "{in_window} / {rpm} in window",
+      "hash": "773cf007"
+    },
+    "settings.key.state.unassigned": {
+      "en": "Unassigned",
+      "hash": "14d33bd0"
+    },
+    "settings.key.toggle.disable": {
+      "en": "Disable. Rate-limit state is preserved.",
+      "hash": "48b5c705"
+    },
+    "settings.key.toggle.enable": {
+      "en": "Enable",
+      "hash": "5342e09f"
+    },
+    "settings.key.validate_add": {
+      "en": "Validate & add",
+      "hash": "15414785"
+    },
+    "settings.key.validating": {
+      "en": "Validating…",
+      "hash": "cd51f8c8"
+    },
+    "settings.mode.heading": {
+      "en": "API access mode",
+      "hash": "4668b68f"
+    },
+    "settings.mode.help": {
+      "en": "Controls /v1 client calls only. In API key required mode, clients use a bearer token. Open (no authentication) allows anyone who can reach /v1. Use only on trusted networks.",
+      "desc": "Full API access-mode explanation. This is deliberately one plain catalog sentence; the former bold literals are not parsed or reassembled at runtime.",
+      "hash": "3431dd52"
+    },
+    "settings.mode.keyed": {
+      "en": "API key required",
+      "hash": "3b855d54"
+    },
+    "settings.mode.keyed_note": {
+      "en": "Clients authenticate with a client API key.",
+      "hash": "7fd7e1d1"
+    },
+    "settings.mode.no_client_keys": {
+      "en": "Requiring an API key with no client API keys locks every client out. Generate one under Access & keys.",
+      "hash": "d3d6605c"
+    },
+    "settings.mode.open": {
+      "en": "Open (no authentication)",
+      "hash": "17759351"
+    },
+    "settings.mode.open_note": {
+      "en": "Anyone who can reach /v1 can use the pool.",
+      "hash": "d9251b4a"
+    },
+    "settings.nav.access": {
+      "en": "Access & keys",
+      "hash": "bb83749e"
+    },
+    "settings.nav.account": {
+      "en": "Account",
+      "hash": "7e1b0d56"
+    },
+    "settings.nav.server": {
+      "en": "Server",
+      "hash": "aef7de28"
+    },
+    "settings.nav.users": {
+      "en": "Users",
+      "hash": "6b0cc904"
+    },
+    "settings.secret.copy": {
+      "en": "Copy",
+      "hash": "e21f935f"
+    },
+    "settings.secret.ready": {
+      "en": "Client API key “{name}” is ready. Copy it now.",
+      "hash": "942f7f44"
+    },
+    "settings.secret.warning": {
+      "en": "You won't see this again.",
+      "hash": "8452e785"
+    },
+    "settings.server.adaptive": {
+      "en": "Automatic",
+      "hash": "d461a493"
+    },
+    "settings.server.add_override": {
+      "en": "Add override",
+      "hash": "fafc22c3"
+    },
+    "settings.server.base_url_note": {
+      "en": "Saving changes the upstream base URL and clears the model catalog cache.",
+      "hash": "eefdd484"
+    },
+    "settings.server.days": {
+      "en": "days",
+      "hash": "ab51004e"
+    },
+    "settings.server.history.bytes.few": {
+      "en": "{bytes} bytes",
+      "desc": "CLDR plural category 'few' for the history data-file size. {bytes} is already locale-formatted; English repeats the other form.",
+      "hash": "31800b69"
+    },
+    "settings.server.history.bytes.many": {
+      "en": "{bytes} bytes",
+      "desc": "CLDR plural category 'many' for the history data-file size. {bytes} is already locale-formatted; English repeats the other form.",
+      "hash": "31800b69"
+    },
+    "settings.server.history.bytes.one": {
+      "en": "{bytes} byte",
+      "desc": "CLDR plural category 'one' for the history data-file size. {bytes} is already locale-formatted.",
+      "hash": "51bd3673"
+    },
+    "settings.server.history.bytes.other": {
+      "en": "{bytes} bytes",
+      "desc": "CLDR plural category 'other' for the history data-file size. {bytes} is already locale-formatted.",
+      "hash": "31800b69"
+    },
+    "settings.server.history.bytes.two": {
+      "en": "{bytes} bytes",
+      "desc": "CLDR plural category 'two' for the history data-file size. {bytes} is already locale-formatted; English repeats the other form.",
+      "hash": "31800b69"
+    },
+    "settings.server.history.bytes.zero": {
+      "en": "{bytes} bytes",
+      "desc": "CLDR plural category 'zero' for the history data-file size. {bytes} is already locale-formatted; English repeats the other form.",
+      "hash": "31800b69"
+    },
+    "settings.server.history.compaction_pending": {
+      "en": "Compaction is pending.",
+      "hash": "1260d448"
+    },
+    "settings.server.history.data_file": {
+      "en": "Data file",
+      "hash": "38f5f508"
+    },
+    "settings.server.history.default_range": {
+      "en": "Default time range",
+      "hash": "5ec3c658"
+    },
+    "settings.server.history.heading": {
+      "en": "History & dashboard",
+      "hash": "d0c9c7aa"
+    },
+    "settings.server.history.no_data": {
+      "en": "No data yet",
+      "hash": "e2e18a76"
+    },
+    "settings.server.history.oldest": {
+      "en": "Oldest data point",
+      "hash": "ef4ab020"
+    },
+    "settings.server.history.retention": {
+      "en": "History retention · 0 = unlimited",
+      "hash": "c137c172"
+    },
+    "settings.server.history.slo": {
+      "en": "Availability SLO",
+      "hash": "226f7fe9"
+    },
+    "settings.server.limit.heartbeat": {
+      "en": "Heartbeat",
+      "hash": "9df89427"
+    },
+    "settings.server.limit.max_inflight": {
+      "en": "Max in-flight",
+      "hash": "ea457682"
+    },
+    "settings.server.limit.max_wait": {
+      "en": "Max wait",
+      "hash": "c2cd8e04"
+    },
+    "settings.server.limit.models_ttl": {
+      "en": "Model cache TTL",
+      "hash": "cbd325d5"
+    },
+    "settings.server.limit.request_timeout": {
+      "en": "Request timeout",
+      "hash": "70f60044"
+    },
+    "settings.server.limit.stream_idle": {
+      "en": "Stream idle timeout",
+      "hash": "c81a6778"
+    },
+    "settings.server.model_limits": {
+      "en": "Model limits",
+      "hash": "43e77160"
+    },
+    "settings.server.model_limits_help": {
+      "en": "Limits concurrent requests per model when NIM reports worker exhaustion. Limits adjust automatically; add an override only for a known concurrency limit.",
+      "hash": "e091e076"
+    },
+    "settings.server.model_placeholder": {
+      "en": "model id, e.g. moonshotai/kimi-k2.5",
+      "hash": "26ae28e9"
+    },
+    "settings.server.no_overrides": {
+      "en": "No overrides set",
+      "hash": "3cbc17e7"
+    },
+    "settings.server.remove_override": {
+      "en": "Remove override",
+      "hash": "6d43eea1"
+    },
+    "settings.server.strict_note": {
+      "en": "Rejects parameters the upstream does not accept.",
+      "hash": "4e5f898d"
+    },
+    "settings.server.strict_passthrough": {
+      "en": "Strict passthrough",
+      "hash": "75005c81"
+    },
+    "settings.server.unit.limit": {
+      "en": "concurrent",
+      "hash": "a35178ec"
+    },
+    "settings.server.unit.seconds": {
+      "en": "s",
+      "hash": "043a7187"
+    },
+    "settings.server.upstream_limits": {
+      "en": "Upstream & limits",
+      "hash": "e1ebfed2"
+    },
+    "settings.users.add": {
+      "en": "Add user",
+      "hash": "eec5c73a"
+    },
+    "settings.users.client_key_count.few": {
+      "en": "{n} client API keys",
+      "desc": "CLDR plural category 'few' for the user's client API key count. {n} is already locale-formatted; English repeats the other form.",
+      "hash": "db3cf8c9"
+    },
+    "settings.users.client_key_count.many": {
+      "en": "{n} client API keys",
+      "desc": "CLDR plural category 'many' for the user's client API key count. {n} is already locale-formatted; English repeats the other form.",
+      "hash": "db3cf8c9"
+    },
+    "settings.users.client_key_count.one": {
+      "en": "{n} client API key",
+      "desc": "CLDR plural category 'one' for the user's client API key count. {n} is already locale-formatted.",
+      "hash": "591f6a81"
+    },
+    "settings.users.client_key_count.other": {
+      "en": "{n} client API keys",
+      "desc": "CLDR plural category 'other' for the user's client API key count. {n} is already locale-formatted.",
+      "hash": "db3cf8c9"
+    },
+    "settings.users.client_key_count.two": {
+      "en": "{n} client API keys",
+      "desc": "CLDR plural category 'two' for the user's client API key count. {n} is already locale-formatted; English repeats the other form.",
+      "hash": "db3cf8c9"
+    },
+    "settings.users.client_key_count.zero": {
+      "en": "{n} client API keys",
+      "desc": "CLDR plural category 'zero' for the user's client API key count. {n} is already locale-formatted; English repeats the other form.",
+      "hash": "db3cf8c9"
+    },
+    "settings.users.delete": {
+      "en": "Delete",
+      "hash": "e2d0a549"
+    },
+    "settings.users.heading": {
+      "en": "Users",
+      "hash": "6b0cc904"
+    },
+    "settings.users.nim_key_count.few": {
+      "en": "{n} NIM API keys",
+      "desc": "CLDR plural category 'few' for the user's NIM API key count. {n} is already locale-formatted; English repeats the other form.",
+      "hash": "e964131c"
+    },
+    "settings.users.nim_key_count.many": {
+      "en": "{n} NIM API keys",
+      "desc": "CLDR plural category 'many' for the user's NIM API key count. {n} is already locale-formatted; English repeats the other form.",
+      "hash": "e964131c"
+    },
+    "settings.users.nim_key_count.one": {
+      "en": "{n} NIM API key",
+      "desc": "CLDR plural category 'one' for the user's NIM API key count. {n} is already locale-formatted.",
+      "hash": "edbe8c52"
+    },
+    "settings.users.nim_key_count.other": {
+      "en": "{n} NIM API keys",
+      "desc": "CLDR plural category 'other' for the user's NIM API key count. {n} is already locale-formatted.",
+      "hash": "e964131c"
+    },
+    "settings.users.nim_key_count.two": {
+      "en": "{n} NIM API keys",
+      "desc": "CLDR plural category 'two' for the user's NIM API key count. {n} is already locale-formatted; English repeats the other form.",
+      "hash": "e964131c"
+    },
+    "settings.users.nim_key_count.zero": {
+      "en": "{n} NIM API keys",
+      "desc": "CLDR plural category 'zero' for the user's NIM API key count. {n} is already locale-formatted; English repeats the other form.",
+      "hash": "e964131c"
+    },
+    "settings.users.note": {
+      "en": "Deleting a user removes their NIM API keys from the pool and revokes their client API keys.",
+      "hash": "10877a46"
+    },
+    "settings.users.password_placeholder": {
+      "en": "initial password (10+ characters)",
+      "hash": "460b4335"
+    },
+    "settings.users.reset_password": {
+      "en": "Reset password",
+      "hash": "e0edfeb3"
+    },
+    "settings.users.role": {
+      "en": "Role",
+      "hash": "14736a2e"
+    },
+    "settings.users.self_managed": {
+      "en": "Self-managed",
+      "hash": "122c90c3"
+    },
+    "settings.users.superuser_note": {
+      "en": "The superuser changes its own password in Account settings.",
+      "hash": "cf3196cb"
+    },
+    "settings.users.username_placeholder": {
+      "en": "new username",
+      "hash": "534c560d"
+    },
+    "settings.validation.client_key_name": {
+      "en": "Enter a client API key name, for example laptop-cli.",
+      "hash": "75659563"
+    },
+    "settings.validation.governor": {
+      "en": "Enter a model ID and a concurrency limit of at least 1.",
+      "hash": "82446307"
+    },
+    "settings.validation.history_default": {
+      "en": "Default time range must be at least 1 day.",
+      "hash": "d0de6732"
+    },
+    "settings.validation.history_retention": {
+      "en": "History retention must be 0 or more days.",
+      "hash": "6f5ebc67"
+    },
+    "settings.validation.initial_password": {
+      "en": "Initial password must be at least 10 characters.",
+      "hash": "fd6c7b3d"
+    },
+    "settings.validation.limits": {
+      "en": "Every limit needs a whole number ≥ 0.",
+      "hash": "bd14b8f3"
+    },
+    "settings.validation.models_added.few": {
+      "en": "✓ {n} models found. Adding NIM API key…",
+      "desc": "CLDR plural category 'few' for successful NIM API key validation. {n} is the number of returned models and is already locale-formatted; English repeats the other form.",
+      "hash": "8325eafc"
+    },
+    "settings.validation.models_added.many": {
+      "en": "✓ {n} models found. Adding NIM API key…",
+      "desc": "CLDR plural category 'many' for successful NIM API key validation. {n} is the number of returned models and is already locale-formatted; English repeats the other form.",
+      "hash": "8325eafc"
+    },
+    "settings.validation.models_added.one": {
+      "en": "✓ {n} model found. Adding NIM API key…",
+      "desc": "CLDR plural category 'one' for successful NIM API key validation. {n} is the number of returned models and is already locale-formatted.",
+      "hash": "c1e489e4"
+    },
+    "settings.validation.models_added.other": {
+      "en": "✓ {n} models found. Adding NIM API key…",
+      "desc": "CLDR plural category 'other' for successful NIM API key validation. {n} is the number of returned models and is already locale-formatted.",
+      "hash": "8325eafc"
+    },
+    "settings.validation.models_added.two": {
+      "en": "✓ {n} models found. Adding NIM API key…",
+      "desc": "CLDR plural category 'two' for successful NIM API key validation. {n} is the number of returned models and is already locale-formatted; English repeats the other form.",
+      "hash": "8325eafc"
+    },
+    "settings.validation.models_added.zero": {
+      "en": "✓ {n} models found. Adding NIM API key…",
+      "desc": "CLDR plural category 'zero' for successful NIM API key validation. {n} is the number of returned models and is already locale-formatted; English repeats the other form.",
+      "hash": "8325eafc"
+    },
+    "settings.validation.new_password": {
+      "en": "New password must be at least 10 characters.",
+      "hash": "cbe2939e"
+    },
+    "settings.validation.nim_key_required": {
+      "en": "Paste a NIM API key first.",
+      "hash": "45e7e8a4"
+    },
+    "settings.validation.password": {
+      "en": "Password must be at least 10 characters.",
+      "hash": "7e65d20b"
+    },
+    "settings.validation.password_mismatch": {
+      "en": "Passwords do not match.",
+      "hash": "6c6e178a"
+    },
+    "settings.validation.password_reset": {
+      "en": "Password reset for {username}.",
+      "hash": "42bdd256"
+    },
+    "settings.validation.password_updated": {
+      "en": "Password updated. Other sessions were signed out.",
+      "hash": "3856551c"
+    },
+    "settings.validation.saved": {
+      "en": "Saved.",
+      "hash": "fca046cc"
+    },
+    "settings.validation.slo": {
+      "en": "SLO target must be greater than 0 and at most 100.",
+      "hash": "90bf3754"
+    },
+    "settings.validation.username": {
+      "en": "Choose a username.",
+      "hash": "b9305ea3"
+    },
     "setup.document.title": {
       "en": "NIM Proxy — First-time setup",
       "desc": "Browser tab title. 'NIM Proxy' is the product name and stays.",

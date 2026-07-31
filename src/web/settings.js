@@ -7,18 +7,28 @@ let SET = null, setSub = 'access';
 async function sPost(path, body) {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   let j = {}; try { j = await r.json(); } catch {}
-  if (!r.ok || j.ok === false) throw new Error((j.error && j.error.message) || j.error || `Request failed (${r.status})`);
+  const apiError = typeof j.error === 'string'
+    ? j.error
+    : (j.error && typeof j.error.message === 'string' ? j.error.message : '');
+  if (!r.ok || j.ok === false)
+    throw new Error(apiError || message('settings.error.request_failed', { status: r.status }));
   return j;
 }
 /* inline feedback next to the control that caused it (textContent — never markup) */
 const note = (id, msg, ok) => { const el = $(id); if (el) { el.textContent = msg || ''; el.classList.toggle('ok', !!ok); } };
+const noteMessage = (id, messageId, params = {}, ok = false) => {
+  const el = $(id);
+  if (!el) return;
+  setMessageText(el, messageId, params);
+  el.classList.toggle('ok', ok);
+};
 
 async function loadSettings() {
   try {
     const j = await (await fetch('/api/config')).json();
     if (!j.nim_keys) throw 0;
     SET = j;
-  } catch { $('setbody').innerHTML = '<div class="empty">Could not load settings — reload to sign in again</div>'; return; }
+  } catch { $('setbody').innerHTML = `<div class="empty">${escapeHtml(catalogMessage('settings.error.load'))}</div>`; return; }
   renderSettings();
 }
 
@@ -32,11 +42,12 @@ const SICONS = {
 };
 
 function renderSettings() {
-  const subs = [['access', 'Access & keys'], ['server', 'Server'], ['users', 'Users'], ['account', 'Account']]
+  const subs = [['access', 'settings.nav.access'], ['server', 'settings.nav.server'], ['users', 'settings.nav.users'], ['account', 'settings.nav.account']]
     .filter(([id]) => id === 'access' || id === 'account' || (id === 'server' ? !!SET.server : !!SET.users));
   if (!subs.some(([id]) => id === setSub)) setSub = 'access';
   $('setnav').innerHTML = subs.map(([id, label]) =>
-    `<button role="tab" data-sub="${id}" aria-selected="${id === setSub}"><span class="nbar"></span>${SICONS[id]}<span>${escapeHtml(label)}</span></button>`).join('');
+    `<button role="tab" data-sub="${id}" aria-selected="${id === setSub}"><span class="nbar"></span>${SICONS[id]}<span data-i18n="${label}"></span></button>`).join('');
+  applyStatic($('setnav'));
   for (const b of $('setnav').querySelectorAll('button'))
     b.addEventListener('click', () => { setSub = b.dataset.sub; renderSettings(); });
   ({ access: renderAccess, server: renderServer, users: renderUsers, account: renderAccount })[setSub]();
@@ -44,18 +55,17 @@ function renderSettings() {
 
 /* live lane state for one key row (also patched in place by the 5s refresh) */
 function keyState(k) {
-  if (!k.enabled) return { text: 'disabled', cls: 'kstate dim' };
-  if (k.cooldown_ms > 0) return { text: `cooldown ${Math.ceil(k.cooldown_ms / 1000)}s`, cls: 'kstate warnc' };
-  if (k.in_window != null) return { text: `${+k.in_window} / ${+k.rpm} in window`, cls: 'kstate' };
-  return { text: 'unassigned', cls: 'kstate dim' };
+  if (!k.enabled) return { id: 'settings.key.state.disabled', cls: 'kstate dim' };
+  if (k.cooldown_ms > 0) return { id: 'settings.key.state.cooldown', params: { seconds: NUM_GROUPED.format(Math.ceil(k.cooldown_ms / 1000)) }, cls: 'kstate warnc' };
+  if (k.in_window != null) return { id: 'settings.key.state.in_window', params: { in_window: NUM_GROUPED.format(+k.in_window), rpm: NUM_GROUPED.format(+k.rpm) }, cls: 'kstate' };
+  return { id: 'settings.key.state.unassigned', cls: 'kstate dim' };
 }
-const poolNote = () => `${+SET.pool.enabled} enabled in pool · Total ${+SET.pool.capacity_rpm} rpm`;
 const clampInt = (v, lo, hi, dflt) => { const n = Math.round(+v); return isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt; };
 
 async function copyText(text, btn) {
   const old = btn.textContent;
-  try { await navigator.clipboard.writeText(text); btn.textContent = 'copied ✓'; }
-  catch { btn.textContent = 'copy failed'; }
+  try { await navigator.clipboard.writeText(text); setMessageText(btn, 'settings.copy.copied'); }
+  catch { setMessageText(btn, 'settings.copy.failed'); }
   setTimeout(() => { btn.textContent = old; }, 1500);
 }
 
@@ -63,12 +73,13 @@ async function copyText(text, btn) {
    stray re-render can't eat the one chance to copy it */
 function showSecret(name, secret) {
   $('modal-body').innerHTML =
-    `<p data-style="margin:0 0 12px;color:var(--ink-2);font-size:13px">Client key <b>${escapeHtml(name)}</b> is ready. Copy it now — <b data-style="color:var(--amber-lt)">you won't see this again.</b></p>
+    `<p data-style="margin:0 0 12px;color:var(--ink-2);font-size:13px">${escapeHtml(catalogMessage('settings.secret.ready', { name }))} <b data-style="color:var(--amber-lt)" data-i18n="settings.secret.warning"></b></p>
     <div class="secretbox">${escapeHtml(secret)}</div>
     <div data-style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
-      <button class="pbtn" id="modal-copy">Copy key</button>
-      <button class="gbtn" id="modal-done">Done</button>
+      <button class="pbtn" id="modal-copy" data-i18n="settings.secret.copy"></button>
+      <button class="gbtn" id="modal-done" data-i18n="settings.common.done"></button>
     </div>`;
+  applyStatic($('modal-body'));
   $('modal-copy').addEventListener('click', () => copyText(secret, $('modal-copy')));
   $('modal-done').addEventListener('click', () => $('modal').classList.remove('show'));
   $('modal').classList.add('show');
@@ -77,19 +88,29 @@ function showSecret(name, secret) {
 function renderAccess() {
   const admin = !!SET.users;
   const ownerChip = o => admin ? ` <span class="tag">${escapeHtml(o)}</span>` : '';
+  const validatedModelsId = n => {
+    switch (PLURALS.select(n)) {
+      case 'zero': return 'settings.validation.models_added.zero';
+      case 'one': return 'settings.validation.models_added.one';
+      case 'two': return 'settings.validation.models_added.two';
+      case 'few': return 'settings.validation.models_added.few';
+      case 'many': return 'settings.validation.models_added.many';
+      default: return 'settings.validation.models_added.other';
+    }
+  };
   const keyRows = SET.nim_keys.map((k, i) => {
     const st = keyState(k);
     return `<div class="krow${k.enabled ? '' : ' koff'}">
       <div data-style="min-width:0">
         <div class="kmask">nvapi-••••${escapeHtml(k.last4)}${ownerChip(k.owner)}</div>
-        <div class="kmeta">fp ${escapeHtml(String(k.fingerprint).slice(0, 8))} · ${k.lane != null ? `slot ${+k.lane + 1}` : k.enabled ? 'unassigned' : 'off'}</div>
+        <div class="kmeta">fp ${escapeHtml(String(k.fingerprint).slice(0, 8))} · ${k.lane != null ? escapeHtml(catalogMessage('settings.key.slot', { n: NUM_GROUPED.format(+k.lane + 1) })) : k.enabled ? escapeHtml(catalogMessage('settings.key.state.unassigned')) : escapeHtml(catalogMessage('settings.key.off'))}</div>
       </div>
-      <span class="${st.cls}" data-ksfp="${escapeHtml(k.fingerprint)}">${escapeHtml(st.text)}</span>
+      <span class="${st.cls}" data-ksfp="${escapeHtml(k.fingerprint)}">${escapeHtml(catalogMessage(st.id, st.params))}</span>
       <span class="rpmwrap"><input class="sin num" type="number" min="1" max="10000" value="${+k.rpm}" data-rpm="${i}"><span class="unitl">rpm</span></span>
-      <button class="tog" role="switch" aria-checked="${!!k.enabled}" data-tog="${i}" title="${k.enabled ? 'Disable — its rate window stays warm' : 'Enable'}"></button>
+      <button class="tog" role="switch" aria-checked="${!!k.enabled}" data-tog="${i}" data-i18n-attr="title:${k.enabled ? 'settings.key.toggle.disable' : 'settings.key.toggle.enable'}"></button>
       ${k.guarded
-        ? `<span class="klock" title="The pool keeps at least one enabled superuser key — add or enable another key before removing this one">${LOCK}</span>`
-        : `<button class="dbtn icon" data-kdel="${i}" title="Remove key">${TRASH}</button>`}
+        ? `<span class="klock" data-i18n-attr="title:settings.key.guarded">${LOCK}</span>`
+        : `<button class="dbtn icon" data-kdel="${i}" data-i18n-attr="title:settings.key.remove">${TRASH}</button>`}
     </div>`;
   }).join('');
   const ckRows = SET.client_keys.map((ck, i) =>
@@ -97,45 +118,46 @@ function renderAccess() {
       <span data-style="font-weight:600;flex:0 1 160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(ck.name)}">${escapeHtml(ck.name)}</span>
       <span class="kmask" data-style="color:var(--ink-25);font-weight:500">npk_••••••••${escapeHtml(ck.last4)}</span>
       ${admin ? `<span class="tag">${escapeHtml(ck.owner)}</span>` : ''}
-      <button class="dbtn" data-style="margin-left:auto" data-ckdel="${i}">Revoke</button>
+      <button class="dbtn" data-style="margin-left:auto" data-ckdel="${i}" data-i18n="settings.client_key.revoke"></button>
     </div>`).join('');
   $('setbody').innerHTML = `
     <div class="card mb">
-      <h2>${admin ? 'NIM keys' : 'My NIM keys'} <span class="note" id="pool-note">${escapeHtml(poolNote())}</span></h2>
-      <p class="shint">Keys you add join the shared pool as yours${admin ? '' : ' — only you and admins see they exist'}. Changes apply live: kept keys keep their rate windows, disabled keys re-enable warm.</p>
-      <div>${keyRows || '<div class="empty">No NIM keys yet — add one below</div>'}</div>
+      <h2><span data-i18n="${admin ? 'settings.key.heading.all' : 'settings.key.heading.mine'}"></span> <span class="note" id="pool-note">${escapeHtml(catalogMessage('settings.key.pool_note', { enabled: NUM_GROUPED.format(+SET.pool.enabled), capacity: NUM_GROUPED.format(+SET.pool.capacity_rpm) }))}</span></h2>
+      <p class="shint" data-i18n="${admin ? 'settings.key.notice.admin' : 'settings.key.notice.mine'}"></p>
+      <div>${keyRows || '<div class="empty" data-i18n="settings.key.empty"></div>'}</div>
       <div class="addrow">
-        <input id="nk-key" class="sin" data-style="flex:1;min-width:200px" type="password" placeholder="nvapi-… paste a new NIM key" autocomplete="off" spellcheck="false">
+        <input id="nk-key" class="sin" data-style="flex:1;min-width:200px" type="password" data-i18n-attr="placeholder:settings.key.placeholder" autocomplete="off" spellcheck="false">
         <span class="rpmwrap"><input id="nk-rpm" class="sin num" type="number" min="1" max="10000" value="40"><span class="unitl">rpm</span></span>
-        <button class="pbtn" id="nk-add">Validate &amp; add</button>
-        <button class="gbtn" id="nk-force" hidden>Add anyway</button>
+        <button class="pbtn" id="nk-add" data-i18n="settings.key.validate_add"></button>
+        <button class="gbtn" id="nk-force" hidden data-i18n="settings.key.add_anyway"></button>
       </div>
       <div class="serr" id="nk-err"></div>
     </div>
     <div class="card mb">
-      <h2>${admin ? 'Client API keys' : 'My API keys'} <span class="note">bearer tokens your clients use</span></h2>
-      <div>${ckRows || '<div class="empty">No client keys yet</div>'}</div>
+      <h2><span data-i18n="${admin ? 'settings.client_key.heading.all' : 'settings.client_key.heading.mine'}"></span> <span class="note" data-i18n="settings.client_key.note"></span></h2>
+      <div>${ckRows || '<div class="empty" data-i18n="settings.client_key.empty"></div>'}</div>
       <div class="addrow">
-        <input id="ck-name" class="sin" data-style="flex:1;min-width:200px" placeholder="name this key, e.g. laptop-cli" maxlength="64" autocomplete="off" spellcheck="false">
-        <button class="pbtn" id="ck-add">+ Generate key</button>
+        <input id="ck-name" class="sin" data-style="flex:1;min-width:200px" data-i18n-attr="placeholder:settings.client_key.placeholder" maxlength="64" autocomplete="off" spellcheck="false">
+        <button class="pbtn" id="ck-add" data-i18n="settings.client_key.generate"></button>
       </div>
       <div class="serr" id="ck-err"></div>
     </div>
     <div class="card">
-      <h2>Connection</h2>
+      <h2 data-i18n="settings.connection.heading"></h2>
       <div class="congrid">
         <div class="conbox">
-          <div class="slabel">Point your client's base URL at</div>
-          <div data-style="display:flex;align-items:center;gap:10px"><span class="kmask" data-style="flex:1;overflow:hidden;text-overflow:ellipsis">${escapeHtml(location.origin + '/v1')}</span><button class="gbtn" id="copy-base">copy</button></div>
+          <div class="slabel" data-i18n="settings.connection.base_url"></div>
+          <div data-style="display:flex;align-items:center;gap:10px"><span class="kmask" data-style="flex:1;overflow:hidden;text-overflow:ellipsis">${escapeHtml(location.origin + '/v1')}</span><button class="gbtn" id="copy-base" data-i18n="settings.copy.copy"></button></div>
         </div>
         <div class="conbox">
-          <div class="slabel">API access mode</div>
-          <div class="kmask" data-style="color:${SET.mode === 'keyed' ? 'var(--green-lt)' : 'var(--amber-lt)'}">● ${SET.mode === 'keyed' ? 'API key required' : 'Open — no authentication'}</div>
-          <div class="kmeta" data-style="margin-top:4px">${SET.mode === 'keyed' ? 'clients authenticate with a client API key' : 'anyone who can reach /v1 can use the pool'}</div>
+          <div class="slabel" data-i18n="settings.mode.heading"></div>
+          <div class="kmask" data-style="color:${SET.mode === 'keyed' ? 'var(--green-lt)' : 'var(--amber-lt)'}">● <span data-i18n="${SET.mode === 'keyed' ? 'settings.mode.keyed' : 'settings.mode.open'}"></span></div>
+          <div class="kmeta" data-style="margin-top:4px" data-i18n="${SET.mode === 'keyed' ? 'settings.mode.keyed_note' : 'settings.mode.open_note'}"></div>
         </div>
       </div>
     </div>`;
   const body = $('setbody');
+  applyStatic(body);
   for (const el of body.querySelectorAll('[data-rpm]')) el.addEventListener('change', async () => {
     const k = SET.nim_keys[+el.dataset.rpm];
     try {
@@ -152,7 +174,7 @@ function renderAccess() {
   });
   for (const el of body.querySelectorAll('[data-kdel]')) el.addEventListener('click', async () => {
     const k = SET.nim_keys[+el.dataset.kdel];
-    if (!confirm(`Remove key nvapi-••••${k.last4} from the pool? In-flight requests finish; its rate window is lost.`)) return;
+    if (!confirmMessage('settings.dialog.remove_key', { last4: k.last4 })) return;
     try { await sPost('/api/settings/nim-keys', { remove: k.fingerprint }); await loadSettings(); }
     catch (e) { note('nk-err', e.message); }
   });
@@ -163,32 +185,33 @@ function renderAccess() {
   };
   $('nk-add').addEventListener('click', async () => {
     const key = $('nk-key').value.trim();
-    if (!key) return note('nk-err', 'Paste a NIM key first.');
-    $('nk-add').disabled = true; $('nk-add').textContent = 'Validating…';
+    if (!key) return noteMessage('nk-err', 'settings.validation.nim_key_required');
+    $('nk-add').disabled = true; setMessageText($('nk-add'), 'settings.key.validating');
     try {
       const v = await sPost('/api/settings/validate-key', { key });
-      note('nk-err', `✓ ${Array.isArray(v.models) ? v.models.length : +v.models} models · Adding…`, true);
+      const count = Array.isArray(v.models) ? v.models.length : +v.models;
+      noteMessage('nk-err', validatedModelsId(count), { n: NUM_GROUPED.format(count) }, true);
       await addKey();
       return;
     } catch (e) {
-      note('nk-err', `Validation failed: ${e.message}`);
+      note('nk-err', e.message);
       $('nk-force').hidden = false;
     }
-    $('nk-add').disabled = false; $('nk-add').textContent = 'Validate & add';
+    $('nk-add').disabled = false; setMessageText($('nk-add'), 'settings.key.validate_add');
   });
   $('nk-force').addEventListener('click', async () => {
-    if (!$('nk-key').value.trim()) return note('nk-err', 'Paste a NIM key first.');
+    if (!$('nk-key').value.trim()) return noteMessage('nk-err', 'settings.validation.nim_key_required');
     try { await addKey(); } catch (e) { note('nk-err', e.message); }
   });
   for (const el of body.querySelectorAll('[data-ckdel]')) el.addEventListener('click', async () => {
     const ck = SET.client_keys[+el.dataset.ckdel];
-    if (!confirm(`Revoke "${ck.name}"? Clients using it stop working immediately.`)) return;
+    if (!confirmMessage('settings.dialog.revoke_client_key', { name: ck.name })) return;
     try { await sPost('/api/settings/clients', { remove: ck.name }); await loadSettings(); }
     catch (e) { note('ck-err', e.message); }
   });
   $('ck-add').addEventListener('click', async () => {
     const name = $('ck-name').value.trim();
-    if (!name) return note('ck-err', 'Name the key first — e.g. laptop-cli.');
+    if (!name) return noteMessage('ck-err', 'settings.validation.client_key_name');
     try {
       const j = await sPost('/api/settings/clients', { add: { name } });
       showSecret(name, j.secret);
@@ -200,74 +223,86 @@ function renderAccess() {
 
 function renderServer() {
   const sv = SET.server, L = sv.limits;
-  const num = (id, label, val, unit, step) => `<div><div class="slabel">${label}</div>
-    <span class="rpmwrap" data-style="display:flex"><input id="${id}" class="sin" data-style="width:100%;text-align:right" type="number" min="0"${step ? ` step="${step}"` : ''} value="${+val}">${unit ? `<span class="unitl">${unit}</span>` : ''}</span></div>`;
+  const num = (id, label, val, unit, step) => `<div><div class="slabel" data-i18n="${label}"></div>
+    <span class="rpmwrap" data-style="display:flex"><input id="${id}" class="sin" data-style="width:100%;text-align:right" type="number" min="0"${step ? ` step="${step}"` : ''} value="${+val}">${unit ? `<span class="unitl" data-i18n="${unit}"></span>` : ''}</span></div>`;
   const ovr = Object.entries(sv.governor.overrides || {});
   const retainedFrom = sv.history.available_from == null
-    ? 'No data yet'
-    : at(STAMP, +sv.history.available_from * 1000);
-  const historyBytes = NUM_GROUPED.format(+sv.history.file_bytes || 0);
+    ? escapeHtml(catalogMessage('settings.server.history.no_data'))
+    : escapeHtml(at(STAMP, +sv.history.available_from * 1000));
+  const historyBytes = +sv.history.file_bytes || 0;
+  const historyBytesMessage = () => {
+    const params = { bytes: NUM_GROUPED.format(historyBytes) };
+    switch (PLURALS.select(historyBytes)) {
+      case 'zero': return catalogMessage('settings.server.history.bytes.zero', params);
+      case 'one': return catalogMessage('settings.server.history.bytes.one', params);
+      case 'two': return catalogMessage('settings.server.history.bytes.two', params);
+      case 'few': return catalogMessage('settings.server.history.bytes.few', params);
+      case 'many': return catalogMessage('settings.server.history.bytes.many', params);
+      default: return catalogMessage('settings.server.history.bytes.other', params);
+    }
+  };
   $('setbody').innerHTML = `
     <div class="card mb">
-      <h2>API access mode
+      <h2><span data-i18n="settings.mode.heading"></span>
         <span class="pills" data-style="margin-left:auto">
-          <button data-mode="open" aria-pressed="${SET.mode === 'open'}">Open (no authentication)</button>
-          <button data-mode="keyed" aria-pressed="${SET.mode === 'keyed'}">API key required</button>
+          <button data-mode="open" aria-pressed="${SET.mode === 'open'}" data-i18n="settings.mode.open"></button>
+          <button data-mode="keyed" aria-pressed="${SET.mode === 'keyed'}" data-i18n="settings.mode.keyed"></button>
         </span></h2>
-      <p class="shint">Controls <b>/v1</b> client calls only. <b>API key required</b> needs a bearer token; <b>Open</b> accepts anyone who can reach /v1 — trusted networks only.</p>
-      ${SET.mode === 'keyed' && !SET.client_keys.length ? '<p class="shint" data-style="color:var(--amber-lt)">Requiring an API key with no client keys locks every client out — generate one under Access &amp; keys.</p>' : ''}
+      <p class="shint" data-i18n="settings.mode.help"></p>
+      ${SET.mode === 'keyed' && !SET.client_keys.length ? '<p class="shint" data-style="color:var(--amber-lt)" data-i18n="settings.mode.no_client_keys"></p>' : ''}
       <div class="serr" id="mode-err"></div>
     </div>
     <div class="card mb">
-      <h2>Upstream &amp; limits <button class="pbtn" id="save-limits" data-style="margin-left:auto">Save</button></h2>
-      <div class="slabel">Upstream base URL · saving clears the model-catalog cache</div>
+      <h2><span data-i18n="settings.server.upstream_limits"></span> <button class="pbtn" id="save-limits" data-style="margin-left:auto" data-i18n="settings.common.save"></button></h2>
+      <div class="slabel" data-i18n="settings.server.base_url_note"></div>
       <input id="sv-base" class="sin" data-style="width:100%" value="${escapeHtml(sv.base_url)}" spellcheck="false">
       <div class="limgrid">
-        ${num('sv-maxwait', 'Max wait', L.max_wait_secs, 's')}
-        ${num('sv-heartbeat', 'Heartbeat', L.heartbeat_secs, 's')}
-        ${num('sv-idle', 'Stream idle', L.stream_idle_secs, 's')}
-        ${num('sv-timeout', 'Request timeout', L.request_timeout_secs, 's')}
-        ${num('sv-ttl', 'Models TTL', L.models_ttl_secs, 's')}
-        ${num('sv-inflight', 'Max in-flight', L.max_inflight, '')}
+        ${num('sv-maxwait', 'settings.server.limit.max_wait', L.max_wait_secs, 'settings.server.unit.seconds')}
+        ${num('sv-heartbeat', 'settings.server.limit.heartbeat', L.heartbeat_secs, 'settings.server.unit.seconds')}
+        ${num('sv-idle', 'settings.server.limit.stream_idle', L.stream_idle_secs, 'settings.server.unit.seconds')}
+        ${num('sv-timeout', 'settings.server.limit.request_timeout', L.request_timeout_secs, 'settings.server.unit.seconds')}
+        ${num('sv-ttl', 'settings.server.limit.models_ttl', L.models_ttl_secs, 'settings.server.unit.seconds')}
+        ${num('sv-inflight', 'settings.server.limit.max_inflight', L.max_inflight, '')}
       </div>
       <div data-style="display:flex;align-items:center;gap:10px;margin-top:16px">
         <button class="tog" role="switch" id="sv-strict" aria-checked="${!!L.strict_passthrough}"></button>
-        <span data-style="font-size:12.5px">Strict passthrough <span class="kmeta" data-style="display:inline">— reject params the upstream doesn't accept</span></span>
+        <span data-style="font-size:12.5px"><span data-i18n="settings.server.strict_passthrough"></span> <span class="kmeta" data-style="display:inline" data-i18n="settings.server.strict_note"></span></span>
       </div>
       <div class="serr" id="limits-err"></div>
     </div>
     <div class="card mb">
-      <h2>Model limits
-        <span data-style="margin-left:auto;display:inline-flex;align-items:center;gap:8px"><span class="kmeta">adaptive</span>
+      <h2><span data-i18n="settings.server.model_limits"></span>
+        <span data-style="margin-left:auto;display:inline-flex;align-items:center;gap:8px"><span class="kmeta" data-i18n="settings.server.adaptive"></span>
         <button class="tog" role="switch" id="gov-tog" aria-checked="${!!sv.governor.enabled}"></button></span></h2>
-      <p class="shint">Absorbs NIM worker-exhaustion per model without cooling down keys. Each model self-tunes: engages on the first exhaustion, climbs while stable, dissolves after a long clean stretch. Set an override only if you know a model's ceiling.</p>
+      <p class="shint" data-i18n="settings.server.model_limits_help"></p>
       <div>${ovr.map(([m, cap], i) =>
-        `<span class="ochip"><span title="${escapeHtml(m)}">${escapeHtml(m)}</span><b>${+cap} max</b><button data-govdel="${i}" title="Remove override">×</button></span>`).join('')
-        || '<span class="kmeta">No overrides set</span>'}</div>
+        `<span class="ochip"><span title="${escapeHtml(m)}">${escapeHtml(m)}</span><b>${+cap} <span data-i18n="settings.server.unit.limit"></span></b><button data-govdel="${i}" data-i18n-attr="title:settings.server.remove_override">×</button></span>`).join('')
+        || '<span class="kmeta" data-i18n="settings.server.no_overrides"></span>'}</div>
       <div class="addrow">
-        <input id="gov-model" class="sin" data-style="flex:1;min-width:200px" placeholder="model id, e.g. moonshotai/kimi-k2.5" autocomplete="off" spellcheck="false">
-        <span class="rpmwrap"><input id="gov-cap" class="sin num" type="number" min="1" max="10000" value="8"><span class="unitl">max</span></span>
-        <button class="gbtn" id="gov-add">+ override</button>
+        <input id="gov-model" class="sin" data-style="flex:1;min-width:200px" data-i18n-attr="placeholder:settings.server.model_placeholder" autocomplete="off" spellcheck="false">
+        <span class="rpmwrap"><input id="gov-cap" class="sin num" type="number" min="1" max="10000" value="8"><span class="unitl" data-i18n="settings.server.unit.limit"></span></span>
+        <button class="gbtn" id="gov-add" data-i18n="settings.server.add_override"></button>
       </div>
       <div class="serr" id="gov-err"></div>
     </div>
     <div class="card">
-      <h2>History &amp; dashboard <button class="pbtn" id="save-history" data-style="margin-left:auto">Save</button></h2>
+      <h2><span data-i18n="settings.server.history.heading"></span> <button class="pbtn" id="save-history" data-style="margin-left:auto" data-i18n="settings.common.save"></button></h2>
       <div class="limgrid" data-style="margin-top:6px">
-        <div><div class="slabel">Default time range</div>
-          <span class="rpmwrap" data-style="display:flex"><input id="sv-default-days" class="sin" data-style="width:100%;text-align:right" type="number" min="1" step="1" value="${+sv.dashboard.default_window_days}"><span class="unitl">days</span></span></div>
-        <div><div class="slabel">History retention · 0 = unlimited</div>
-          <span class="rpmwrap" data-style="display:flex"><input id="sv-retention-days" class="sin" data-style="width:100%;text-align:right" type="number" min="0" step="1" value="${+sv.history.days}"><span class="unitl">days</span></span></div>
-        <div><div class="slabel">Availability SLO</div>
+        <div><div class="slabel" data-i18n="settings.server.history.default_range"></div>
+          <span class="rpmwrap" data-style="display:flex"><input id="sv-default-days" class="sin" data-style="width:100%;text-align:right" type="number" min="1" step="1" value="${+sv.dashboard.default_window_days}"><span class="unitl" data-i18n="settings.server.days"></span></span></div>
+        <div><div class="slabel" data-i18n="settings.server.history.retention"></div>
+          <span class="rpmwrap" data-style="display:flex"><input id="sv-retention-days" class="sin" data-style="width:100%;text-align:right" type="number" min="0" step="1" value="${+sv.history.days}"><span class="unitl" data-i18n="settings.server.days"></span></span></div>
+        <div><div class="slabel" data-i18n="settings.server.history.slo"></div>
           <span class="rpmwrap" data-style="display:flex"><input id="sv-slo" class="sin" data-style="width:100%;text-align:right" type="number" min="0.1" max="100" step="0.1" value="${+sv.dashboard.slo_target_percent}"><span class="unitl">%</span></span></div>
       </div>
       <div class="congrid" data-style="margin-top:16px">
-        <div class="conbox"><div class="slabel">Oldest data point</div><div class="kmeta" data-style="display:block">${escapeHtml(retainedFrom)}</div></div>
-        <div class="conbox"><div class="slabel">Data file</div><div class="kmeta" data-style="display:block">${escapeHtml(historyBytes)} bytes</div></div>
+        <div class="conbox"><div class="slabel" data-i18n="settings.server.history.oldest"></div><div class="kmeta" data-style="display:block">${retainedFrom}</div></div>
+        <div class="conbox"><div class="slabel" data-i18n="settings.server.history.data_file"></div><div class="kmeta" data-style="display:block">${escapeHtml(historyBytesMessage())}</div></div>
       </div>
-      ${sv.history.compaction_pending ? '<p class="shint" data-style="color:var(--amber-lt)">compaction pending</p>' : ''}
+      ${sv.history.compaction_pending ? '<p class="shint" data-style="color:var(--amber-lt)" data-i18n="settings.server.history.compaction_pending"></p>' : ''}
       <div class="serr" id="history-err"></div>
     </div>`;
+  applyStatic($('setbody'));
   for (const b of $('setbody').querySelectorAll('[data-mode]')) b.addEventListener('click', async () => {
     if (b.dataset.mode === SET.mode) return;
     try { await sPost('/api/settings/clients', { mode: b.dataset.mode }); await loadSettings(); }
@@ -284,14 +319,14 @@ function renderServer() {
     const limits = { strict_passthrough: $('sv-strict').getAttribute('aria-checked') === 'true' };
     for (const [field, id] of Object.entries(nums)) {
       const n = Math.round(+$(id).value);
-      if (!isFinite(n) || n < 0) return note('limits-err', 'Every limit needs a whole number ≥ 0.');
+      if (!isFinite(n) || n < 0) return noteMessage('limits-err', 'settings.validation.limits');
       limits[field] = n;
     }
     try {
       if (base !== sv.base_url) await sPost('/api/settings/upstream', { base_url: base });
       await sPost('/api/settings/limits', limits);
       await loadSettings();
-      note('limits-err', 'Saved.', true);
+      noteMessage('limits-err', 'settings.validation.saved', {}, true);
     } catch (e) { note('limits-err', e.message); }
   });
   $('gov-tog').addEventListener('click', async () => {
@@ -304,7 +339,7 @@ function renderServer() {
   });
   $('gov-add').addEventListener('click', async () => {
     const model = $('gov-model').value.trim(), cap = Math.round(+$('gov-cap').value);
-    if (!model || !(cap >= 1)) return note('gov-err', 'Give a model id and a cap ≥ 1.');
+    if (!model || !(cap >= 1)) return noteMessage('gov-err', 'settings.validation.governor');
     try { await sPost('/api/settings/governor', { set_override: { model, cap } }); await loadSettings(); }
     catch (e) { note('gov-err', e.message); }
   });
@@ -313,11 +348,11 @@ function renderServer() {
     const retention = Math.round(+$('sv-retention-days').value);
     const slo = +$('sv-slo').value;
     if (!isFinite(defaultDays) || defaultDays < 1)
-      return note('history-err', 'Default time range must be at least 1 day.');
+      return noteMessage('history-err', 'settings.validation.history_default');
     if (!isFinite(retention) || retention < 0)
-      return note('history-err', 'History retention must be 0 or more days.');
+      return noteMessage('history-err', 'settings.validation.history_retention');
     if (!isFinite(slo) || slo <= 0 || slo > 100)
-      return note('history-err', 'SLO target must be greater than 0 and at most 100.');
+      return noteMessage('history-err', 'settings.validation.slo');
     try {
       await sPost('/api/settings/history', {
         days: retention,
@@ -325,48 +360,71 @@ function renderServer() {
         slo_target_percent: slo,
       });
       await loadSettings();
-      note('history-err', 'Saved.', true);
+      noteMessage('history-err', 'settings.validation.saved', {}, true);
     } catch (e) { note('history-err', e.message); }
   });
 }
 
 function renderUsers() {
   const RCLS = { superuser: 'superuser', admin: 'admin', user: 'user' };
+  const nimKeyCount = n => {
+    const params = { n: NUM_GROUPED.format(n) };
+    switch (PLURALS.select(n)) {
+      case 'zero': return catalogMessage('settings.users.nim_key_count.zero', params);
+      case 'one': return catalogMessage('settings.users.nim_key_count.one', params);
+      case 'two': return catalogMessage('settings.users.nim_key_count.two', params);
+      case 'few': return catalogMessage('settings.users.nim_key_count.few', params);
+      case 'many': return catalogMessage('settings.users.nim_key_count.many', params);
+      default: return catalogMessage('settings.users.nim_key_count.other', params);
+    }
+  };
+  const clientKeyCount = n => {
+    const params = { n: NUM_GROUPED.format(n) };
+    switch (PLURALS.select(n)) {
+      case 'zero': return catalogMessage('settings.users.client_key_count.zero', params);
+      case 'one': return catalogMessage('settings.users.client_key_count.one', params);
+      case 'two': return catalogMessage('settings.users.client_key_count.two', params);
+      case 'few': return catalogMessage('settings.users.client_key_count.few', params);
+      case 'many': return catalogMessage('settings.users.client_key_count.many', params);
+      default: return catalogMessage('settings.users.client_key_count.other', params);
+    }
+  };
   const rows = SET.users.map((u, i) => `<div class="krow">
     <span class="umono">${escapeHtml((u.username[0] || '?').toUpperCase())}</span>
     <div data-style="min-width:0">
       <div data-style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(u.username)}</div>
-      <div class="kmeta">${+u.nim_keys} NIM · ${+u.client_keys} client</div>
+      <div class="kmeta">${escapeHtml(nimKeyCount(+u.nim_keys))} · ${escapeHtml(clientKeyCount(+u.client_keys))}</div>
     </div>
-    <span class="rbadge ${RCLS[u.role] || 'user'}" data-style="margin-left:auto">${escapeHtml(String(u.role).toUpperCase())}</span>
-    ${u.role !== 'superuser' ? `<button class="gbtn" data-urp="${i}">Reset password</button>
-      <select class="sin" data-urole="${i}" title="Role">
+    <span class="rbadge ${RCLS[u.role] || 'user'}" data-style="margin-left:auto">${escapeHtml(String(u.role))}</span>
+    ${u.role !== 'superuser' ? `<button class="gbtn" data-urp="${i}" data-i18n="settings.users.reset_password"></button>
+      <select class="sin" data-urole="${i}" data-i18n-attr="title:settings.users.role">
         <option value="admin"${u.role === 'admin' ? ' selected' : ''}>admin</option>
         <option value="user"${u.role === 'user' ? ' selected' : ''}>user</option>
       </select>
-      <button class="dbtn" data-udel="${i}">Delete</button>`
-      : `<span class="note" title="The superuser changes its own password in Account settings">self-managed</span>`}
+      <button class="dbtn" data-udel="${i}" data-i18n="settings.users.delete"></button>`
+      : `<span class="note" data-i18n-attr="title:settings.users.superuser_note" data-i18n="settings.users.self_managed"></span>`}
   </div>`).join('');
   $('setbody').innerHTML = `<div class="card">
-    <h2>Users <span class="note">deleting a user pulls their NIM keys from the pool &amp; stops their clients</span></h2>
+    <h2><span data-i18n="settings.users.heading"></span> <span class="note" data-i18n="settings.users.note"></span></h2>
     <div>${rows}</div>
     <div class="addrow">
-      <input id="u-name" class="sin" data-style="flex:1;min-width:150px" placeholder="new username" autocomplete="off" spellcheck="false">
-      <input id="u-pass" class="sin" data-style="flex:1;min-width:150px" type="password" placeholder="initial password (10+ chars)" autocomplete="new-password">
+      <input id="u-name" class="sin" data-style="flex:1;min-width:150px" data-i18n-attr="placeholder:settings.users.username_placeholder" autocomplete="off" spellcheck="false">
+      <input id="u-pass" class="sin" data-style="flex:1;min-width:150px" type="password" data-i18n-attr="placeholder:settings.users.password_placeholder" autocomplete="new-password">
       <span class="pills"><button data-urolepick="user" aria-pressed="true">user</button><button data-urolepick="admin" aria-pressed="false">admin</button></span>
-      <button class="pbtn" id="u-add">Add user</button>
+      <button class="pbtn" id="u-add" data-i18n="settings.users.add"></button>
     </div>
     <div class="serr" id="u-err"></div>
   </div>`;
   const body = $('setbody');
+  applyStatic(body);
   for (const b of body.querySelectorAll('[data-urp]')) b.addEventListener('click', async () => {
     const u = SET.users[+b.dataset.urp];
-    const pw = prompt(`New password for ${u.username} (at least 10 characters):`);
+    const pw = promptMessage('settings.dialog.reset_password', { username: u.username });
     if (pw == null) return;
-    if (pw.length < 10) return note('u-err', 'Password must be at least 10 characters.');
+    if (pw.length < 10) return noteMessage('u-err', 'settings.validation.password');
     try {
       await sPost('/api/settings/users', { reset_password: { username: u.username, new_password: pw } });
-      note('u-err', `Password reset for ${u.username}.`, true);
+      noteMessage('u-err', 'settings.validation.password_reset', { username: u.username }, true);
     } catch (e) { note('u-err', e.message); }
   });
   for (const s of body.querySelectorAll('[data-urole]')) s.addEventListener('change', async () => {
@@ -376,7 +434,7 @@ function renderUsers() {
   });
   for (const b of body.querySelectorAll('[data-udel]')) b.addEventListener('click', async () => {
     const u = SET.users[+b.dataset.udel];
-    if (!confirm(`Delete ${u.username}? Their NIM keys leave the pool and their API keys stop working.`)) return;
+    if (!confirmMessage('settings.dialog.delete_user', { username: u.username })) return;
     try { await sPost('/api/settings/users', { remove: u.username }); await loadSettings(); }
     catch (e) { note('u-err', e.message); }
   });
@@ -387,8 +445,8 @@ function renderUsers() {
   });
   $('u-add').addEventListener('click', async () => {
     const username = $('u-name').value.trim(), password = $('u-pass').value;
-    if (!username) return note('u-err', 'Pick a username.');
-    if (password.length < 10) return note('u-err', 'Initial password must be at least 10 characters.');
+    if (!username) return noteMessage('u-err', 'settings.validation.username');
+    if (password.length < 10) return noteMessage('u-err', 'settings.validation.initial_password');
     try { await sPost('/api/settings/users', { add: { username, password, role: newRole } }); await loadSettings(); }
     catch (e) { note('u-err', e.message); }
   });
@@ -396,28 +454,29 @@ function renderUsers() {
 
 function renderAccount() {
   $('setbody').innerHTML = `<div class="card" data-style="max-width:560px">
-    <h2>Account</h2>
-    <div class="slabel">Username</div>
+    <h2 data-i18n="settings.account.heading"></h2>
+    <div class="slabel" data-i18n="settings.account.username"></div>
     <input class="sin" data-style="width:100%" value="${escapeHtml(SET.username)}" disabled>
-    <div class="slabel" data-style="margin-top:14px">Current password</div>
+    <div class="slabel" data-style="margin-top:14px" data-i18n="settings.account.current_password"></div>
     <input id="a-cur" class="sin" data-style="width:100%" type="password" autocomplete="current-password">
-    <div class="slabel" data-style="margin-top:14px">New password · at least 10 characters</div>
+    <div class="slabel" data-style="margin-top:14px" data-i18n="settings.account.new_password"></div>
     <input id="a-new" class="sin" data-style="width:100%" type="password" autocomplete="new-password">
-    <div class="slabel" data-style="margin-top:14px">Confirm new password</div>
+    <div class="slabel" data-style="margin-top:14px" data-i18n="settings.account.confirm_password"></div>
     <input id="a-conf" class="sin" data-style="width:100%" type="password" autocomplete="new-password">
-    <p class="shint" data-style="margin-top:14px">Changing your password signs out your other sessions.</p>
-    <button class="pbtn" id="a-save">Update password</button>
+    <p class="shint" data-style="margin-top:14px" data-i18n="settings.account.note"></p>
+    <button class="pbtn" id="a-save" data-i18n="settings.account.update"></button>
     <div class="serr" id="a-err"></div>
   </div>`;
+  applyStatic($('setbody'));
   $('a-save').addEventListener('click', async () => {
     const nw = $('a-new').value;
-    if (nw.length < 10) return note('a-err', 'New password must be at least 10 characters.');
-    if (nw !== $('a-conf').value) return note('a-err', 'Passwords do not match.');
+    if (nw.length < 10) return noteMessage('a-err', 'settings.validation.new_password');
+    if (nw !== $('a-conf').value) return noteMessage('a-err', 'settings.validation.password_mismatch');
     $('a-save').disabled = true; // password hashing is deliberately slow
     try {
       await sPost('/api/settings/account', { current_password: $('a-cur').value, new_password: nw });
       for (const id of ['a-cur', 'a-new', 'a-conf']) $(id).value = '';
-      note('a-err', 'Password updated — this session was refreshed.', true);
+      noteMessage('a-err', 'settings.validation.password_updated', {}, true);
     } catch (e) { note('a-err', e.message); }
     $('a-save').disabled = false;
   });
@@ -436,10 +495,10 @@ setInterval(async () => {
       const k = byFp.get(el.dataset.ksfp);
       if (!k) continue;
       const st = keyState(k);
-      el.textContent = st.text;
+      setMessageText(el, st.id, st.params);
       el.className = st.cls;
     }
     const pn = $('pool-note');
-    if (pn) pn.textContent = poolNote();
+    if (pn) setMessageText(pn, 'settings.key.pool_note', { enabled: NUM_GROUPED.format(+SET.pool.enabled), capacity: NUM_GROUPED.format(+SET.pool.capacity_rpm) });
   } catch {}
 }, 5000);

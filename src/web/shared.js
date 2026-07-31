@@ -218,6 +218,12 @@ function setMessageAttr(node, attr, id, params = {}) {
     throw new Error(`forbidden catalog attribute: ${attr}`);
   node.setAttribute(attr, message(id, params));
 }
+function confirmMessage(id, params = {}) {
+  return confirm(message(id, params));
+}
+function promptMessage(id, params = {}) {
+  return prompt(message(id, params));
+}
 /* Static markup carries data-i18n="<id>" for content and
    data-i18n-attr="<attr>:<id>[,<attr>:<id>]" for attributes. */
 function applyStatic(root) {
@@ -308,6 +314,7 @@ let PCT_3;
 let PCT_SIGNED_0;
 let PCT_SIGNED_1;
 let DAYS;
+let PLURALS;
 function initializeFormatters() {
   const tag = I18N.locale || 'en-US';
   try {
@@ -370,6 +377,7 @@ function initializeFormatters() {
     maximumFractionDigits: 1,
     signDisplay: 'exceptZero',
   });
+  PLURALS = new Intl.PluralRules(LOCALE);
   DAYS = Array.from({ length: 7 }, (_, i) =>
     WEEKDAY_SHORT.format(
       Date.UTC(2024, 0, 1 + ((FIRST_DAY - 1 + i) % 7)),
