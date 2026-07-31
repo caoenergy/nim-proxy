@@ -406,6 +406,7 @@ pub struct DashboardResponse {
 pub struct DashboardWindow {
     pub available_from: Option<u64>,
     pub available_to: Option<u64>,
+    pub complete: bool,
     pub default_window_days: u64,
     pub effective_from: Option<u64>,
     pub effective_to: Option<u64>,
@@ -972,9 +973,10 @@ mod tests {
     fn dashboard_ui_fixture(kind: &str) -> DashboardResponse {
         let empty = kind == "empty";
         let partial = kind == "partial";
+        let unavailable = kind == "unavailable";
         let extreme = kind == "extreme";
         let long = kind == "long";
-        let values = if empty {
+        let values = if empty || unavailable {
             Vec::new()
         } else if long {
             let client = format!("client-fixture-{}", "c".repeat(49));
@@ -1010,6 +1012,16 @@ mod tests {
         };
         let effective_from = available_from;
         let effective_to = 1_700_003_600;
+        let requested_from = if unavailable {
+            1_699_000_000
+        } else {
+            1_697_411_600
+        };
+        let requested_to = if unavailable {
+            1_699_003_600
+        } else {
+            effective_to
+        };
         let point = |from, to, point_values| RollupPoint {
             capacity: Some(crate::history::CapacityRollup {
                 average_rpm: 80.0,
@@ -1020,7 +1032,7 @@ mod tests {
             to,
             values: point_values,
         };
-        let points = if empty {
+        let points = if empty || unavailable {
             Vec::new()
         } else if extreme || long {
             vec![point(effective_from, effective_to, values.clone())]
@@ -1041,16 +1053,27 @@ mod tests {
         };
         DashboardResponse {
             config_revision: 7,
-            diagnostics: HistoryDiagnostics {
-                excluded_epochs: usize::from(partial),
-                excluded_records: usize::from(partial),
-                normalized_series: usize::from(!empty),
-                skipped_metric_lines: usize::from(partial),
-                valid_checkpoints: 0,
-                valid_samples: usize::from(!empty),
+            diagnostics: if unavailable {
+                HistoryDiagnostics {
+                    excluded_epochs: 1,
+                    excluded_records: 3,
+                    normalized_series: 1,
+                    skipped_metric_lines: 0,
+                    valid_checkpoints: 0,
+                    valid_samples: 1,
+                }
+            } else {
+                HistoryDiagnostics {
+                    excluded_epochs: usize::from(partial),
+                    excluded_records: usize::from(partial),
+                    normalized_series: usize::from(!empty),
+                    skipped_metric_lines: usize::from(partial),
+                    valid_checkpoints: 0,
+                    valid_samples: usize::from(!empty),
+                }
             },
             history_revision: 11,
-            latest: if empty {
+            latest: if empty || unavailable {
                 Vec::new()
             } else if extreme {
                 vec![active_requests(f64::MAX / 4.0)]
@@ -1062,12 +1085,13 @@ mod tests {
             window: DashboardWindow {
                 available_from: (!empty).then_some(available_from),
                 available_to: (!empty).then_some(effective_to),
+                complete: !empty && !partial && !unavailable,
                 default_window_days: 30,
-                effective_from: (!empty).then_some(effective_from),
-                effective_to: (!empty).then_some(effective_to),
+                effective_from: (!empty && !unavailable).then_some(effective_from),
+                effective_to: (!empty && !unavailable).then_some(effective_to),
                 following_now: false,
-                requested_from: 1_697_411_600,
-                requested_to: effective_to,
+                requested_from,
+                requested_to,
                 retention_days: 30,
             },
         }
@@ -1561,6 +1585,11 @@ mod tests {
             ),
             ("empty", dashboard_ui_fixture("empty"), &empty_now),
             ("partial", dashboard_ui_fixture("partial"), &partial_now),
+            (
+                "unavailable",
+                dashboard_ui_fixture("unavailable"),
+                &initial_now,
+            ),
             ("extreme", dashboard_ui_fixture("extreme"), &initial_now),
             ("long", dashboard_ui_fixture("long"), &initial_now),
             (
@@ -1577,6 +1606,40 @@ mod tests {
             assert_dashboard_pair(label, &range, now);
         }
         let partial_range = dashboard_ui_fixture("partial");
+        let unavailable_range = dashboard_ui_fixture("unavailable");
+        let unavailable_from = unavailable_range
+            .window
+            .available_from
+            .expect("ui-fixture: unavailable has usable history before the gap");
+        let unavailable_to = unavailable_range
+            .window
+            .available_to
+            .expect("ui-fixture: unavailable has usable history after the gap");
+        assert!(unavailable_from < unavailable_range.window.requested_from);
+        assert!(unavailable_range.window.requested_from < unavailable_range.window.requested_to);
+        assert!(unavailable_range.window.requested_to < unavailable_to);
+        assert_eq!(unavailable_range.window.effective_from, None);
+        assert_eq!(unavailable_range.window.effective_to, None);
+        assert!(!unavailable_range.window.complete);
+        assert!(unavailable_range.totals.is_empty());
+        assert!(unavailable_range.latest.is_empty());
+        assert!(unavailable_range.points.is_empty());
+        assert_eq!(
+            unavailable_range.diagnostics,
+            HistoryDiagnostics {
+                excluded_epochs: 1,
+                excluded_records: 3,
+                normalized_series: 1,
+                skipped_metric_lines: 0,
+                valid_checkpoints: 0,
+                valid_samples: 1,
+            },
+            "ui-fixture: unavailable query has cumulative recovered-gap evidence"
+        );
+        assert!(unavailable_range.diagnostics.excluded_epochs > 0);
+        assert!(unavailable_range.diagnostics.excluded_records > 0);
+        assert!(unavailable_range.diagnostics.normalized_series > 0);
+        assert!(unavailable_range.diagnostics.valid_samples > 0);
         assert!(
             partial_range.window.requested_from
                 < partial_range
@@ -1831,6 +1894,10 @@ mod tests {
             (
                 "dashboard-partial.json",
                 serde_json::to_value(dashboard_ui_fixture("partial")).unwrap(),
+            ),
+            (
+                "dashboard-unavailable.json",
+                serde_json::to_value(dashboard_ui_fixture("unavailable")).unwrap(),
             ),
             (
                 "locale-bootstrap.json",
@@ -2096,6 +2163,7 @@ mod tests {
         let window = DashboardWindow {
             available_from: None,
             available_to: None,
+            complete: false,
             default_window_days: 30,
             effective_from: None,
             effective_to: None,

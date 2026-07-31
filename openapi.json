@@ -1392,6 +1392,7 @@
         "type": "object",
         "description": "What was asked for, what could be served, and what exists on disk —\nkept separate so the UI can say \"you asked for 30d, I have 3d\".",
         "required": [
+          "complete",
           "default_window_days",
           "following_now",
           "requested_from",
@@ -1414,6 +1415,9 @@
             ],
             "format": "int64",
             "minimum": 0
+          },
+          "complete": {
+            "type": "boolean"
           },
           "default_window_days": {
             "type": "integer",
@@ -1525,14 +1529,19 @@
         "type": "object",
         "description": "ASCII-ordered: served inside `/api/dashboard` (see `src/api.rs`).",
         "required": [
-          "legacy_resets_inferred",
+          "excluded_epochs",
+          "excluded_records",
           "normalized_series",
           "skipped_metric_lines",
-          "skipped_records",
+          "valid_checkpoints",
           "valid_samples"
         ],
         "properties": {
-          "legacy_resets_inferred": {
+          "excluded_epochs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "excluded_records": {
             "type": "integer",
             "minimum": 0
           },
@@ -1544,7 +1553,7 @@
             "type": "integer",
             "minimum": 0
           },
-          "skipped_records": {
+          "valid_checkpoints": {
             "type": "integer",
             "minimum": 0
           },

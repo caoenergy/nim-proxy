@@ -2730,7 +2730,17 @@ async fn experimental_legacy_history_is_ignored_without_mutation() {
         0.0,
         "legacy values are not imported into canonical history: {range}"
     );
-    assert_eq!(range["diagnostics"]["legacy_resets_inferred"], 0);
+    assert_eq!(
+        range["diagnostics"],
+        serde_json::json!({
+            "excluded_epochs": 0,
+            "excluded_records": 0,
+            "normalized_series": 0,
+            "skipped_metric_lines": 0,
+            "valid_checkpoints": 0,
+            "valid_samples": 0,
+        })
+    );
     assert_eq!(
         std::fs::read(proxy.data_dir.join("history.jsonl")).unwrap(),
         legacy_before

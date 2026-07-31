@@ -285,6 +285,11 @@
       "desc": "Completion tokens generated.",
       "hash": "da9a58f8"
     },
+    "dashboard.common.empty.history_unavailable": {
+      "en": "History unavailable for selected time range",
+      "desc": "Range status when history exists globally but no usable observation covers the selected interval.",
+      "hash": "e2aca469"
+    },
     "dashboard.common.empty.no_completed_requests": {
       "en": "No completed requests yet",
       "hash": "597d8faa"
@@ -1054,6 +1059,11 @@
     "dashboard.topbar.scope.following": {
       "en": "● Live {preset} {from} – {to}",
       "hash": "f24435d2"
+    },
+    "dashboard.topbar.scope.partial_history": {
+      "en": "Partial history · {from}–{to}",
+      "desc": "Range status for incomplete history; variables are the effective observed bounds, not the requested bounds.",
+      "hash": "41fcec64"
     },
     "login.document.title": {
       "en": "NIM Proxy — Sign in",

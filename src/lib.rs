@@ -260,6 +260,7 @@ async fn api_dashboard(
         window: api::DashboardWindow {
             available_from: rollup.data.available_from,
             available_to: rollup.data.available_to,
+            complete: rollup.complete,
             default_window_days: stored.dashboard.default_window_days,
             effective_from: rollup.data.effective_from,
             effective_to: rollup.data.effective_to,
