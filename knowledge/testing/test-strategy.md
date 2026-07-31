@@ -74,8 +74,10 @@ that proof.
   with `UPDATE_UI_FIXTURES=1 cargo test api::tests::ui_fixtures --lib`; verify
   without mutation with `cargo test api::tests::ui_fixtures --lib` and
   `git diff --exit-code -- tests/fixtures/ui`. Matrix recipes refer to a file
-  or `scenarios.json#scenario`, never a JavaScript wire body. `--all-states`
-  runs 52 named rows against the served application: exact ordered requests,
+  or `scenarios.json#scenario`, never a JavaScript wire body. Two explicitly
+  named resilience rows apply an in-memory transform to a generated body: one
+  removes an API error message and one raises Settings integers above 10,000.
+  `--all-states` runs 54 named rows against the served application: exact ordered requests,
   DOM observations, and clean page-error, console-error, promise-rejection,
   asset, unexpected-request, and fixture-consumption observations. Its loading
   row holds the real bootstrap response until the hidden-state assertion.
@@ -100,7 +102,9 @@ that proof.
 - **Number, date, and duration formatting:**
   `TZ=UTC LC_ALL=en_US.UTF-8 node scripts/formatter_fixture.js --check`.
 - **Catalog and UI text:** `python3 scripts/check_i18n.py --selftest`, then
-  `python3 scripts/check_i18n.py`; when English changes, also run
+  `python3 scripts/check_i18n.py`; the current selftest has 102 negative or
+  control cases, including void-element ownership and Settings source classes.
+  When English changes, also run
   `python3 scripts/gen_pseudolocale.py --check`.
 - **Locale files:** `python3 scripts/locale_v1.py --selftest` and
   `python3 scripts/locale_v1.py --all`. When the public English projection
@@ -257,9 +261,9 @@ cargo +nightly fuzz run sse_scan -- -max_total_time=60
 Dashboard changes get two more checks.
 
 **Automated — `node scripts/render_check.js`.** Starts the real binary, loads
-its served page/assets, and fulfills only the 21 Rust-generated typed JSON
+its served page/assets, and fulfills the 21 Rust-generated typed JSON
 fixtures in `tests/fixtures/ui/` at the API boundary. `--all-states` walks the
-52 named request/DOM/clean-run interactions (including loading via a held
+54 named request/DOM/clean-run interactions (including loading via a held
 bootstrap response), every dashboard tab, and chart hovers; it is not a layout
 test or a claim that every application path is covered. Regenerate deliberately
 with `UPDATE_UI_FIXTURES=1 cargo test api::tests::ui_fixtures --lib`, then
@@ -289,6 +293,17 @@ This is the only gate that proves the page *runs*: `cargo test` asserts on
 served HTML text and `node --check` proves only that it parses. See
 [render-gate](../decisions/render-gate.md) and
 [message-catalog-and-escaping](../decisions/message-catalog-and-escaping.md).
+Run the complete Settings matrix under `--all-states --pseudolocale` after
+catalog work: it covers accessibility text, dialogs, validation/toast state,
+raw API errors, the catalog fallback for an unusable error body, and exact
+grouped Settings values above 10,000.
+Page-specific render assertions must compare rendered owned text with the
+selected catalog, not en-US literals; otherwise a real `en-XA` selection makes
+the harness reject correctly localized output before the untranslated-text
+scan runs.
+Rust asset e2e tests follow the same ownership boundary: assert the semantic
+catalog id in the application asset and the expected source text in the served
+catalog, never the retired English literal inside JavaScript.
 
 **Human — screenshots, still.** Real-browser screenshots under live traffic
 (the UI is dark-only since the operator-console redesign), inspected by eye —

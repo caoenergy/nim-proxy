@@ -484,8 +484,8 @@ const INTERACTION_ROWS = [
     category: 'edit',
     state: 'mutation-success',
     action: 'change fixture-user role to admin',
-    visible: 'the user row shows ADMIN',
-    dom: [{ selector: '#setbody .krow', property: 'fixture-user-role', equals: 'ADMIN' }],
+    visible: 'the user row shows admin',
+    dom: [{ selector: '#setbody .krow', property: 'fixture-user-role', equals: 'admin' }],
     request: {
       method: 'POST',
       path: '/api/settings/users',
@@ -548,7 +548,7 @@ const INTERACTION_ROWS = [
     action: 'enter the current and matching replacement passwords and activate Update password',
     visible: 'the password-updated success note is visible and inputs are clear',
     dom: [
-      { selector: '#a-err', property: 'textContent', equals: 'Password updated — this session was refreshed.' },
+      { selector: '#a-err', property: 'textContent', equals: 'Password updated. Other sessions were signed out.' },
       { selector: '#a-cur,#a-new,#a-conf', property: 'value-sequence', equals: ['', '', ''] },
     ],
     request: {
@@ -605,7 +605,7 @@ const INTERACTION_ROWS = [
     state: 'api-error',
     action: 'enter Settings and fulfill config with ApiError',
     visible: 'the settings load error is visible',
-    dom: [{ selector: '#setbody .empty', property: 'textContent-includes', equals: 'Could not load settings' }],
+    dom: [{ selector: '#setbody .empty', property: 'textContent-includes', equals: 'Could not load Settings. Reload the page and sign in again.' }],
     request: {
       method: 'GET',
       path: '/api/config',
@@ -630,13 +630,30 @@ const INTERACTION_ROWS = [
     },
   },
   {
+    id: 'error-settings-fallback',
+    category: 'error',
+    state: 'malformed-api-error',
+    action: 'submit locally valid history settings and fulfill with an API failure without a usable error message',
+    visible: 'the catalog-owned status fallback is visible beside the triggering control',
+    dom: [{ selector: '#history-err', property: 'textContent', equals: 'Request failed (HTTP 400).' }],
+    request: {
+      method: 'POST',
+      path: '/api/settings/history',
+      body: {
+        days: 30,
+        default_window_days: 7,
+        slo_target_percent: 99.9,
+      },
+    },
+  },
+  {
     id: 'error-nim-key-validation',
     category: 'error',
     state: 'mutation-error',
     action: 'activate Validate and add and fulfill key validation with an error',
-    visible: 'the validation failure and Add anyway control are visible',
+    visible: 'the raw API validation error is visible without a stale success state, and Add anyway is available',
     dom: [
-      { selector: '#nk-err', property: 'textContent-includes', equals: 'Validation failed' },
+      { selector: '#nk-err', property: 'textContent', equals: 'validation fixture rejected' },
       { selector: '#nk-force', property: 'hidden', equals: false },
     ],
     request: {
@@ -754,6 +771,17 @@ const INTERACTION_ROWS = [
     action: 'fulfill dashboard requests from the extreme-numeric Rust-owned fixture',
     visible: 'extreme numeric values render without a page error',
     dom: [{ selector: '#tab-overview', property: 'finite-layout', equals: true }],
+  },
+  {
+    id: 'state-settings-exact-large-values',
+    category: 'state',
+    state: 'exact-large-settings-values',
+    action: 'enter Access with a test-only high-value transform of the Rust-owned ConfigResponse',
+    visible: 'Settings shows locale-grouped, non-compact key and pool values above 10,000',
+    dom: [
+      { selector: '#pool-note', property: 'textContent', equals: 'Pool: 12,345 enabled · Total: 67,890 rpm' },
+      { selector: '[data-ksfp="f17e0001"]', property: 'textContent', equals: '12,345 / 67,890 in window' },
+    ],
   },
   {
     id: 'state-long-machine-values',
@@ -968,7 +996,7 @@ const DOM_CONTRACTS = {
   'mutation-user-role': [
     domContract('fixture-user-admin',
       `Array.from(document.querySelectorAll('#setbody .krow')).find(row => row.textContent.includes('fixture-user'))?.querySelector('.rbadge')?.textContent.trim() ?? null`,
-      'ADMIN'),
+      'admin'),
   ],
   'mutation-user-password-reset': [
     domContract('password-reset-note', `document.querySelector('#u-err')?.textContent.trim() ?? null`, 'Password reset for fixture-user.'),
@@ -987,7 +1015,7 @@ const DOM_CONTRACTS = {
   'account-password-update': [
     domContract('password-updated-note',
       `document.querySelector('#a-err')?.textContent.trim() ?? null`,
-      'Password updated — this session was refreshed.'),
+      'Password updated. Other sessions were signed out.'),
     domContract('password-fields-cleared',
       `['a-cur','a-new','a-conf'].map(id => document.getElementById(id)?.value ?? null)`,
       ['', '', '']),
@@ -1033,16 +1061,23 @@ const DOM_CONTRACTS = {
   ],
   'error-settings-load': [
     domContract('settings-load-error',
-      `document.querySelector('#setbody .empty')?.textContent.includes('Could not load settings') ?? false`,
+      `document.querySelector('#setbody .empty')?.textContent.includes('Could not load Settings. Reload the page and sign in again.') ?? false`,
       true),
   ],
   'error-settings-mutation': [
     domContract('typed-api-error', `document.querySelector('#history-err')?.textContent.trim() ?? null`, 'invalid history fixture'),
   ],
+  'error-settings-fallback': [
+    domContract('catalog-request-fallback',
+      `document.querySelector('#history-err')?.textContent.trim() ?? null`,
+      'Request failed (HTTP 400).'),
+  ],
   'error-nim-key-validation': [
-    domContract('validation-error',
-      `document.querySelector('#nk-err')?.textContent.includes('Validation failed') ?? false`,
-      true),
+    domContract('raw-validation-error',
+      `document.querySelector('#nk-err')?.textContent.trim() ?? null`,
+      'validation fixture rejected'),
+    domContract('validation-error-not-green',
+      `document.querySelector('#nk-err')?.classList.contains('ok') ?? null`, false),
     domContract('add-anyway-visible', `document.querySelector('#nk-force')?.hidden ?? null`, false),
   ],
   'error-setup-key-validation': [
@@ -1081,6 +1116,14 @@ const DOM_CONTRACTS = {
     domContract('finite-layout',
       `Number.isFinite(document.documentElement.scrollWidth) && !/(?:NaN|Infinity)/.test(document.body.textContent)`,
       true),
+  ],
+  'state-settings-exact-large-values': [
+    domContract('grouped-pool-capacity',
+      `document.querySelector('#pool-note')?.textContent.trim() ?? null`,
+      'Pool: 12,345 enabled · Total: 67,890 rpm'),
+    domContract('grouped-key-state',
+      `document.querySelector('[data-ksfp="f17e0001"]')?.textContent.trim() ?? null`,
+      '12,345 / 67,890 in window'),
   ],
   'state-long-machine-values': [
     domContract('machine-values-byte-exact-by-owning-surface',
@@ -1499,6 +1542,7 @@ const FIXTURE_SCENARIOS = {
     },
   }),
   'error-settings-mutation': dashboardRecipe({ response: 'api-error.json' }),
+  'error-settings-fallback': dashboardRecipe({ response: 'api-error.json' }),
   'error-nim-key-validation': dashboardRecipe({ response: 'validate-failure.json' }),
   'error-setup-key-validation': setupRecipe({ response: 'validate-failure.json' }),
   'setup-key-validation-success': setupRecipe({ response: 'validate-success.json' }),
@@ -1520,6 +1564,9 @@ const FIXTURE_SCENARIOS = {
   'state-extreme-numeric': dashboardRecipe({
     range: 'dashboard-extreme.json',
     boundary: 'startup-dashboard-range',
+  }),
+  'state-settings-exact-large-values': dashboardRecipe({
+    config: 'scenarios.json#access-before',
   }),
   'state-long-machine-values': dashboardRecipe({
     config: 'scenarios.json#long-values',
@@ -2749,7 +2796,8 @@ const allStates = args.includes('--all-states');
 const PAGE_REL = path.join('src', 'web', `${pageArg}.html`);
 const localeArg = (() => {
   const i = args.indexOf('--locale');
-  return i >= 0 ? args[i + 1] : null;
+  if (i >= 0) return args[i + 1];
+  return args.includes('--pseudolocale') ? 'en-XA' : null;
 })();
 // Catalog values are plain Unicode text. The probe proves ordinary text and
 // allowed attributes render literally, while fixed-markup HTML builders
@@ -3284,6 +3332,11 @@ async function startProxy(tmpdir, setupRequired = IS_SETUP) {
 /* ---------- the run -------------------------------------------------------- */
 
 
+const isGeneratedFrozenP95 = text =>
+  /^\[p95 (?:–|(?:0|[1-9]\d{0,2}(?:,\d{3})*)\.\d sec|(?:0|[1-9]\d{0,2}(?:,\d{3})*) (?:ms|min)) e\]$/.test(text);
+const isIntlDurationRun = text =>
+  /^(?:(?:0|[1-9]\d{0,2}(?:,\d{3})*) ms|(?:0|[1-9]\d{0,2}(?:,\d{3})*)\.\d sec|(?:0|[1-9]\d{0,2}(?:,\d{3})*) min)$/.test(text);
+
 // A run of ASCII prose with no accented character, under a locale where every
 // translated message is accented, is a string the catalog never reached.
 const SCAN_UNTRANSLATED = `
@@ -3299,6 +3352,7 @@ const SCAN_UNTRANSLATED = `
       const padding = t.endsWith(']') ? t.slice(0, -1) : t;
       if (padding && [...padding].every((ch, i) => ch === pseudoPad[i % pseudoPad.length]))
         continue;
+      if (${isGeneratedFrozenP95.toString()}(t)) continue;
       if (/[\\u00C0-\\u024F]/.test(t)) continue;   // accented: the catalog reached it
       out.push(t);
     }
@@ -3318,7 +3372,7 @@ const dataLabelValues = (() => {
     const doc = JSON.parse(fs.readFileSync(p, 'utf8'));
     for (const bucket of ['totals', 'latest']) {
       for (const r of doc[bucket] || []) {
-        for (const k of ['model', 'client']) {
+        for (const k of ['model', 'client', 'mode']) {
           const v = (r.labels || {})[k];
           if (v && v !== 'none') out.add(v);
         }
@@ -3338,11 +3392,16 @@ const SCAN_DATA_DERIVED = `
       try { out.add(prettyName(id)); } catch (e) {}
       try { out.add(publisher(id).name); } catch (e) {}
     }
-    // Anything Intl produces is CLDR data, not catalog text — weekday names and
-    // hour labels are correct-by-construction for the active locale and will
-    // never be accented under en-XA. Ask the page's own cached formatters
-    // rather than hardcoding a list that would drift from them.
+    // Anything Intl produces is CLDR data, not catalog text. Ask the page's
+    // own cached formatters rather than accepting a text-shaped heuristic that
+    // could hide an owned label such as "Key 12".
     try { for (const d of DAYS) out.add(d); } catch (e) {}
+    try {
+      for (let month = 0; month < 12; month++) for (let day = 1; day <= 31; day++) {
+        const ms = Date.UTC(2024, month, day);
+        if (new Date(ms).getUTCMonth() === month) out.add(DAY_SHORT.format(ms));
+      }
+    } catch (e) {}
     try {
       for (let h = 0; h < 24; h++) {
         out.add(HOUR_ONLY.format(Date.UTC(2024, 0, 1, h)));
@@ -3367,7 +3426,7 @@ const SETUP_STEPS = {
     return shown.length > 0 && !$('err').hidden;
   })()`,
   step1: `(() => {
-    $('username').value = 'op'; $('password').value = 'probe-password-1';
+    $('username').value = 'fixture-user'; $('password').value = 'probe-password-1';
     $('confirm').value = 'probe-password-1'; $('to2').click();
     return !$('step2').hidden;
   })()`,
@@ -3375,10 +3434,7 @@ const SETUP_STEPS = {
     $('newkey').value = 'nvapi-probe-key';
     $('addkey').click();
     for (let i = 0; i < 40 && $('to3').disabled; i++) await new Promise(r => setTimeout(r, 50));
-    return !$('to3').disabled
-      && ($('keylist').textContent || '').includes(
-        ${JSON.stringify(`${JSON.parse(fs.readFileSync(path.join(FIXTURES, 'validate-success.json'), 'utf8')).models} models · 40 rpm`)},
-      );
+    return !$('to3').disabled && !!$('keylist').querySelector('li');
   })()`,
   step3: `(() => {
     $('to3').click();
@@ -3626,6 +3682,7 @@ function matrixActionExpression(id) {
     'error-dashboard-now': `await pollNow()`,
     'error-settings-load': openSettings,
     'error-settings-mutation': `${setValue('#sv-retention-days', '30')};${setValue('#sv-default-days', '7')};${setValue('#sv-slo', '99.9')};${click('#save-history')}`,
+    'error-settings-fallback': `${setValue('#sv-retention-days', '30')};${setValue('#sv-default-days', '7')};${setValue('#sv-slo', '99.9')};${click('#save-history')}`,
     'error-nim-key-validation': `${setValue('#nk-key', 'nvapi-invalid-fixture')};${click('#nk-add')}`,
     'error-setup-key-validation': `${setValue('#newkey', 'nvapi-invalid-fixture')};${click('#addkey')}`,
     'setup-key-validation-success': `${setValue('#newkey', 'nvapi-ui-fixture')};${click('#addkey')}`,
@@ -3658,6 +3715,8 @@ const SETTINGS_PRESTATE_PANEL = new Map([
   ['account-password-validation', 'account'],
   ['account-password-update', 'account'],
   ['error-settings-mutation', 'server'],
+  ['error-settings-fallback', 'server'],
+  ['state-settings-exact-large-values', 'access'],
   ['error-nim-key-validation', 'access'],
 ]);
 
@@ -3766,6 +3825,21 @@ async function runMatrixContext({ browser, row, role, configuredProxy, setupProx
       await new Promise(resolve => { heldBootstrapRelease = resolve; });
     }
     const value = routeFixture(normalized);
+    if (row.id === 'error-settings-fallback'
+        && normalized.method === 'POST'
+        && pathname === '/api/settings/history') {
+      value.error = undefined;
+      value.ok = false;
+    }
+    if (row.id === 'state-settings-exact-large-values'
+        && normalized.method === 'GET'
+        && pathname === '/api/config') {
+      value.pool.enabled = 12345;
+      value.pool.capacity_rpm = 67890;
+      value.nim_keys[0].lane = 12344;
+      value.nim_keys[0].in_window = 12345;
+      value.nim_keys[0].rpm = 67890;
+    }
     if (value !== undefined) {
       const reference = activePlan.lastReference;
       const status = reference === 'validate-failure.json'
@@ -4893,15 +4967,20 @@ async function main() {
   };
 
   if (IS_LOGIN) {
+    const selectedLoginMessages = localeArg
+      ? publicCatalogProjection(loadTestLocaleCatalog(localeArg)).messages
+      : null;
+    const expectedAppName = selectedLoginMessages?.['common.app_name'] ?? 'NIM Proxy';
+    const expectedPrompt = selectedLoginMessages?.['login.prompt'] ?? 'Sign in to the dashboard.';
     const loginFailure = await evaluate(`
       (() => {
         if (document.body.hidden) return 'body stayed hidden after catalog resolution';
         if (!document.querySelector('form.login-card')) return 'login form is missing';
         if (document.querySelector('script[src^="/assets/operator/"]'))
           return 'login loaded an operator script';
-        if (document.querySelector('h1')?.textContent !== 'NIM Proxy')
+        if (document.querySelector('h1')?.textContent !== ${JSON.stringify(expectedAppName)})
           return 'catalog did not render the product name';
-        if (document.querySelector('.login-sub')?.textContent !== 'Sign in to the dashboard.')
+        if (document.querySelector('.login-sub')?.textContent !== ${JSON.stringify(expectedPrompt)})
           return 'catalog did not render the login prompt';
         return '';
       })()`);
@@ -5194,7 +5273,13 @@ async function main() {
         return document.querySelector('#tab-${tab}') ? !document.querySelector('#tab-${tab}').hidden : false;
       })()`);
     if (!switched) {
-      console.error(`FAIL — could not reach ${tab} in ${PAGE_REL}; the gate would measure the wrong panels`);
+      const detail = IS_SETUP
+        ? await evaluate(`JSON.stringify({
+          error: $('err')?.textContent || '', step1Hidden: $('step1')?.hidden,
+          step2Hidden: $('step2')?.hidden,
+        })`)
+        : '';
+      console.error(`FAIL — could not reach ${tab} in ${PAGE_REL}; the gate would measure the wrong panels ${detail}`);
       throw reportedFailure();
     }
     await sleep(1200);
@@ -5233,6 +5318,7 @@ async function main() {
         // the count stops meaning anything.
         for (const d of await evaluate(`
           (() => [
+            ($('username') && $('username').value) || '',
             ($('newkey') && $('newkey').value) || '',
             (document.querySelector('#keylist code') || {}).textContent || '',
             ($('baseurl') && $('baseurl').value) || 'https://integrate.api.nvidia.com',
@@ -5416,11 +5502,15 @@ async function main() {
     // Exact match only. Substring matching against data values excludes real
     // labels: a "Mo" monogram swallowed the heatmap's "Mon", and any run
     // containing "rpm" swallowed "0 / 24 rpm · 3 keys", whose "keys" is ours.
-    const isData = (t) => dataDerived.has(t);
+    const isData = (t) => dataDerived.has(t) || [...dataDerived].some(value =>
+      t.startsWith(value + ' ') && /^[0-9.,%]+$/.test(t.slice(value.length + 1)));
     // A run is correctly untranslated only if NOTHING of ours is left once the
     // frozen tokens, digits and punctuation are removed. "tok/s" goes; "24 rpm
     // available" stays, because "available" is a word we wrote.
     const isFrozen = (t) => {
+      // This is the exact trio of already-localized output shapes from secs().
+      // A catalog must not own dynamic numeric data.
+      if (isIntlDurationRun(t)) return true;
       let rest = t;
       for (const f of [...frozen].sort((a, b) => b.length - a.length)) rest = rest.split(f).join(' ');
       return !/[a-zA-Z]{2,}/.test(rest);
@@ -5434,6 +5524,10 @@ async function main() {
     console.log(`\nuntranslated runs under ${localeArg}: ${real.length} actionable`
       + ` (${correct} correctly untranslated: frozen tokens and data from the API)`);
     for (const [text, tab] of real) console.log(`   [${tab}] ${JSON.stringify(text)}`);
+    if (real.length) {
+      console.error(`FAIL — ${real.length} repository-owned run(s) bypassed the catalog`);
+      throw reportedFailure();
+    }
   }
 
   if (predicateFailures.length) {
@@ -5481,7 +5575,23 @@ async function main() {
   }
 }
 
-if (args.includes('--cleanup-selftest')) {
+if (args.includes('--pseudolocale-selftest')) {
+  const failures = [];
+  if (!isGeneratedFrozenP95('[p95 25.0 sec e]'))
+    failures.push('generated p95 duration was not recognized');
+  if (isGeneratedFrozenP95('[p95 arbitrary English e]'))
+    failures.push('arbitrary bracketed English was accepted');
+  for (const value of ['25 ms', '25.0 sec', '4 min'])
+    if (!isIntlDurationRun(value)) failures.push(`Intl duration ${JSON.stringify(value)} was not recognized`);
+  for (const value of ['25 sec', '25.00 sec', '25 min later'])
+    if (isIntlDurationRun(value)) failures.push(`non-Intl duration ${JSON.stringify(value)} was accepted`);
+  if (failures.length) {
+    for (const failure of failures) console.error(`[pseudolocale] ${failure}`);
+    process.exitCode = 1;
+  } else {
+    console.log('pseudolocale selftest ok — exact generated and Intl-format exemptions only');
+  }
+} else if (args.includes('--cleanup-selftest')) {
   cleanupSelftest().then(code => process.exit(code)).catch((e) => {
     console.error('cleanup selftest failed to run: ' + e.message);
     process.exit(2);

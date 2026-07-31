@@ -148,9 +148,11 @@ The browser fixture authority is the 21 stable JSON files in
 production response types. Dashboard metric fixtures derive histogram bounds
 from the same `HISTOGRAM_BUCKETS` registry the recorder uses, with concrete
 samples producing their bucket counts and sums; the browser does not maintain
-another metric model. The 52-row served-app matrix consumes those files or
+another metric model. The 54-row served-app matrix consumes those files or
 `scenarios.json#scenario` at the HTTP boundary and records exact requests,
-DOM results, and clean-run observations. It proves named interactions, not
+DOM results, and clean-run observations. Its rows include Settings dialogs,
+validation/toast transitions, raw API errors, the catalog-owned status fallback,
+and exact grouped Settings values above 10,000. It proves named interactions, not
 layout or all dashboard paths.
 
 `rangeSamples()` adapts the normalized range contract back into the
@@ -214,3 +216,11 @@ are never localized. Catalog ids and descriptors never enter URL, style,
 event, executable script, CSS, or raw-SVG contexts. See
 [message-catalog-and-escaping](../decisions/message-catalog-and-escaping.md)
 and [input-sanitizing-and-xss](../decisions/input-sanitizing-and-xss.md).
+
+Settings renders dynamic Access, Server, Users, and Account markup through the
+same context-owned sinks: `applyStatic` owns declarative text/attribute ids,
+fixed-markup builders escape inert descriptors once, and the five-second Access
+refresh uses `setMessageText`. Confirm/prompt dialogs are exact catalog text
+sinks. Repository fallback errors are catalog messages; usable API error bodies
+remain raw text. Settings keeps API integers exact with locale grouping rather
+than dashboard compact-number formatting.

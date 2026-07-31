@@ -126,21 +126,22 @@ function renderOverview(c) {
   }).filter(Boolean);
   kpiCards($('o-kpis'), [
     { icon: 'pulse', label: catalogMessage('dashboard.common.col.requests'), value: fmt(wreq), sub: windowLabel, delta: deltaChip(reqPts), pts: reqPts },
-    { icon: 'stack', label: catalogMessage('dashboard.common.col.tokens_out'), value: fmt(allC), sub: `${fmt(allP)} in`, delta: deltaChip(ctokPts), pts: ctokPts },
+    { icon: 'stack', label: catalogMessage('dashboard.common.col.tokens_out'), value: fmt(allC), sub: catalogMessage('dashboard.overview.kpi.tokens_in', { tokens: fmt(allP) }), delta: deltaChip(ctokPts), pts: ctokPts },
     { icon: 'check', label: catalogMessage('dashboard.common.kpi.success_rate'), value: wreq ? pctOf(okRatio, 2) : NO_VALUE,
-      sub: `${fmt(wok)} of ${fmt(wreq)}`, delta: deltaChip(okPts), pts: okPts },
+      sub: catalogMessage('dashboard.overview.kpi.success_counts', { ok: fmt(wok), requests: fmt(wreq) }), delta: deltaChip(okPts), pts: okPts },
   ], true);
 
-  $('o-reqnow').textContent = fmt(curRpm) + ' now';
-  lineChart($('o-traffic'), [{ name: 'req/min', color: MED, pts: reqPts, area: true }], fmt, { height: 220 });
+  setMessageText($('o-reqnow'), 'dashboard.common.value.now', { value: fmt(curRpm) });
+  lineChart($('o-traffic'), [{ name: catalogMessage('dashboard.chart.requests_per_min'), color: MED, pts: reqPts, area: true }], fmt, { height: 220 });
 
   $('o-rings').innerHTML = '<div class="ringwrap" id="o-ring-cap"></div><div class="ringwrap" id="o-ring-ok"></div>';
   // ringGauge accepts an id and owns its separate HTML and attribute sinks.
   ringGauge($('o-ring-cap'), capRatio, pctOf(capRatio, 0), capColor,
-    'dashboard.overview.ring.capacity_used', `${fmt(rpmNow)} / ${fmt(capacity)} rpm · ${cfg.lanes} key${cfg.lanes === 1 ? '' : 's'}`);
+    'dashboard.overview.ring.capacity_used', capacityKeySummary(rpmNow, capacity, cfg.lanes));
   const errShare = wreq ? (wreq - wok) / wreq * 100 : 0;
   ringGauge($('o-ring-ok'), okRatio, wreq ? pctOf(okRatio, 0) : NO_VALUE, okColor,
-    'dashboard.common.kpi.success_rate', `errors ${pctOf(errShare / 100, errShare && errShare < 10 ? 1 : 0)} · ${fmt(cooldown429)} cooldowns`);
+    'dashboard.common.kpi.success_rate', errorCooldownSummary(
+      errShare, cooldown429));
   $('o-health').innerHTML =
     metricRow(catalogMessage('dashboard.common.row.active_now'), fmt(sum(rows, 'nimproxy_active_requests'))) +
     metricRow(catalogMessage('dashboard.common.row.queued'), fmt(sum(rows, 'nimproxy_queue_depth'))) +
@@ -184,17 +185,17 @@ function renderModels(c) {
   const chatReqs = [...reqModels.values()].reduce((a, b) => a + b, 0);
   const qmed = (metric, f) => { const v = quantile(wbuckets(metric, f), 0.5); return isFinite(v) ? v : NaN; };
   kpiCards($('m-kpis'), [
-    { icon: 'pulse', label: catalogMessage('dashboard.common.col.requests'), value: fmt(chatReqs), sub: `${models.length} model${models.length === 1 ? '' : 's'}`,
+    { icon: 'pulse', label: catalogMessage('dashboard.common.col.requests'), value: fmt(chatReqs), sub: modelCount(models.length),
       pts: rateSeries(s => sum(s.rows, 'nimproxy_requests_total', l => l.path === '/v1/chat/completions')) },
     { icon: 'stack', label: catalogMessage('dashboard.models.kpi.completion_tokens'), value: fmt(allC), sub: windowLabel,
       pts: rateSeries(s => sum(s.rows, 'nimproxy_completion_tokens_total')) },
     { icon: 'grid', label: catalogMessage('dashboard.models.kpi.prompt_tokens'), value: fmt(allP), sub: windowLabel,
       pts: rateSeries(s => sum(s.rows, 'nimproxy_prompt_tokens_total')) },
     { icon: 'clock', label: catalogMessage('dashboard.models.col.avg_ttft'), value: ttftN ? secs(ttftS / ttftN) : '–',
-      sub: `median ${secs(qmed('nimproxy_ttft_seconds'))}`,
+      sub: catalogMessage('dashboard.models.stat.median', { value: secs(qmed('nimproxy_ttft_seconds')) }),
       pts: avgSeries('nimproxy_ttft_seconds_sum', 'nimproxy_ttft_seconds_count') },
     { icon: 'bolt', label: catalogMessage('dashboard.models.kpi.avg_speed'), value: tpsN ? fmt(tpsS / tpsN) + ' tok/s' : '–',
-      sub: `median ${isFinite(qmed('nimproxy_tokens_per_second', l => l.source === 'usage')) ? fmt(qmed('nimproxy_tokens_per_second', l => l.source === 'usage')) + ' tok/s' : '–'}`,
+      sub: catalogMessage('dashboard.models.stat.median', { value: isFinite(qmed('nimproxy_tokens_per_second', l => l.source === 'usage')) ? fmt(qmed('nimproxy_tokens_per_second', l => l.source === 'usage')) + ' tok/s' : '–' }),
       pts: avgSeries('nimproxy_tokens_per_second_sum', 'nimproxy_tokens_per_second_count') },
   ]);
 
@@ -212,8 +213,8 @@ function renderModels(c) {
     lineChart($(chartId), series, fmtV, { height: 120 });
     const b = wbuckets(metric, f);
     $(valId).innerHTML =
-      `<span><i data-style="background:${MED}"></i>median ${fmtV(quantile(b, 0.5))}</span>` +
-      `<span><i data-style="background:${P95}"></i>p95 ${fmtV(quantile(b, 0.95))}</span>`;
+      `<span><i data-style="background:${MED}"></i>${escapeHtml(catalogMessage('dashboard.models.stat.median', { value: fmtV(quantile(b, 0.5)) }))}</span>` +
+      `<span><i data-style="background:${P95}"></i>${escapeHtml(catalogMessage('dashboard.models.stat.p95', { value: fmtV(quantile(b, 0.95)) }))}</span>`;
   };
   quad('chart-ttft', 'q-ttft', 'nimproxy_ttft_seconds', null, secs);
   quad('chart-tps', 'q-tps', 'nimproxy_tokens_per_second', l => l.source === 'usage', v => isFinite(v) ? fmt(v) + ' tok/s' : '–');
@@ -229,7 +230,8 @@ function renderModels(c) {
     ['other', catalogMessage('dashboard.models.finish.other'), '']];
   const finByReason = Object.fromEntries(FINISH.map(([r]) => [r, wgroups('nimproxy_finish_reason_total', 'model', l => l.reason === r)]));
   const finModels = models.filter(m => finTotal.get(m));
-  $('m-fincount').textContent = finModels.length ? `${finModels.length} model${finModels.length === 1 ? '' : 's'}` : '';
+  if (finModels.length) setMessageText($('m-fincount'), modelCountId(finModels.length), { n: fmt(finModels.length) });
+  else $('m-fincount').replaceChildren();
   sortTable($('table-finish'), 'finish',
     [{ label: catalogMessage('dashboard.common.col.model'), align: 'l', str: true }, ...FINISH.map(([, l]) => ({ label: l }))],
     finModels.map(m => {
@@ -256,7 +258,7 @@ function renderModels(c) {
   if (tcModels.length) barList($('m-toolcalls'), tcModels.map(m => {
     const n = toolCalls.get(m) || 0, r = reqModels.get(m) || 0;
     return { name: m, label: prettyName(m), v: n,
-      vtext: fmt(n) + (r ? ` · ${fmt(n / r)}/req` : ''), color: publisher(m).color };
+      vtext: r ? catalogMessage('dashboard.models.stat.tool_calls_per_request', { calls: fmt(n), per_request: fmt(n / r) }) : fmt(n), color: publisher(m).color };
   }), fmt);
 
   /* scorecard (ex-Compare): best in each column highlighted, still sortable */
@@ -290,21 +292,20 @@ function renderModels(c) {
         <div><div class="mname" title="${escapeHtml(m)}">${escapeHtml(prettyName(m))}</div><div class="mpub">${escapeHtml(pub.name)}</div></div>
       </div>
       <div class="mstats">
-        ${stat('requests', fmt(reqModels.get(m) || 0))}
+        ${stat(catalogMessage('dashboard.common.col.requests'), fmt(reqModels.get(m) || 0))}
         ${stat(catalogMessage('dashboard.common.note.tokens_out'), fmt(ct))}
         ${stat('TTFT', ttftMC.get(m) ? secs(avgTtft(m)) : '–')}
         ${stat('tok/s', tpsMC.get(m) ? fmt(avgTps(m)) : '–')}
-        ${stat('errors', errPct(m), isFinite(e) && e > 0 ? 'critc' : 'dim')}
+        ${stat(catalogMessage('dashboard.models.col.errors'), errPct(m), isFinite(e) && e > 0 ? 'critc' : 'dim')}
       </div></div>`;
   }).join('') || `<div class="empty">${escapeHtml(catalogMessage('dashboard.common.empty.no_traffic'))}</div>`;
 
   /* per-model table */
-  const modelCount = $('m-tablecount');
+  const modelCountNode = $('m-tablecount');
   if (models.length) {
-    setMessageText(modelCount, 'dashboard.common.sort_hint');
-    modelCount.prepend(`${models.length} model${models.length === 1 ? '' : 's'} · `);
+    setMessageText(modelCountNode, modelCountWithSortId(models.length), { n: fmt(models.length) });
   } else {
-    modelCount.replaceChildren();
+    modelCountNode.replaceChildren();
   }
   sortTable($('table-models'), 'models', [
     { label: catalogMessage('dashboard.common.col.model'), align: 'l', str: true }, { label: catalogMessage('dashboard.common.col.requests') }, { label: catalogMessage('dashboard.common.col.tokens_out') },
@@ -457,11 +458,11 @@ function renderReliability(c) {
     <div data-style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--hairline)"><span class="tlabel">${escapeHtml(catalogMessage('dashboard.common.row.error_rate'))}</span><span data-style="font:600 15px var(--mono);color:${errN ? 'var(--red)' : 'var(--ink-3)'}">${wreq ? pctOf(errN / wreq, 1) : NO_VALUE}</span></div>
     <div class="segbar" data-style="height:6px;border-radius:99px;margin-top:8px;gap:1px">${taxCounts.length ? taxCounts.map(x => `<div data-style="width:${(x.n / taxTot * 100).toFixed(1)}%;background:${x.color}" title="${escapeHtml(x.label)}: ${fmt(x.n)}"></div>`).join('') : '<div data-style="width:100%;background:var(--track)"></div>'}</div>`;
 
-  lineChart($('chart-reqrate'), [{ name: 'requests/min', color: MED, pts: reqPts, area: true }], fmt, { height: 150 });
+  lineChart($('chart-reqrate'), [{ name: catalogMessage('dashboard.chart.requests_per_min'), color: MED, pts: reqPts, area: true }], fmt, { height: 150 });
   const outcomeSeries = [
-    { name: 'ok', color: css('--green'), f: l => IS_2XX(l.status) },
-    { name: 'errors', color: css('--red'), f: l => IS_ERR(l.status) },
-    { name: 'disconnects', color: css('--amber'), f: l => l.status === 'disconnect' },
+    { name: catalogMessage('dashboard.chart.success'), color: css('--green'), f: l => IS_2XX(l.status) },
+    { name: catalogMessage('dashboard.chart.errors'), color: css('--red'), f: l => IS_ERR(l.status) },
+    { name: catalogMessage('dashboard.chart.disconnects'), color: css('--amber'), f: l => l.status === 'disconnect' },
   ].map(({ name, color, f }) => ({ name, color, pts: rateSeries(s => sum(s.rows, 'nimproxy_requests_total', f)) }));
   lineChart($('chart-outcomes'), outcomeSeries, fmt, { height: 150 });
   legend($('legend-outcomes'), outcomeSeries);
@@ -486,8 +487,8 @@ function renderReliability(c) {
   stackChart($('chart-outcome-stack'), stackSeries, fmt, { height: 200 });
   legend($('legend-outcome-stack'), stackSeries);
   const loadSeries = [
-    { name: 'active', color: css('--green'), pts: samples.map(s => ({ t: s.t, v: sum(s.rows, 'nimproxy_active_requests') })) },
-    { name: 'queued', color: css('--amber'), pts: samples.map(s => ({ t: s.t, v: sum(s.rows, 'nimproxy_queue_depth') })) },
+    { name: catalogMessage('dashboard.chart.active'), color: css('--green'), pts: samples.map(s => ({ t: s.t, v: sum(s.rows, 'nimproxy_active_requests') })) },
+    { name: catalogMessage('dashboard.chart.queued'), color: css('--amber'), pts: samples.map(s => ({ t: s.t, v: sum(s.rows, 'nimproxy_queue_depth') })) },
   ];
   lineChart($('chart-load'), loadSeries, fmt, { height: 150 });
   legend($('legend-load'), loadSeries);
@@ -588,10 +589,72 @@ const LANE_COLORS = ['#76B900', '#4D6BFE', '#D9A521', '#16B8C0', '#615CED', '#EE
    form absent here can never be added by a translation, and ar/ru/pl/cy need
    categories English does not have. Ids are spelled out rather than built from
    the category, so the lint can still see them. */
-const KEY_PLURALS = new Intl.PluralRules(LOCALE);
+const errorCooldownSummary = (share, cooldowns) => {
+  const p = { pct: pctOf(share / 100, share && share < 10 ? 1 : 0), cooldowns: fmt(cooldowns) };
+  switch (PLURALS.select(cooldowns)) {
+    case 'zero': return catalogMessage('dashboard.overview.ring.errors.zero', p);
+    case 'one': return catalogMessage('dashboard.overview.ring.errors.one', p);
+    case 'two': return catalogMessage('dashboard.overview.ring.errors.two', p);
+    case 'few': return catalogMessage('dashboard.overview.ring.errors.few', p);
+    case 'many': return catalogMessage('dashboard.overview.ring.errors.many', p);
+    default: return catalogMessage('dashboard.overview.ring.errors.other', p);
+  }
+};
+const footerInfoId = (keys, auth) => {
+  if (auth) {
+    switch (PLURALS.select(keys)) {
+      case 'zero': return 'dashboard.nav.footer.api_key_required.zero';
+      case 'one': return 'dashboard.nav.footer.api_key_required.one';
+      case 'two': return 'dashboard.nav.footer.api_key_required.two';
+      case 'few': return 'dashboard.nav.footer.api_key_required.few';
+      case 'many': return 'dashboard.nav.footer.api_key_required.many';
+      default: return 'dashboard.nav.footer.api_key_required.other';
+    }
+  }
+  switch (PLURALS.select(keys)) {
+    case 'zero': return 'dashboard.nav.footer.open.zero';
+    case 'one': return 'dashboard.nav.footer.open.one';
+    case 'two': return 'dashboard.nav.footer.open.two';
+    case 'few': return 'dashboard.nav.footer.open.few';
+    case 'many': return 'dashboard.nav.footer.open.many';
+    default: return 'dashboard.nav.footer.open.other';
+  }
+};
+const capacityKeySummary = (rpmNow, capacity, n) => {
+  const p = { rpm_now: fmt(rpmNow), rpm_capacity: fmt(capacity), n: fmt(n) };
+  switch (PLURALS.select(n)) {
+    case 'zero': return catalogMessage('dashboard.overview.ring.capacity_sub.zero', p);
+    case 'one': return catalogMessage('dashboard.overview.ring.capacity_sub.one', p);
+    case 'two': return catalogMessage('dashboard.overview.ring.capacity_sub.two', p);
+    case 'few': return catalogMessage('dashboard.overview.ring.capacity_sub.few', p);
+    case 'many': return catalogMessage('dashboard.overview.ring.capacity_sub.many', p);
+    default: return catalogMessage('dashboard.overview.ring.capacity_sub.other', p);
+  }
+};
+const modelCountId = n => {
+  switch (PLURALS.select(n)) {
+    case 'zero': return 'dashboard.models.count.zero';
+    case 'one': return 'dashboard.models.count.one';
+    case 'two': return 'dashboard.models.count.two';
+    case 'few': return 'dashboard.models.count.few';
+    case 'many': return 'dashboard.models.count.many';
+    default: return 'dashboard.models.count.other';
+  }
+};
+const modelCount = n => catalogMessage(modelCountId(n), { n: fmt(n) });
+const modelCountWithSortId = n => {
+  switch (PLURALS.select(n)) {
+    case 'zero': return 'dashboard.models.count_with_sort.zero';
+    case 'one': return 'dashboard.models.count_with_sort.one';
+    case 'two': return 'dashboard.models.count_with_sort.two';
+    case 'few': return 'dashboard.models.count_with_sort.few';
+    case 'many': return 'dashboard.models.count_with_sort.many';
+    default: return 'dashboard.models.count_with_sort.other';
+  }
+};
 const enabledKeys = n => {
   const p = { n: fmt(n) };
-  switch (KEY_PLURALS.select(n)) {
+  switch (PLURALS.select(n)) {
     case 'zero': return catalogMessage('dashboard.capacity.note.enabled_keys.zero', p);
     case 'one': return catalogMessage('dashboard.capacity.note.enabled_keys.one', p);
     case 'two': return catalogMessage('dashboard.capacity.note.enabled_keys.two', p);
@@ -604,7 +667,7 @@ const enabledKeys = n => {
    second copy of English grammar in the render path. */
 const unknownIntervals = n => {
   const p = { n: fmt(n) };
-  switch (KEY_PLURALS.select(n)) {
+  switch (PLURALS.select(n)) {
     case 'zero': return catalogMessage('dashboard.capacity.history.no_data.zero', p);
     case 'one': return catalogMessage('dashboard.capacity.history.no_data.one', p);
     case 'two': return catalogMessage('dashboard.capacity.history.no_data.two', p);
@@ -685,7 +748,7 @@ function renderCapacity(c) {
   const lanes = Array.from({ length: cfg.lanes }, (_, i) => {
     const k = String(i);
     const currentRpm = nowLaneRates.get(k) || 0;
-    return { i, name: `Slot ${i + 1}`, cur: laneWindow.get(k) || 0, currentRpm,
+    return { i, name: catalogMessage('dashboard.capacity.slot', { n: fmt(i + 1) }), cur: laneWindow.get(k) || 0, currentRpm,
       util: Math.min(1, currentRpm / Math.max(1, laneRpm(i))),
       b429: lane429.get(k) || 0, bOther: laneOther.get(k) || 0 };
   });
@@ -745,9 +808,11 @@ function applyNowConfig(next) {
     retention_days: +next.retention_days || 0,
     slo_target_percent: +next.slo_target_percent || 99.9,
   };
-  $('verinfo').textContent = `v${cfg.version} · ${cfg.lanes} keys · auth ${cfg.auth ? 'on' : 'off'}`;
+  setMessageText($('verinfo'), footerInfoId(cfg.lanes, cfg.auth), {
+    version: cfg.version, keys: fmt(cfg.lanes),
+  });
   const defaultButton = document.querySelector('#ranges [data-range="default"]');
-  if (defaultButton) defaultButton.textContent = `Default · ${cfg.default_window_days}d`;
+  if (defaultButton) setMessageText(defaultButton, 'dashboard.topbar.range.default_dynamic', { days: fmt(cfg.default_window_days) });
 }
 
 function followingBounds() {
@@ -762,11 +827,7 @@ function followingBounds() {
   return { from: Math.max(0, to - seconds), to };
 }
 
-function presetLabel() {
-  if (mode.preset === 'default') return `Default · ${cfg.default_window_days}d`;
-  if (mode.preset === 'all-retained') return 'All time';
-  return ({ '3600': '1h', '21600': '6h', '86400': '24h', '604800': '7d', '2592000': '30d' })[mode.preset] || '';
-}
+const presetLabel = () => document.querySelector(`#ranges [data-range="${mode.preset}"]`)?.textContent || '';
 
 const scopeDate = seconds => at(DAY_SHORT, seconds * 1000);
 const scopeTime = seconds => at(SCOPE_TIME, seconds * 1000);
@@ -777,15 +838,17 @@ function updateScope() {
     nowData?.tail?.base_history_revision === rangeData.history_revision ? nowData.tail : null;
   const hasTraffic = mode.paused ? frozenHasTraffic : hasSelectedRequestTraffic(samples);
   if (!hasTraffic) {
-    $('rangeinfo').textContent = 'No data in selected time range';
+    setMessageText($('rangeinfo'), 'dashboard.common.empty.no_data_in_range');
     return;
   }
   const from = mode.paused ? mode.from : rangeData.window.effective_from ?? mode.from;
   const to = mode.paused ? mode.to : tail?.to ?? rangeData.window.effective_to ?? mode.to;
   if (mode.kind === 'following' && !mode.paused) {
-    $('rangeinfo').textContent = `● Live    ${presetLabel()}    ${scopeDate(from)} – ${scopeDate(to)}`;
+    setMessageText($('rangeinfo'), 'dashboard.topbar.scope.following', {
+      preset: presetLabel(), from: scopeDate(from), to: scopeDate(to),
+    });
   } else {
-    $('rangeinfo').textContent = `○ Absolute    ${scopeTime(from)} – ${scopeTime(to)}`;
+    setMessageText($('rangeinfo'), 'dashboard.topbar.scope.absolute', { from: scopeTime(from), to: scopeTime(to) });
   }
 }
 
@@ -887,7 +950,7 @@ for (const b of document.querySelectorAll('#ranges button')) {
       try {
         if (await refreshSelectedRange()) render();
       } catch {
-        $('rangeinfo').textContent = 'Failed to load time range';
+        setMessageText($('rangeinfo'), 'dashboard.topbar.error.load');
       }
     }
   });
@@ -901,7 +964,7 @@ $('applyRange').addEventListener('click', async () => {
   try {
     if (await refreshSelectedRange()) render();
   } catch {
-    $('rangeinfo').textContent = 'Failed to load time range';
+    setMessageText($('rangeinfo'), 'dashboard.topbar.error.load');
   }
 });
 $('live').addEventListener('click', async () => {
@@ -919,7 +982,7 @@ $('live').addEventListener('click', async () => {
     try {
       if (await refreshSelectedRange()) render();
     } catch {
-      $('rangeinfo').textContent = 'Failed to resume time range';
+      setMessageText($('rangeinfo'), 'dashboard.topbar.error.resume');
     }
   }
   syncFollowControl();

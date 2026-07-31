@@ -218,6 +218,12 @@ function setMessageAttr(node, attr, id, params = {}) {
     throw new Error(`forbidden catalog attribute: ${attr}`);
   node.setAttribute(attr, message(id, params));
 }
+function confirmMessage(id, params = {}) {
+  return confirm(message(id, params));
+}
+function promptMessage(id, params = {}) {
+  return prompt(message(id, params));
+}
 /* Static markup carries data-i18n="<id>" for content and
    data-i18n-attr="<attr>:<id>[,<attr>:<id>]" for attributes. */
 function applyStatic(root) {
@@ -308,6 +314,7 @@ let PCT_3;
 let PCT_SIGNED_0;
 let PCT_SIGNED_1;
 let DAYS;
+let PLURALS;
 function initializeFormatters() {
   const tag = I18N.locale || 'en-US';
   try {
@@ -370,6 +377,7 @@ function initializeFormatters() {
     maximumFractionDigits: 1,
     signDisplay: 'exceptZero',
   });
+  PLURALS = new Intl.PluralRules(LOCALE);
   DAYS = Array.from({ length: 7 }, (_, i) =>
     WEEKDAY_SHORT.format(
       Date.UTC(2024, 0, 1 + ((FIRST_DAY - 1 + i) % 7)),
@@ -562,8 +570,8 @@ const avgSeries = (sumName, cntName, f) => samples.slice(1).map((s, i) => {
 
 /* quantile median/p95 series from windowed bucket deltas over `samples`;
    `filter` narrows the source buckets (e.g. source="usage"). */
-const quantSeries = (metric, filter) => [[0.5, 'median', MED], [0.95, 'p95', P95]].map(([q, name, color]) => ({
-  name, color,
+const quantSeries = (metric, filter) => [[0.5, 'dashboard.chart.median', MED], [0.95, 'dashboard.chart.p95', P95]].map(([q, nameId, color]) => ({
+  nameId, color,
   pts: samples.slice(1).map((s, i) => {
     const bA = s2 => buckets(s2.rows, metric, filter);
     return { t: s.t, v: quantile(deltaBuckets(bA(s), bA(samples[i])), q) };
@@ -636,7 +644,7 @@ function lineChart(el, series, unitFmt, opts = {}) {
       let p = s.pts[0];
       for (const q of s.pts) if (Math.abs(q.t - best.t) < Math.abs(p.t - best.t)) p = q;
       dots += `<circle cx="${X(p.t)}" cy="${Y(p.v)}" r="4" fill="${s.color}" stroke="${css('--bg')}" stroke-width="1.5"/>`;
-      html += `<div class="row"><span><i class="sw" data-style="background:${s.color}"></i>${escapeHtml(s.name)}</span><b>${unitFmt(p.v)}</b></div>`;
+      html += `<div class="row"><span><i class="sw" data-style="background:${s.color}"></i>${escapeHtml(s.nameId ? catalogMessage(s.nameId) : s.name)}</span><b>${unitFmt(p.v)}</b></div>`;
     }
     hoverg.innerHTML = xh.outerHTML + dots;
     hoverg.setAttribute('visibility', 'visible');
@@ -723,7 +731,7 @@ function stackChart(el, series, unitFmt, opts = {}) {
 
 function legend(el, series) {
   el.innerHTML = series.length > 1
-    ? series.map(s => `<span><i data-style="background:${s.color}"></i>${escapeHtml(s.name)}</span>`).join('')
+    ? series.map(s => `<span><i data-style="background:${s.color}"></i>${escapeHtml(s.nameId ? catalogMessage(s.nameId) : s.name)}</span>`).join('')
     : '';
 }
 
@@ -783,7 +791,7 @@ function barList(el, entries, fmtV, maxV) {
   el.innerHTML = entries.map(e =>
     `<div class="brow"><span class="bname" title="${escapeHtml(e.name)}">${escapeHtml(e.label ?? e.name)}</span>` +
     `<span class="btrack">${isFinite(e.v) ? `<span data-style="width:${Math.max(2, e.v / max * 100).toFixed(0)}%;background:${e.color}"></span>` : ''}</span>` +
-    `<span class="bval">${e.vtext ?? (isFinite(e.v) ? fmtV(e.v) : '–')}</span></div>`).join('');
+    `<span class="bval">${escapeHtml(e.vtext ?? (isFinite(e.v) ? fmtV(e.v) : '–'))}</span></div>`).join('');
 }
 
 /* leaderboard rows: chip square + name + value + thin progress bar */
