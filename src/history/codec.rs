@@ -103,16 +103,12 @@ struct RawRecord {
     state: StateField,
 }
 
+#[derive(Default)]
 enum StateField {
+    #[default]
     Missing,
     Null,
     Entries(Vec<RawStateEntry>),
-}
-
-impl Default for StateField {
-    fn default() -> Self {
-        Self::Missing
-    }
 }
 
 impl<'de> Deserialize<'de> for StateField {
