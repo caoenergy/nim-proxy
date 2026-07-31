@@ -5421,6 +5421,7 @@ async function main() {
   const hovered = [];
   const semanticSurfaceProblems = [];
   const layoutSurfaceProblems = [];
+  const layoutSurfaceEvidence = [];
   const captureSemanticSurface = async context => {
     if (!semanticSelftest) return;
     semanticSurfaceProblems.push(...await evaluate(`(() => {
@@ -5430,10 +5431,23 @@ async function main() {
   };
   const captureLayoutSurface = async (context, rootSelector, boundarySelector = '.main') => {
     if (!layoutReport) return;
-    layoutSurfaceProblems.push(...await evaluate(`(() => {
+    const result = await evaluate(`(() => {
       ${LAYOUT_CHECKER}
-      return layoutProblems(${JSON.stringify(rootSelector)}, ${JSON.stringify(boundarySelector)}, ${JSON.stringify(context)});
-    })()`));
+      const root = document.querySelector(${JSON.stringify(rootSelector)});
+      const boundary = ${JSON.stringify(boundarySelector)} === '@viewport'
+        ? document.documentElement : document.querySelector(${JSON.stringify(boundarySelector)});
+      return {
+        problems: layoutProblems(${JSON.stringify(rootSelector)}, ${JSON.stringify(boundarySelector)}, ${JSON.stringify(context)}),
+        visible: root ? Array.from(root.querySelectorAll('*')).filter(node => {
+          const style = getComputedStyle(node), rect = node.getBoundingClientRect();
+          return !node.closest('[hidden]') && style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+        }).length : 0,
+        root: root ? { scrollWidth: root.scrollWidth, clientWidth: root.clientWidth } : null,
+        boundary: boundary ? { scrollWidth: boundary.scrollWidth, clientWidth: boundary.clientWidth } : null,
+      };
+    })()`);
+    layoutSurfaceProblems.push(...result.problems);
+    layoutSurfaceEvidence.push({ context, rootSelector, boundarySelector, ...result });
   };
   for (const tab of TABS) {
     // Tabs switch on click. `location.hash` is assigned BY that handler, and
@@ -5898,6 +5912,11 @@ async function main() {
   }
 
   if (layoutReport) {
+    for (const evidence of layoutSurfaceEvidence) {
+      console.log(`[layout-report] geometry=${evidence.context} visible=${evidence.visible} `
+        + `root=${evidence.root?.scrollWidth}x${evidence.root?.clientWidth} `
+        + `boundary=${evidence.boundary?.scrollWidth}x${evidence.boundary?.clientWidth}`);
+    }
     for (const artifact of task9Artifacts) {
       if (artifact.report) console.log(`[layout-report] report=${artifact.report}`);
       else console.log(`[layout-report] state=${artifact.state} viewport=${artifact.viewport} path=${artifact.artifact} `

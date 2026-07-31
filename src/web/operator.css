@@ -311,3 +311,15 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
   .brand { justify-content: center; padding: 2px 0 22px; }
   .main { padding: 18px 14px 40px; }
 }
+
+@media (max-width: 500px) {
+  .main { padding: 14px 10px 32px; }
+  .card { padding: 14px 12px; }
+  .krow { flex-wrap: wrap; gap: 8px; }
+  .krow > div:first-child { flex: 1 1 100%; }
+  .kstate { margin-left: 0; }
+  .kmask { overflow-wrap: anywhere; }
+  .krow .rpmwrap { flex: 1 1 100px; min-width: 0; }
+  .krow .sin { max-width: 100%; }
+  .addrow > input { min-width: 0; }
+}
