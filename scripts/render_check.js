@@ -97,7 +97,7 @@ const INTERACTION_ROWS = [
     action: 'enter Settings and activate every role-authorized subnavigation button',
     visible: 'Settings subnavigation exposes only role-authorized panels',
     dom: [{
-      selector: '#setnav button[aria-selected="true"]',
+      selector: '#setnav button[aria-current="page"]',
       property: 'data-sub-sequence-by-role',
       equals: {
         admin: ['access', 'server', 'users', 'account'],
@@ -831,7 +831,7 @@ const DOM_CONTRACTS = {
   'navigation-settings-role-panels': [
     domContract('authorized-subnavigation-activates-visible-panel-by-role',
       `(() => {
-        const selected = document.querySelector('#setnav [aria-selected="true"]')?.dataset.sub ?? null;
+        const selected = document.querySelector('#setnav [aria-current="page"]')?.dataset.sub ?? null;
         const marker = {
           access: '#nk-key',
           account: '#a-cur',
@@ -923,12 +923,12 @@ const DOM_CONTRACTS = {
     domContract('following-label', `document.querySelector('#liveText')?.textContent.trim() ?? null`, 'Live'),
   ],
   'dialog-client-secret-open': [
-    domContract('dialog-open', `document.querySelector('#modal')?.classList.contains('show') ?? false`, true),
+    domContract('dialog-open', `document.querySelector('#modal')?.open ?? false`, true),
     domContract('done-control-present', `!!document.querySelector('#modal-done')`, true),
     domContract('secret-byte-exact', `document.querySelector('#modal-body .secretbox')?.textContent ?? null`, 'npk_fixture_secret'),
   ],
   'dialog-client-secret-close': [
-    domContract('dialog-closed', `document.querySelector('#modal')?.classList.contains('show') ?? null`, false),
+    domContract('dialog-closed', `document.querySelector('#modal')?.open ?? null`, false),
   ],
   'dialog-confirm-cancel-focus-return': [
     domContract('destructive-control-retained', `!!document.querySelector('[data-kdel="0"]')`, true),
@@ -2795,6 +2795,18 @@ const IS_DASHBOARD = pageArg === 'dashboard';
 const allStates = args.includes('--all-states');
 const semanticSelftest = args.includes('--semantic-selftest');
 const layoutReport = args.includes('--layout-report');
+const layoutStateIndex = args.indexOf('--layout-state');
+const layoutState = layoutStateIndex >= 0 ? args[layoutStateIndex + 1] : 'healthy';
+const LAYOUT_RANGE_FIXTURES = {
+  healthy: 'dashboard-healthy.json',
+  long: 'dashboard-long.json',
+  extreme: 'dashboard-extreme.json',
+  incomplete: 'dashboard-partial.json',
+  error: 'api-error.json',
+};
+if (layoutReport && IS_DASHBOARD && !LAYOUT_RANGE_FIXTURES[layoutState]) {
+  throw new Error(`unknown --layout-state ${JSON.stringify(layoutState)}`);
+}
 const PAGE_REL = path.join('src', 'web', `${pageArg}.html`);
 const localeArg = (() => {
   const i = args.indexOf('--locale');
@@ -2940,8 +2952,9 @@ async function evaluateRaw(browser, sessionId, expression) {
 /* ---------- production server and captured API responses ------------------ */
 
 function loadFixtures() {
+  const dashboardFixture = LAYOUT_RANGE_FIXTURES[layoutState] || 'dashboard-healthy.json';
   const need = IS_DASHBOARD
-    ? ['config-superuser.json', 'dashboard-healthy.json', 'dashboard-now-initial.json']
+    ? ['config-superuser.json', dashboardFixture, 'dashboard-now-initial.json']
     : IS_SETUP
       ? ['setup-minted-client-key.json', 'validate-success.json']
       : [];
@@ -4292,6 +4305,8 @@ const SEMANTIC_CHECKER = `
   function semanticProblems(doc, expectedData) {
     const problems = [];
     if (doc.querySelectorAll('main').length !== 1) problems.push('invalid-landmark');
+    if (doc.querySelector('#modal') && doc.querySelector('#modal').tagName !== 'DIALOG') problems.push('invalid-landmark');
+    if (doc.querySelector('[role="tablist"],[role="tab"],[role="switch"]')) problems.push('non-button-action');
     for (const action of doc.querySelectorAll('[data-tab],[data-range],[data-sub],[data-copy],[data-tog],[data-kdel],[data-ckdel],[data-govdel],[data-semantic-action]')) {
       if (action.tagName !== 'BUTTON') problems.push('non-button-action');
       const name = (action.getAttribute('aria-label') || action.getAttribute('title') || action.textContent || '').trim();
@@ -4506,7 +4521,7 @@ async function main() {
     else if (url.pathname === '/api/dashboard/now')
       body = fixtures['dashboard-now-initial.json'];
     else if (url.pathname === '/api/dashboard')
-      body = fixtures['dashboard-healthy.json'];
+      body = fixtures[LAYOUT_RANGE_FIXTURES[layoutState] || 'dashboard-healthy.json'];
     else if (url.pathname === '/setup/validate-key' && request.method === 'POST')
       body = fixtures['validate-success.json'];
     else if (url.pathname === '/setup' && request.method === 'POST')
@@ -5394,23 +5409,25 @@ async function main() {
   let task9SemanticProblems = [];
   let task9LayoutMeasurements = [];
   let task9Artifacts = [];
-  if (semanticSelftest || layoutReport) {
+  if (semanticSelftest) {
+    task9SemanticProblems = await evaluate(`(() => { ${SEMANTIC_CHECKER}; return semanticProblems(document, ${IS_DASHBOARD ? "[{ selector: '#m-toolcalls .bname', text: 'alpha' }]" : '[]'}); })()`);
+  }
+  if ((semanticSelftest || layoutReport) && IS_DASHBOARD) {
     await evaluate(`document.querySelector('#side nav button[data-tab="models"]').click()`);
     await sleep(200);
-    if (semanticSelftest) {
-      task9SemanticProblems = await evaluate(`(() => { ${SEMANTIC_CHECKER}; return semanticProblems(document, [{ selector: '#m-toolcalls .bname', text: 'alpha' }]); })()`);
-    }
-    for (const [width, height] of [[1440, 1000], [900, 1000]]) {
-      await browser.send('Emulation.setDeviceMetricsOverride', {
-        width, height, deviceScaleFactor: 1, mobile: false,
-      }, S);
-      await sleep(150);
-      const measurement = await evaluate(`(() => {
-        const value = document.querySelector('#m-toolcalls .bval');
-        if (!value) return { missing: true };
-        return { text: value.textContent, scrollWidth: value.scrollWidth, clientWidth: value.clientWidth, scrollHeight: value.scrollHeight, clientHeight: value.clientHeight };
-      })()`);
-      task9LayoutMeasurements.push({ width, height, ...measurement });
+    if (semanticSelftest || layoutState === 'healthy') {
+      for (const [width, height] of [[1440, 1000], [900, 1000]]) {
+        await browser.send('Emulation.setDeviceMetricsOverride', {
+          width, height, deviceScaleFactor: 1, mobile: false,
+        }, S);
+        await sleep(150);
+        const measurement = await evaluate(`(() => {
+          const value = document.querySelector('#m-toolcalls .bval');
+          if (!value) return { missing: true };
+          return { text: value.textContent, scrollWidth: value.scrollWidth, clientWidth: value.clientWidth, scrollHeight: value.scrollHeight, clientHeight: value.clientHeight };
+        })()`);
+        task9LayoutMeasurements.push({ width, height, ...measurement });
+      }
     }
     await browser.send('Emulation.clearDeviceMetricsOverride', {}, S);
   }
@@ -5421,20 +5438,28 @@ async function main() {
     if (!path.resolve(artifactDir).startsWith(path.join(os.tmpdir(), 'nim-proxy-task9-')))
       throw new Error('layout artifacts must stay in /tmp/nim-proxy-task9-*');
     fs.mkdirSync(artifactDir, { recursive: true });
-    for (const [width, height] of [[390, 844], [768, 1024], [900, 1000], [1440, 1000]]) {
-      await browser.send('Emulation.setDeviceMetricsOverride', {
-        width, height, deviceScaleFactor: 1, mobile: false,
-      }, S);
-      await sleep(150);
-      const screenshot = await browser.send('Page.captureScreenshot', { format: 'png' }, S);
-      const filename = `${pageArg}-models-healthy-${width}x${height}.png`;
-      const artifact = path.join(artifactDir, filename);
-      fs.writeFileSync(artifact, Buffer.from(screenshot.data, 'base64'));
-      const measurement = await evaluate(`(() => {
-        const value = document.querySelector('#m-toolcalls .bval');
-        return value ? { text: value.textContent, scrollWidth: value.scrollWidth, clientWidth: value.clientWidth, scrollHeight: value.scrollHeight, clientHeight: value.clientHeight } : { missing: true };
-      })()`);
-      task9Artifacts.push({ viewport: `${width}x${height}`, state: 'models-healthy', artifact, ...measurement });
+    const captures = IS_DASHBOARD ? [['models', 'dashboard'], ['settings', 'settings']] : [[null, pageArg]];
+    for (const [tab, surface] of captures) {
+      if (tab) {
+        await evaluate(`document.querySelector('#side nav button[data-tab=${JSON.stringify(tab)}]').click()`);
+        await sleep(150);
+      }
+      for (const [width, height] of [[390, 844], [768, 1024], [900, 1000], [1440, 1000]]) {
+        await browser.send('Emulation.setDeviceMetricsOverride', {
+          width, height, deviceScaleFactor: 1, mobile: false,
+        }, S);
+        await sleep(150);
+        const screenshot = await browser.send('Page.captureScreenshot', { format: 'png' }, S);
+        const locale = localeArg ? `-${localeArg}` : '';
+        const filename = `${surface}-${layoutState}${locale}-${width}x${height}.png`;
+        const artifact = path.join(artifactDir, filename);
+        fs.writeFileSync(artifact, Buffer.from(screenshot.data, 'base64'));
+        const measurement = await evaluate(`(() => {
+          const value = document.querySelector('#m-toolcalls .bval');
+          return value ? { text: value.textContent, scrollWidth: value.scrollWidth, clientWidth: value.clientWidth, scrollHeight: value.scrollHeight, clientHeight: value.clientHeight } : { missing: true };
+        })()`);
+        task9Artifacts.push({ viewport: `${width}x${height}`, state: `${surface}-${layoutState}${locale}`, artifact, ...measurement });
+      }
     }
     await browser.send('Emulation.clearDeviceMetricsOverride', {}, S);
     const report = path.join(artifactDir, 'layout-report.json');
@@ -5664,6 +5689,14 @@ async function main() {
     throw reportedFailure();
   }
 
+  if (layoutReport) {
+    for (const artifact of task9Artifacts) {
+      if (artifact.report) console.log(`[layout-report] report=${artifact.report}`);
+      else console.log(`[layout-report] state=${artifact.state} viewport=${artifact.viewport} path=${artifact.artifact} `
+        + `scroll=${artifact.scrollWidth}x${artifact.scrollHeight} client=${artifact.clientWidth}x${artifact.clientHeight}`);
+    }
+  }
+
   if (task9LayoutMeasurements.length) {
     const layoutProblems = task9LayoutMeasurements.filter(measurement =>
       measurement.missing
@@ -5677,14 +5710,6 @@ async function main() {
           + `client=${measurement.clientWidth}x${measurement.clientHeight}`);
       }
       throw reportedFailure();
-    }
-  }
-
-  if (layoutReport) {
-    for (const artifact of task9Artifacts) {
-      if (artifact.report) console.log(`[layout-report] report=${artifact.report}`);
-      else console.log(`[layout-report] state=${artifact.state} viewport=${artifact.viewport} path=${artifact.artifact} `
-        + `scroll=${artifact.scrollWidth}x${artifact.scrollHeight} client=${artifact.clientWidth}x${artifact.clientHeight}`);
     }
   }
 
