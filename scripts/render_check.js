@@ -916,12 +916,63 @@ function resolveVisualExpectations(rows = INTERACTION_ROWS) {
   return { items, problems };
 }
 
+function completeVisualCapture(item) {
+  const [width, height] = item.viewport.split('x').map(Number);
+  const contentHeight = Math.max(height, 1200);
+  return {
+    kind: 'document-vertical-v1',
+    requestedViewport: { width, height },
+    cssLayoutViewport: { pageX: 0, pageY: 0, clientWidth: width, clientHeight: height },
+    cssContentSize: { x: 0, y: 0, width, height: contentHeight },
+    clip: { x: 0, y: 0, width, height: contentHeight, scale: 1 },
+    captureBeyondViewport: true,
+    png: { width, height: contentHeight },
+    internalVerticalScrollers: [],
+  };
+}
+
+function visualCaptureProblems(item, capture) {
+  const prefix = `visual-coverage:${item.identity}:`;
+  const [width, height] = item.viewport.split('x').map(Number);
+  if (!capture || capture.kind !== 'document-vertical-v1'
+      || !capture.requestedViewport || !capture.cssLayoutViewport || !capture.cssContentSize
+      || !capture.clip || !capture.png || !Array.isArray(capture.internalVerticalScrollers)) {
+    return [`${prefix}capture-metadata-missing`];
+  }
+  const viewport = capture.requestedViewport;
+  const layoutViewport = capture.cssLayoutViewport;
+  if (viewport.width !== width || viewport.height !== height
+      || layoutViewport.pageX !== 0 || layoutViewport.pageY !== 0
+      || layoutViewport.clientWidth !== width || layoutViewport.clientHeight !== height) {
+    return [`${prefix}capture-viewport-mismatch`];
+  }
+  const content = capture.cssContentSize;
+  const expectedHeight = Math.max(height, Math.ceil(content.height));
+  if (capture.captureBeyondViewport !== true || capture.clip.height < expectedHeight) {
+    return [`${prefix}capture-not-full-document`];
+  }
+  const clip = capture.clip;
+  if (content.x !== 0 || content.y !== 0 || !Number.isFinite(content.width) || !Number.isFinite(content.height)
+      || clip.x !== 0 || clip.y !== 0 || clip.width !== width || clip.height !== expectedHeight || clip.scale !== 1) {
+    return [`${prefix}capture-clip-mismatch`];
+  }
+  if (capture.png.width !== clip.width || capture.png.height !== clip.height) {
+    return [`${prefix}png-dimensions-mismatch`];
+  }
+  return capture.internalVerticalScrollers.flatMap(scroller => {
+    if (scroller?.intentionalTable === true && scroller.directChild === 'table'
+        && typeof scroller.selector === 'string' && scroller.selector.includes('.scroll')) return [];
+    return [`${prefix}internal-vertical-scroller:${canonicalJson(scroller)}`];
+  });
+}
+
 function completeVisualObservations(rows = INTERACTION_ROWS) {
   return resolveVisualExpectations(rows).items.map(item => ({
     ...item,
     artifactWritten: true,
     reached: true,
     rootVisible: true,
+    capture: completeVisualCapture(item),
     layoutProblems: [],
     pageErrors: [],
     consoleErrors: [],
@@ -967,6 +1018,7 @@ function visualCoverageProblems(observations, rows = INTERACTION_ROWS) {
     } else if (!observed.reached || !observed.rootVisible) {
       problems.push(`visual-coverage:${item.identity}:root-unreached`);
     }
+    problems.push(...visualCaptureProblems(item, observed.capture));
     observationDetails(observed, item, 'layoutProblems', 'layout');
     observationDetails(observed, item, 'pageErrors', 'page-error');
     observationDetails(observed, item, 'consoleErrors', 'console-error');
@@ -1003,6 +1055,35 @@ function visualCoverageSelftest() {
   expectProblem('artifact missing mutation',
     complete.map(item => item.identity === target.identity ? { ...item, artifactWritten: false } : item),
     `visual-coverage:${target.identity}:artifact-missing`);
+  expectOnly('viewport-only capture mutation',
+    complete.map(item => item.identity === target.identity ? {
+      ...item,
+      capture: {
+        ...item.capture,
+        captureBeyondViewport: false,
+        clip: { ...item.capture.clip, height: 844 },
+        png: { ...item.capture.png, height: 844 },
+      },
+    } : item),
+    `visual-coverage:${target.identity}:capture-not-full-document`);
+  expectOnly('PNG dimension mutation',
+    complete.map(item => item.identity === target.identity ? {
+      ...item,
+      capture: { ...item.capture, png: { ...item.capture.png, height: 1199 } },
+    } : item),
+    `visual-coverage:${target.identity}:png-dimensions-mismatch`);
+  const unexpectedScroller = {
+    selector: '#unexpected-scroll-pane',
+    geometry: { left: 0, top: 0, width: 120, height: 120, scrollHeight: 240, clientHeight: 120 },
+    intentionalTable: false,
+    directChild: 'div',
+  };
+  expectOnly('unexpected vertical scroller mutation',
+    complete.map(item => item.identity === target.identity ? {
+      ...item,
+      capture: { ...item.capture, internalVerticalScrollers: [unexpectedScroller] },
+    } : item),
+    `visual-coverage:${target.identity}:internal-vertical-scroller:${canonicalJson(unexpectedScroller)}`);
   expectProblem('layout problem mutation',
     complete.map(item => item.identity === target.identity ? { ...item, layoutProblems: ['layout fixture'] } : item),
     `visual-coverage:${target.identity}:layout:${canonicalJson('layout fixture')}`);
