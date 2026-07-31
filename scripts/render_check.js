@@ -2797,6 +2797,7 @@ const IS_DASHBOARD = pageArg === 'dashboard';
 const allStates = args.includes('--all-states');
 const semanticSelftest = args.includes('--semantic-selftest');
 const layoutReport = args.includes('--layout-report');
+const layoutSelftest = args.includes('--layout-selftest');
 const layoutStateIndex = args.indexOf('--layout-state');
 const layoutState = layoutStateIndex >= 0 ? args[layoutStateIndex + 1] : 'healthy';
 const LAYOUT_RANGE_FIXTURES = {
@@ -4351,6 +4352,64 @@ const SEMANTIC_CHECKER = `
   }
 `;
 
+const LAYOUT_CHECKER = `
+  function layoutProblems(rootSelector, boundarySelector, context) {
+    const root = document.querySelector(rootSelector);
+    const boundary = boundarySelector === '@viewport' ? null : document.querySelector(boundarySelector);
+    if (!root || (!boundary && boundarySelector !== '@viewport')) return ['layout-unreachable:' + context + ':' + rootSelector + ':' + boundarySelector];
+    const visible = node => {
+      const style = getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      return !node.closest('[hidden]')
+        && style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+    };
+    const describe = node => {
+      if (node.id) return '#' + node.id;
+      for (const attribute of ['data-rpm', 'data-tog', 'data-kdel', 'data-ckdel']) {
+        if (node.hasAttribute(attribute)) return node.tagName.toLowerCase() + '[' + attribute + '=' + JSON.stringify(node.getAttribute(attribute)) + ']';
+      }
+      return node.tagName.toLowerCase() + (node.classList.length ? '.' + node.classList[0] : '');
+    };
+    const boundaryRect = boundary ? boundary.getBoundingClientRect() : {
+      left: 0, top: 0, right: innerWidth, bottom: innerHeight,
+    };
+    const problems = [];
+    const seen = new Set();
+    const candidates = [
+      ...root.querySelectorAll('input,select,textarea,button'),
+      ...root.querySelectorAll('*'),
+    ].filter(node => {
+      if (!visible(node)) return false;
+      if (/^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(node.tagName)) return true;
+      return node.children.length === 0 && node.textContent.trim();
+    });
+    for (const node of candidates) {
+      if (seen.has(node)) continue;
+      seen.add(node);
+      const rect = node.getBoundingClientRect();
+      const outside = rect.left < boundaryRect.left - 1 || rect.right > boundaryRect.right + 1
+        || rect.top < boundaryRect.top - 1 || rect.bottom > boundaryRect.bottom + 1;
+      const intrinsic = node.clientWidth > 0 && node.scrollWidth > node.clientWidth + 1;
+      let maskedBy = '';
+      for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+        const style = getComputedStyle(parent);
+        const parentRect = parent.getBoundingClientRect();
+        if (/(hidden|clip)/.test(style.overflowX)
+            && (rect.left < parentRect.left - 1 || rect.right > parentRect.right + 1)) {
+          maskedBy = describe(parent);
+          break;
+        }
+        if (parent === boundary) break;
+      }
+      if (intrinsic || (outside && (maskedBy || boundarySelector === '@viewport'))) {
+        problems.push('layout-clipped:' + context + ':' + describe(node)
+          + ':' + (intrinsic ? 'intrinsic' : maskedBy ? 'masked-by-' + maskedBy : 'outside-viewport'));
+      }
+    }
+    return problems;
+  }
+`;
+
 async function main() {
   const chrome = findChrome();
   if (!chrome) {
@@ -5031,6 +5090,12 @@ async function main() {
     return r.result.value;
   };
 
+  if (layoutReport) {
+    await browser.send('Emulation.setDeviceMetricsOverride', {
+      width: 390, height: 844, deviceScaleFactor: 1, mobile: false,
+    }, S);
+  }
+
   if (IS_LOGIN) {
     const selectedLoginMessages = localeArg
       ? publicCatalogProjection(loadTestLocaleCatalog(localeArg)).messages
@@ -5355,11 +5420,19 @@ async function main() {
   const dataDerived = new Set();
   const hovered = [];
   const semanticSurfaceProblems = [];
+  const layoutSurfaceProblems = [];
   const captureSemanticSurface = async context => {
     if (!semanticSelftest) return;
     semanticSurfaceProblems.push(...await evaluate(`(() => {
       ${SEMANTIC_CHECKER}
       return semanticProblems(document, []).map(problem => ${JSON.stringify('surface:')} + ${JSON.stringify(context)} + ':' + problem);
+    })()`));
+  };
+  const captureLayoutSurface = async (context, rootSelector, boundarySelector = '.main') => {
+    if (!layoutReport) return;
+    layoutSurfaceProblems.push(...await evaluate(`(() => {
+      ${LAYOUT_CHECKER}
+      return layoutProblems(${JSON.stringify(rootSelector)}, ${JSON.stringify(boundarySelector)}, ${JSON.stringify(context)});
     })()`));
   };
   for (const tab of TABS) {
@@ -5385,6 +5458,10 @@ async function main() {
     }
     await sleep(1200);
     await captureSemanticSurface(IS_SETUP ? `setup-${tab}` : `dashboard-${tab}`);
+    if (IS_SETUP) {
+      const surface = tab === 'errors' ? 'step1' : tab === 'step1' ? 'step2' : tab;
+      await captureLayoutSurface(`setup-${surface}`, '#wiz', '@viewport');
+    }
 
     // Real pointer input, at the real coordinates of each rendered chart.
     const rects = await evaluate(`
@@ -5439,6 +5516,12 @@ async function main() {
         if (!untranslatedByTab.has(run)) untranslatedByTab.set(run, tab);
       }
     }
+  }
+
+  if (layoutReport && IS_DASHBOARD) {
+    await evaluate(`document.querySelector('#side nav button[data-tab="settings"]')?.click()`);
+    await sleep(200);
+    await captureLayoutSurface('settings-access', '#setbody');
   }
 
   if (semanticSelftest && IS_DASHBOARD) {
@@ -5496,7 +5579,31 @@ async function main() {
     console.log('semantic selftest ok — missing-accessible-name, invalid-landmark, non-button-action, focus-escape, data-mutation observed');
   }
 
+  if (layoutSelftest) {
+    const layoutSelftestFailures = await evaluate(`(() => {
+      ${LAYOUT_CHECKER}
+      const boundary = document.createElement('div');
+      boundary.id = 'layout-selftest-boundary';
+      boundary.style.cssText = 'position:fixed;left:0;top:0;width:20px;height:20px;overflow:hidden';
+      const clipped = document.createElement('span');
+      clipped.id = 'layout-selftest-clipped';
+      clipped.style.cssText = 'display:block;width:40px;height:10px';
+      clipped.textContent = 'clipped';
+      boundary.append(clipped);
+      document.body.append(boundary);
+      const problems = layoutProblems('#layout-selftest-boundary', '#layout-selftest-boundary', 'layout-selftest');
+      boundary.remove();
+      return problems.some(problem => problem.startsWith('layout-clipped:layout-selftest:#layout-selftest-clipped')) ? [] : ['clipped-element'];
+    })()`);
+    if (layoutSelftestFailures.length) {
+      console.error('[layout-selftest] checker missed: ' + layoutSelftestFailures.join(', '));
+      throw reportedFailure();
+    }
+    console.log('layout selftest ok — clipped element observed');
+  }
+
   let task9SemanticProblems = [];
+  let task9LayoutProblems = [...layoutSurfaceProblems];
   let task9LayoutMeasurements = [];
   let task9Artifacts = [];
   if (semanticSelftest) {
@@ -5508,6 +5615,9 @@ async function main() {
   if ((semanticSelftest || layoutReport) && IS_DASHBOARD) {
     await evaluate(`document.querySelector('#side nav button[data-tab="models"]').click()`);
     await sleep(200);
+    if (layoutReport && layoutState === 'extreme')
+      await captureLayoutSurface('dashboard-extreme-models', '#m-kpis');
+    task9LayoutProblems = [...layoutSurfaceProblems];
     if (semanticSelftest || layoutState === 'healthy') {
       for (const [width, height] of [[1440, 1000], [900, 1000]]) {
         await browser.send('Emulation.setDeviceMetricsOverride', {
@@ -5779,6 +5889,11 @@ async function main() {
 
   if (task9SemanticProblems.length) {
     console.error('\nFAIL — semantic DOM checks disagreed: ' + task9SemanticProblems.join(', '));
+    throw reportedFailure();
+  }
+
+  if (task9LayoutProblems.length) {
+    console.error('\nFAIL — layout DOM checks disagreed: ' + task9LayoutProblems.join(', '));
     throw reportedFailure();
   }
 
