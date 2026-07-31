@@ -2498,6 +2498,159 @@ async fn dashboard_history_combines_process_epochs() {
 }
 
 #[tokio::test]
+async fn dashboard_history_reports_completeness() {
+    let mock = start_mock().await;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let record = |kind: &str, timestamp: u64, boot_id: &str, state: &str| {
+        format!(
+            "{{\"format\":\"nimproxy-history\",\"v\":1,\"kind\":\"{kind}\",\"timestamp\":{timestamp},\"boot_id\":\"{boot_id}\",\"capacity\":{{\"capacity_rpm\":80,\"enabled_keys\":2,\"key_rpms\":[40,40]}}{state}}}\n"
+        )
+    };
+    let sample = |timestamp, boot_id, value| {
+        record(
+            "sample",
+            timestamp,
+            boot_id,
+            &format!(
+                ",\"state\":[{{\"kind\":\"counter\",\"metric\":\"nimproxy_requests_total\",\"labels\":{{\"client\":\"synthetic-client\"}},\"value\":{value}}}]"
+            ),
+        )
+    };
+    let configured_dir = |dir: &std::path::Path| {
+        std::fs::write(
+            dir.join("config.json"),
+            serde_json::to_vec_pretty(&StoreOpts::default().json(&mock.url)).unwrap(),
+        )
+        .unwrap();
+    };
+    let assert_wire_order = |body: &str, object: &str, keys: &[&str]| {
+        let prefix = format!("\"{object}\":{{");
+        let payload = body
+            .split_once(&prefix)
+            .map(|(_, payload)| payload)
+            .unwrap_or("");
+        let positions: Vec<_> = keys
+            .iter()
+            .map(|key| payload.find(&format!("\"{key}\":")))
+            .collect();
+        assert!(
+            positions.iter().all(Option::is_some),
+            "{object} lacks locked wire keys {keys:?}: {body}"
+        );
+        let positions: Vec<_> = positions.into_iter().flatten().collect();
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "{object} keys are not in locked ASCII wire order: {body}"
+        );
+    };
+
+    let data_dir = scratch_data_dir();
+    configured_dir(&data_dir);
+    let valid_history = format!(
+        "{}{}",
+        record("boot", now - 3, "boot-a", ""),
+        sample(now - 2, "boot-a", 2.0),
+    );
+    std::fs::write(data_dir.join("history-v1.jsonl"), valid_history).unwrap();
+    let proxy = start_proxy_in(data_dir, &[("HISTORY_SAMPLE_SECS", "3600")]).await;
+    let cookie = login(&proxy).await;
+    let response = client()
+        .get(proxy.url(&format!(
+            "/api/dashboard?from={}&to={}&points=1000",
+            now - 3,
+            now - 1,
+        )))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let raw = response.text().await.unwrap();
+    assert_wire_order(
+        &raw,
+        "window",
+        &[
+            "available_from",
+            "available_to",
+            "complete",
+            "default_window_days",
+            "effective_from",
+            "effective_to",
+            "following_now",
+            "requested_from",
+            "requested_to",
+            "retention_days",
+        ],
+    );
+    assert_wire_order(
+        &raw,
+        "diagnostics",
+        &[
+            "excluded_epochs",
+            "excluded_records",
+            "normalized_series",
+            "skipped_metric_lines",
+            "valid_checkpoints",
+            "valid_samples",
+        ],
+    );
+    let range: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(range["window"]["complete"], true, "valid epoch is complete");
+    assert_eq!(
+        range["diagnostics"],
+        serde_json::json!({
+            "excluded_epochs": 0,
+            "excluded_records": 0,
+            "normalized_series": 1,
+            "skipped_metric_lines": 0,
+            "valid_checkpoints": 0,
+            "valid_samples": 1,
+        }),
+        "valid stream diagnostics are exact"
+    );
+
+    let damaged_dir = scratch_data_dir();
+    configured_dir(&damaged_dir);
+    let damaged_history = format!(
+        "{}{}{{not-json}}\n{}{}",
+        record("boot", now - 7, "boot-a", ""),
+        sample(now - 6, "boot-a", 2.0),
+        record("boot", now - 4, "boot-b", ""),
+        sample(now - 3, "boot-b", 7.0),
+    );
+    std::fs::write(damaged_dir.join("history-v1.jsonl"), damaged_history).unwrap();
+    let recovered = start_proxy_in(damaged_dir, &[("HISTORY_SAMPLE_SECS", "3600")]).await;
+    let recovered_cookie = login(&recovered).await;
+    let recovered_range =
+        dashboard_range(&recovered, &recovered_cookie, now - 7, now - 2, 1000).await;
+    assert_eq!(recovered_range["window"]["complete"], false);
+    assert_eq!(
+        recovered_range["diagnostics"],
+        serde_json::json!({
+            "excluded_epochs": 1,
+            "excluded_records": 3,
+            "normalized_series": 1,
+            "skipped_metric_lines": 0,
+            "valid_checkpoints": 0,
+            "valid_samples": 1,
+        })
+    );
+    let recovered_total = recovered_range["totals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|value| {
+            value["metric"] == "nimproxy_requests_total"
+                && value["labels"]["client"] == "synthetic-client"
+        })
+        .and_then(|value| value["value"].as_f64());
+    assert_eq!(recovered_total, Some(7.0));
+}
+
+#[tokio::test]
 async fn dashboard_tail_rolls_into_persisted_history_once() {
     let mock = start_mock().await;
     let proxy = start_proxy(&mock.url, &[("HISTORY_SAMPLE_SECS", "2")]).await;

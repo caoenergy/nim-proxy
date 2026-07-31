@@ -563,7 +563,10 @@ mod tests {
     use super::{
         append_with_test_failure, open_with_test_failure, FailurePoint, HistoryStore, OpenError,
     };
-    use crate::history::codec::{decode_record, Capacity, Record, StateEntry, StateKind};
+    use crate::history::{
+        codec::{decode_record, Capacity, DecodeError, Record, StateEntry, StateKind},
+        CapacitySnapshot, History, HistoryWindow, MetricValue,
+    };
 
     fn capacity() -> Capacity {
         Capacity {
@@ -592,6 +595,593 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn history_capacity() -> CapacitySnapshot {
+        CapacitySnapshot {
+            enabled_lanes: 2,
+            rpms: vec![40, 40],
+            capacity_rpm: 80,
+        }
+    }
+
+    fn boot(timestamp: u64, boot_id: &str) -> String {
+        format!(
+            r#"{{"format":"nimproxy-history","v":1,"kind":"boot","timestamp":{timestamp},"boot_id":"{boot_id}","capacity":{{"capacity_rpm":80,"enabled_keys":2,"key_rpms":[40,40]}}}}"#
+        ) + "\n"
+    }
+
+    fn sample(timestamp: u64, boot_id: &str, value: f64) -> String {
+        format!(
+            r#"{{"format":"nimproxy-history","v":1,"kind":"sample","timestamp":{timestamp},"boot_id":"{boot_id}","capacity":{{"capacity_rpm":80,"enabled_keys":2,"key_rpms":[40,40]}},"state":[{{"kind":"counter","metric":"nimproxy_requests_total","labels":{{"client":"synthetic-client"}},"value":{value}}}]}}"#
+        ) + "\n"
+    }
+
+    fn sample_with_gauge(timestamp: u64, boot_id: &str, counter: f64, gauge: f64) -> String {
+        format!(
+            r#"{{"format":"nimproxy-history","v":1,"kind":"sample","timestamp":{timestamp},"boot_id":"{boot_id}","capacity":{{"capacity_rpm":80,"enabled_keys":2,"key_rpms":[40,40]}},"state":[{{"kind":"counter","metric":"nimproxy_requests_total","labels":{{"client":"synthetic-client"}},"value":{counter}}},{{"kind":"gauge","metric":"nimproxy_active_requests","labels":{{"client":"synthetic-client"}},"value":{gauge}}}]}}"#
+        ) + "\n"
+    }
+
+    fn metric_value(metric: &str, value: f64) -> MetricValue {
+        MetricValue {
+            labels: [("client".to_owned(), "synthetic-client".to_owned())]
+                .into_iter()
+                .collect(),
+            metric: metric.to_owned(),
+            value,
+        }
+    }
+
+    fn checkpoint(timestamp: u64, boot_id: &str) -> String {
+        format!(
+            r#"{{"format":"nimproxy-history","v":1,"kind":"checkpoint","timestamp":{timestamp},"boot_id":"{boot_id}","capacity":{{"capacity_rpm":80,"enabled_keys":2,"key_rpms":[40,40]}}}}"#
+        ) + "\n"
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct ExpectedDiagnostics {
+        excluded_epochs: usize,
+        excluded_records: usize,
+        normalized_series: usize,
+        skipped_metric_lines: usize,
+        valid_checkpoints: usize,
+        valid_samples: usize,
+    }
+
+    /// Task 12's file-order state table. This deliberately names the approved
+    /// `HistoryWindow` contract before its production implementation exists:
+    /// the initial RED is the compiler proving that the contract is absent.
+    #[test]
+    fn recovery_streams_preserve_only_usable_epochs_and_report_completeness() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let t = now.saturating_sub(100);
+        let invalid_state = format!(
+            r#"{{"format":"nimproxy-history","v":1,"kind":"sample","timestamp":{},"boot_id":"boot-a","capacity":{{"capacity_rpm":80,"enabled_keys":2,"key_rpms":[40,40]}},"state":[{{"kind":"unknown","metric":"nimproxy_requests_total","labels":{{"client":"synthetic-client"}},"value":1.0}}]}}"#,
+            t + 2
+        ) + "\n";
+        let duplicate_series = format!(
+            r#"{{"format":"nimproxy-history","v":1,"kind":"sample","timestamp":{},"boot_id":"boot-a","capacity":{{"capacity_rpm":80,"enabled_keys":2,"key_rpms":[40,40]}},"state":[{{"kind":"counter","metric":"nimproxy_requests_total","labels":{{"client":"synthetic-client"}},"value":1.0}},{{"kind":"counter","metric":"nimproxy_requests_total","labels":{{"client":"synthetic-client"}},"value":2.0}}]}}"#,
+            t + 2
+        ) + "\n";
+        let unknown_kind = format!(
+            r#"{{"format":"nimproxy-history","v":1,"kind":"unknown","timestamp":{},"boot_id":"boot-a","capacity":{{"capacity_rpm":80,"enabled_keys":2,"key_rpms":[40,40]}}}}"#,
+            t + 2
+        ) + "\n";
+        let future_format = format!(
+            r#"{{"format":"future-history","v":1,"kind":"boot","timestamp":{t},"boot_id":"boot-a","capacity":{{"capacity_rpm":80,"enabled_keys":2,"key_rpms":[40,40]}}}}"#
+        ) + "\n";
+        let future_version = format!(
+            r#"{{"format":"nimproxy-history","v":2,"kind":"boot","timestamp":{t},"boot_id":"boot-a","capacity":{{"capacity_rpm":80,"enabled_keys":2,"key_rpms":[40,40]}}}}"#
+        ) + "\n";
+        let cases = [
+            (
+                "corruption-before-first-boot",
+                format!(
+                    "{{not-json}}\n{}{}",
+                    boot(t + 1, "boot-a"),
+                    sample(t + 2, "boot-a", 1.0)
+                ),
+                false,
+                false,
+                1.0,
+                1,
+                ExpectedDiagnostics {
+                    excluded_epochs: 0,
+                    excluded_records: 1,
+                    normalized_series: 1,
+                    skipped_metric_lines: 0,
+                    valid_checkpoints: 0,
+                    valid_samples: 1,
+                },
+            ),
+            (
+                "corruption-between-samples",
+                format!(
+                    "{}{}{{not-json}}\n{}",
+                    boot(t, "boot-a"),
+                    sample(t + 1, "boot-a", 2.0),
+                    sample(t + 3, "boot-a", 5.0)
+                ),
+                false,
+                false,
+                0.0,
+                0,
+                ExpectedDiagnostics {
+                    excluded_epochs: 1,
+                    excluded_records: 4,
+                    normalized_series: 0,
+                    skipped_metric_lines: 0,
+                    valid_checkpoints: 0,
+                    valid_samples: 0,
+                },
+            ),
+            (
+                "corruption-after-checkpoint",
+                format!(
+                    "{}{}{}{{not-json}}\n",
+                    boot(t, "boot-a"),
+                    sample(t + 1, "boot-a", 2.0),
+                    checkpoint(t + 2, "boot-a")
+                ),
+                false,
+                false,
+                0.0,
+                0,
+                ExpectedDiagnostics {
+                    excluded_epochs: 1,
+                    excluded_records: 4,
+                    normalized_series: 0,
+                    skipped_metric_lines: 0,
+                    valid_checkpoints: 0,
+                    valid_samples: 0,
+                },
+            ),
+            (
+                "timestamp-regression",
+                format!(
+                    "{}{}{}",
+                    boot(t + 1, "boot-a"),
+                    sample(t + 2, "boot-a", 2.0),
+                    sample(t, "boot-a", 5.0)
+                ),
+                false,
+                false,
+                0.0,
+                0,
+                ExpectedDiagnostics {
+                    excluded_epochs: 1,
+                    excluded_records: 3,
+                    normalized_series: 0,
+                    skipped_metric_lines: 0,
+                    valid_checkpoints: 0,
+                    valid_samples: 0,
+                },
+            ),
+            (
+                "equal-timestamps-are-valid",
+                format!(
+                    "{}{}{}",
+                    boot(t, "boot-a"),
+                    sample(t + 1, "boot-a", 2.0),
+                    sample(t + 1, "boot-a", 5.0)
+                ),
+                true,
+                false,
+                5.0,
+                1,
+                ExpectedDiagnostics {
+                    excluded_epochs: 0,
+                    excluded_records: 0,
+                    normalized_series: 2,
+                    skipped_metric_lines: 0,
+                    valid_checkpoints: 0,
+                    valid_samples: 2,
+                },
+            ),
+            (
+                "valid-checkpoint-carries-state-within-usable-epoch",
+                format!(
+                    "{}{}{}",
+                    boot(t, "boot-a"),
+                    sample_with_gauge(t + 1, "boot-a", 5.0, 9.0),
+                    checkpoint(t + 2, "boot-a")
+                ),
+                true,
+                false,
+                5.0,
+                1,
+                ExpectedDiagnostics {
+                    excluded_epochs: 0,
+                    excluded_records: 0,
+                    normalized_series: 4,
+                    skipped_metric_lines: 0,
+                    valid_checkpoints: 1,
+                    valid_samples: 1,
+                },
+            ),
+            (
+                "invalid-state-entry-invalidates-whole-sample",
+                format!("{}{}", boot(t, "boot-a"), invalid_state),
+                false,
+                false,
+                0.0,
+                0,
+                ExpectedDiagnostics {
+                    excluded_epochs: 1,
+                    excluded_records: 2,
+                    normalized_series: 0,
+                    skipped_metric_lines: 0,
+                    valid_checkpoints: 0,
+                    valid_samples: 0,
+                },
+            ),
+            (
+                "duplicate-semantic-series-invalidates-whole-sample",
+                format!("{}{}", boot(t, "boot-a"), duplicate_series),
+                false,
+                false,
+                0.0,
+                0,
+                ExpectedDiagnostics {
+                    excluded_epochs: 1,
+                    excluded_records: 2,
+                    normalized_series: 0,
+                    skipped_metric_lines: 0,
+                    valid_checkpoints: 0,
+                    valid_samples: 0,
+                },
+            ),
+            (
+                "unknown-v1-kind-invalidates-current-epoch",
+                format!(
+                    "{}{}{}",
+                    boot(t, "boot-a"),
+                    sample(t + 1, "boot-a", 2.0),
+                    unknown_kind
+                ),
+                false,
+                false,
+                0.0,
+                0,
+                ExpectedDiagnostics {
+                    excluded_epochs: 1,
+                    excluded_records: 3,
+                    normalized_series: 0,
+                    skipped_metric_lines: 0,
+                    valid_checkpoints: 0,
+                    valid_samples: 0,
+                },
+            ),
+            (
+                "new-boot-and-full-sample-reestablish-usable-epoch",
+                format!(
+                    "{}{}{{not-json}}\n{}{}",
+                    boot(t, "boot-a"),
+                    sample(t + 1, "boot-a", 2.0),
+                    boot(t + 3, "boot-b"),
+                    sample(t + 4, "boot-b", 7.0)
+                ),
+                false,
+                false,
+                7.0,
+                1,
+                ExpectedDiagnostics {
+                    excluded_epochs: 1,
+                    excluded_records: 3,
+                    normalized_series: 1,
+                    skipped_metric_lines: 0,
+                    valid_checkpoints: 0,
+                    valid_samples: 1,
+                },
+            ),
+            (
+                "multiple-damaged-epochs",
+                format!(
+                    "{}{}{{not-json}}\n{}{}{{not-json}}\n{}{}",
+                    boot(t, "boot-a"),
+                    sample(t + 1, "boot-a", 2.0),
+                    boot(t + 3, "boot-b"),
+                    sample(t + 4, "boot-b", 3.0),
+                    boot(t + 6, "boot-c"),
+                    sample(t + 7, "boot-c", 4.0)
+                ),
+                false,
+                false,
+                4.0,
+                1,
+                ExpectedDiagnostics {
+                    excluded_epochs: 2,
+                    excluded_records: 6,
+                    normalized_series: 1,
+                    skipped_metric_lines: 0,
+                    valid_checkpoints: 0,
+                    valid_samples: 1,
+                },
+            ),
+            (
+                "truncated-tail-invalidates-current-epoch",
+                format!(
+                    "{}{}{{\"format\":\"nimproxy-history\"",
+                    boot(t, "boot-a"),
+                    sample(t + 1, "boot-a", 2.0)
+                ),
+                false,
+                false,
+                0.0,
+                0,
+                ExpectedDiagnostics {
+                    excluded_epochs: 1,
+                    excluded_records: 3,
+                    normalized_series: 0,
+                    skipped_metric_lines: 0,
+                    valid_checkpoints: 0,
+                    valid_samples: 0,
+                },
+            ),
+            (
+                "unknown-format-remains-fatal",
+                future_format,
+                false,
+                true,
+                0.0,
+                0,
+                ExpectedDiagnostics {
+                    excluded_epochs: 0,
+                    excluded_records: 0,
+                    normalized_series: 0,
+                    skipped_metric_lines: 0,
+                    valid_checkpoints: 0,
+                    valid_samples: 0,
+                },
+            ),
+            (
+                "future-version-remains-fatal",
+                future_version,
+                false,
+                true,
+                0.0,
+                0,
+                ExpectedDiagnostics {
+                    excluded_epochs: 0,
+                    excluded_records: 0,
+                    normalized_series: 0,
+                    skipped_metric_lines: 0,
+                    valid_checkpoints: 0,
+                    valid_samples: 0,
+                },
+            ),
+        ];
+
+        for (name, bytes, complete, fatal, total, point_count, expected) in cases {
+            let dir = test_dir(&format!("recovery-{name}"));
+            let path = dir.join("history-v1.jsonl");
+            fs::write(&path, bytes).unwrap();
+            let before = fs::read(&path).unwrap();
+            let opened = History::open(dir.clone(), 0, history_capacity());
+            if fatal {
+                let expected = if name == "unknown-format-remains-fatal" {
+                    DecodeError::UnsupportedFormat
+                } else {
+                    DecodeError::UnsupportedVersion
+                };
+                assert!(
+                    matches!(opened, Err(OpenError::InvalidCanonical { error, .. }) if error == expected),
+                    "{name}: exact unsupported wire diagnostic"
+                );
+                assert_eq!(
+                    fs::read(&path).unwrap(),
+                    before,
+                    "{name}: bytes stay evidence"
+                );
+                let _ = fs::remove_dir_all(dir);
+                continue;
+            }
+            let history = opened.unwrap_or_else(|error| {
+                panic!(
+                    "{name}: recoverable corruption must still expose valid later epochs: {error}"
+                )
+            });
+            let HistoryWindow {
+                complete: actual_complete,
+                data,
+                diagnostics,
+            } = history.rollup(0, u64::MAX, 1000);
+            assert_eq!(actual_complete, complete, "{name}: query completeness");
+            assert_eq!(data.points.len(), point_count, "{name}: included points");
+            let expected_totals = (total != 0.0)
+                .then(|| vec![metric_value("nimproxy_requests_total", total)])
+                .unwrap_or_default();
+            assert_eq!(data.totals, expected_totals, "{name}: exact totals");
+            let expected_latest = if name == "valid-checkpoint-carries-state-within-usable-epoch" {
+                vec![metric_value("nimproxy_active_requests", 9.0)]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(data.latest, expected_latest, "{name}: exact latest values");
+            let expected_point_values: Vec<Vec<MetricValue>> = match name {
+                "corruption-before-first-boot" => {
+                    vec![vec![metric_value("nimproxy_requests_total", 1.0)]]
+                }
+                "equal-timestamps-are-valid" => {
+                    vec![vec![metric_value("nimproxy_requests_total", 5.0)]]
+                }
+                "valid-checkpoint-carries-state-within-usable-epoch" => vec![vec![
+                    metric_value("nimproxy_active_requests", 9.0),
+                    metric_value("nimproxy_requests_total", 5.0),
+                ]],
+                "new-boot-and-full-sample-reestablish-usable-epoch" => {
+                    vec![vec![metric_value("nimproxy_requests_total", 7.0)]]
+                }
+                "multiple-damaged-epochs" => {
+                    vec![vec![metric_value("nimproxy_requests_total", 4.0)]]
+                }
+                _ => Vec::new(),
+            };
+            assert_eq!(
+                data.points
+                    .iter()
+                    .map(|point| point.values.clone())
+                    .collect::<Vec<_>>(),
+                expected_point_values,
+                "{name}: exact point values"
+            );
+            let expected_effective = match name {
+                "corruption-before-first-boot" => Some((t + 2, t + 2)),
+                "equal-timestamps-are-valid" => Some((t + 1, t + 1)),
+                "valid-checkpoint-carries-state-within-usable-epoch" => Some((t + 1, t + 2)),
+                "new-boot-and-full-sample-reestablish-usable-epoch" => Some((t + 4, t + 4)),
+                "multiple-damaged-epochs" => Some((t + 7, t + 7)),
+                _ => None,
+            };
+            assert_eq!(
+                (data.effective_from, data.effective_to),
+                expected_effective.map_or((None, None), |(from, to)| (Some(from), Some(to))),
+                "{name}: exact effective bounds"
+            );
+            assert_eq!(
+                (data.available_from, data.available_to),
+                expected_effective.map_or((None, None), |(from, to)| (Some(from), Some(to))),
+                "{name}: exact available bounds"
+            );
+            if let Some((from, to)) = expected_effective {
+                assert_eq!(data.points[0].from, from, "{name}: point start");
+                assert_eq!(data.points[0].to, to, "{name}: point end");
+                assert_eq!(
+                    data.points[0].duration_seconds,
+                    to - from,
+                    "{name}: point duration"
+                );
+            }
+            if name == "valid-checkpoint-carries-state-within-usable-epoch" {
+                assert_eq!(data.points[0].from, t + 1, "{name}: point start");
+                assert_eq!(data.points[0].to, t + 2, "{name}: point end");
+                assert_eq!(data.points[0].duration_seconds, 1, "{name}: point duration");
+                assert_eq!(
+                    data.points[0].capacity.as_ref().unwrap().average_rpm,
+                    80.0,
+                    "{name}: checkpoint capacity"
+                );
+                assert_eq!(
+                    data.points[0].capacity.as_ref().unwrap().latest_rpms,
+                    vec![40, 40],
+                    "{name}: checkpoint key RPMs"
+                );
+            } else {
+                assert!(
+                    data.points.iter().all(|point| point.capacity.is_none()),
+                    "{name}: no capacity is invented before a second observation"
+                );
+            }
+            assert_eq!(
+                diagnostics.excluded_epochs, expected.excluded_epochs,
+                "{name}: excluded epochs"
+            );
+            assert_eq!(
+                diagnostics.excluded_records, expected.excluded_records,
+                "{name}: excluded records"
+            );
+            assert_eq!(
+                diagnostics.normalized_series, expected.normalized_series,
+                "{name}: normalized series"
+            );
+            assert_eq!(
+                diagnostics.skipped_metric_lines, expected.skipped_metric_lines,
+                "{name}: skipped Prometheus metric lines"
+            );
+            assert_eq!(
+                diagnostics.valid_checkpoints, expected.valid_checkpoints,
+                "{name}: valid checkpoints"
+            );
+            assert_eq!(
+                diagnostics.valid_samples, expected.valid_samples,
+                "{name}: valid samples"
+            );
+            if name == "new-boot-and-full-sample-reestablish-usable-epoch" {
+                let HistoryWindow {
+                    complete: usable_complete,
+                    data: usable,
+                    diagnostics: usable_diagnostics,
+                } = history.rollup(t + 3, t + 4, 1000);
+                assert!(usable_complete, "later usable epoch is query-complete");
+                assert_eq!(
+                    usable.totals,
+                    vec![metric_value("nimproxy_requests_total", 7.0)],
+                    "usable epoch exact total"
+                );
+                assert!(usable.latest.is_empty(), "usable epoch has no gauge");
+                assert_eq!(usable.points.len(), 1, "usable epoch exact point count");
+                assert_eq!(
+                    usable.points[0].values,
+                    vec![metric_value("nimproxy_requests_total", 7.0)],
+                    "usable epoch exact point payload"
+                );
+                assert_eq!(
+                    (usable.available_from, usable.available_to),
+                    (Some(t + 4), Some(t + 4)),
+                    "usable epoch available bounds"
+                );
+                assert_eq!(
+                    (usable.effective_from, usable.effective_to),
+                    (Some(t + 4), Some(t + 4)),
+                    "usable epoch effective bounds"
+                );
+                assert_eq!(
+                    (
+                        usable_diagnostics.excluded_epochs,
+                        usable_diagnostics.excluded_records,
+                        usable_diagnostics.normalized_series,
+                        usable_diagnostics.skipped_metric_lines,
+                        usable_diagnostics.valid_checkpoints,
+                        usable_diagnostics.valid_samples,
+                    ),
+                    (1, 3, 1, 0, 0, 1),
+                    "usable epoch diagnostics remain cumulative for the query result"
+                );
+                let HistoryWindow {
+                    complete: unavailable_complete,
+                    data: unavailable,
+                    diagnostics: unavailable_diagnostics,
+                } = history.rollup(t + 20, t + 21, 1000);
+                assert!(
+                    !unavailable_complete,
+                    "unavailable interval is never presented as complete"
+                );
+                assert!(
+                    unavailable.totals.is_empty(),
+                    "unavailable interval has no invented totals"
+                );
+                assert!(
+                    unavailable.latest.is_empty(),
+                    "unavailable interval has no invented latest values"
+                );
+                assert!(
+                    unavailable.points.is_empty(),
+                    "unavailable interval has no invented points"
+                );
+                assert_eq!(
+                    (unavailable.effective_from, unavailable.effective_to),
+                    (None, None)
+                );
+                assert_eq!(
+                    (
+                        unavailable_diagnostics.excluded_epochs,
+                        unavailable_diagnostics.excluded_records,
+                        unavailable_diagnostics.normalized_series,
+                        unavailable_diagnostics.skipped_metric_lines,
+                        unavailable_diagnostics.valid_checkpoints,
+                        unavailable_diagnostics.valid_samples,
+                    ),
+                    (1, 3, 1, 0, 0, 1),
+                    "unavailable interval diagnostics remain cumulative for the query result"
+                );
+            }
+            drop(history);
+            let _ = fs::remove_dir_all(dir);
+        }
     }
 
     #[test]
