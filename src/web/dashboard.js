@@ -715,10 +715,10 @@ function renderCapacity(c) {
     const shortRpm = Math.max(0, Math.ceil(shortfall.rpm - shortfall.capacity));
     $('k-prov').innerHTML =
       `<div class="hlabel">${escapeHtml(catalogMessage('dashboard.capacity.history.title'))}</div>
-      <div data-style="display:flex;align-items:baseline;gap:8px;margin-top:12px">
-        <span data-style="font-size:34px;font-weight:600;letter-spacing:-1px;color:${shortRpm > 0 ? 'var(--amber)' : 'var(--ink-1)'}">${fmt(shortRpm)}</span>
-        <span data-style="font:400 12px var(--mono);color:var(--ink-3)">${escapeHtml(catalogMessage('dashboard.capacity.history.shortfall'))}</span></div>
-      <div data-style="font:400 11.5px var(--mono);color:var(--ink-25);margin-top:6px">
+      <div class="capacity-history-shortfall">
+        <span class="capacity-history-value" data-style="color:${shortRpm > 0 ? 'var(--amber)' : 'var(--ink-1)'}">${fmt(shortRpm)}</span>
+        <span class="capacity-history-label">${escapeHtml(catalogMessage('dashboard.capacity.history.shortfall'))}</span></div>
+      <div class="capacity-history-utilization">
         ${escapeHtml(catalogMessage('dashboard.capacity.history.utilization', {
           avg: isFinite(averageUtil) ? pctOf(averageUtil, 0) : NO_VALUE,
           peak: pctOf(peak.rpm / peak.capacity, 0),

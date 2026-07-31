@@ -297,6 +297,10 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
 .hero-narrow { flex: 1 1 240px; }
 .hero-wide { flex: 2 1 380px; }
 .hero-key-narrow { flex: 1 1 220px; }
+.capacity-history-shortfall { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-top: 12px; min-width: 0; }
+.capacity-history-value { font-size: 34px; font-weight: 600; letter-spacing: -1px; min-width: 0; overflow-wrap: anywhere; }
+.capacity-history-label { font: 400 12px var(--mono); color: var(--ink-3); min-width: 0; overflow-wrap: anywhere; }
+.capacity-history-utilization { font: 400 11.5px var(--mono); color: var(--ink-25); margin-top: 6px; min-width: 0; overflow-wrap: anywhere; }
 .pressure-bars { margin-top: 12px; }
 .modal-heading { margin: 0 0 12px; font-size: 15px; font-weight: 600; }
 
@@ -320,6 +324,7 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
   #setbody .addrow > input:not([type="number"]) { flex: 1 0 100%; }
   .setbody { width: 100%; }
   #setbody .card h2 { flex-wrap: wrap; }
+  #setbody .card h2 .pills { margin-left: 0; min-width: 0; max-width: 100%; flex-wrap: wrap; }
   #setbody .card h2 .note, #setbody .shint { min-width: 0; overflow-wrap: anywhere; }
 }
 
