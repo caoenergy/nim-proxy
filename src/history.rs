@@ -1422,6 +1422,22 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         assert_eq!(value(&rollup.totals, "requests_total"), 15.0);
     }
 
+    #[tokio::test]
+    async fn canonical_history_never_schedules_legacy_compaction() {
+        let dir = TestDir::new();
+        let history = Arc::new(History::open(dir.0.clone(), 1, capacity(40)).unwrap());
+        *history.dropped_since_compact.lock().unwrap() = COMPACT_AFTER_EXPIRED_SAMPLES + 1;
+
+        history.append(unix_now(), SNAPSHOT, capacity(40));
+
+        assert_eq!(
+            history.compaction_generation.load(Ordering::SeqCst),
+            0,
+            "canonical history must not schedule the legacy compactor"
+        );
+        assert!(!history.compaction_pending.load(Ordering::SeqCst));
+    }
+
     /// A unique per-test scratch dir (std-only; removed on drop).
     struct TestDir(PathBuf);
     impl TestDir {
