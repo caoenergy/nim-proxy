@@ -4306,11 +4306,29 @@ async function runInteractionMatrix({ browser, configuredProxy, tmpdir }) {
 const SEMANTIC_CHECKER = `
   function semanticProblems(doc, expectedData) {
     const problems = [];
+    const controlDescription = control => {
+      if (control.id) return '#' + control.id;
+      for (const attribute of ['data-rpm', 'data-urole']) {
+        if (control.hasAttribute(attribute))
+          return control.tagName.toLowerCase() + '[' + attribute + '=' + JSON.stringify(control.getAttribute(attribute)) + ']';
+      }
+      return control.tagName.toLowerCase();
+    };
+    const hasAccessibleName = control => {
+      if ((control.getAttribute('aria-label') || '').trim()) return true;
+      const labelledBy = (control.getAttribute('aria-labelledby') || '').trim().split(/\\s+/).filter(Boolean);
+      if (labelledBy.some(id => (doc.getElementById(id)?.textContent || '').trim())) return true;
+      return Array.from(control.labels || []).some(label => label.textContent.trim());
+    };
+    const visibleControl = control => control.type !== 'hidden'
+      && !control.closest('[hidden]')
+      && getComputedStyle(control).display !== 'none'
+      && getComputedStyle(control).visibility !== 'hidden';
     if (doc.querySelectorAll('main').length !== 1) problems.push('invalid-landmark');
     if (doc.querySelectorAll('h1').length !== 1) problems.push('invalid-landmark');
-    for (const input of doc.querySelectorAll('form input')) {
-      if (input.closest('[hidden]')) continue;
-      if (!input.labels?.length) problems.push('missing-accessible-name');
+    for (const control of doc.querySelectorAll('input,select,textarea')) {
+      if (visibleControl(control) && !hasAccessibleName(control))
+        problems.push('missing-accessible-name:' + controlDescription(control));
     }
     if (doc.querySelector('#modal') && doc.querySelector('#modal').tagName !== 'DIALOG') problems.push('invalid-landmark');
     if (doc.querySelector('[role="tablist"],[role="tab"],[role="switch"]')) problems.push('non-button-action');
@@ -5336,6 +5354,14 @@ async function main() {
   const untranslatedByTab = new Map();
   const dataDerived = new Set();
   const hovered = [];
+  const semanticSurfaceProblems = [];
+  const captureSemanticSurface = async context => {
+    if (!semanticSelftest) return;
+    semanticSurfaceProblems.push(...await evaluate(`(() => {
+      ${SEMANTIC_CHECKER}
+      return semanticProblems(document, []).map(problem => ${JSON.stringify('surface:')} + ${JSON.stringify(context)} + ':' + problem);
+    })()`));
+  };
   for (const tab of TABS) {
     // Tabs switch on click. `location.hash` is assigned BY that handler, and
     // the hash-to-click bridge runs once at load, so setting the hash after
@@ -5358,6 +5384,7 @@ async function main() {
       throw reportedFailure();
     }
     await sleep(1200);
+    await captureSemanticSurface(IS_SETUP ? `setup-${tab}` : `dashboard-${tab}`);
 
     // Real pointer input, at the real coordinates of each rendered chart.
     const rects = await evaluate(`
@@ -5414,6 +5441,32 @@ async function main() {
     }
   }
 
+  if (semanticSelftest && IS_DASHBOARD) {
+    const customRangeVisible = await evaluate(`(() => {
+      document.querySelector('#ranges [data-range="custom"]')?.click();
+      return document.querySelector('#custom')?.classList.contains('show') ?? false;
+    })()`);
+    if (!customRangeVisible) semanticSurfaceProblems.push('surface:dashboard-custom-range:unreachable');
+    else await captureSemanticSurface('dashboard-custom-range');
+
+    await evaluate(`document.querySelector('#side nav button[data-tab="settings"]')?.click()`);
+    await sleep(200);
+    const settingsPanels = await evaluate(`Array.from(document.querySelectorAll('#setnav button[data-sub]')).map(button => button.dataset.sub)`);
+    if (!settingsPanels.length) semanticSurfaceProblems.push('surface:settings:unreachable');
+    for (const panel of settingsPanels) {
+      const reached = await evaluate(`(() => {
+        const button = document.querySelector('#setnav button[data-sub=${JSON.stringify(panel)}]');
+        button?.click();
+        return !!button && document.querySelector('#setnav button[data-sub=${JSON.stringify(panel)}]')?.getAttribute('aria-current') === 'page';
+      })()`);
+      if (!reached) semanticSurfaceProblems.push('surface:settings-' + panel + ':unreachable');
+      else {
+        await sleep(100);
+        await captureSemanticSurface('settings-' + panel);
+      }
+    }
+  }
+
   // Task 9's browser checks deliberately inspect the served DOM rather than
   // source spelling. The checker is also fed isolated DOM mutations below so
   // its five failure ids cannot go green merely because this page happens to
@@ -5423,11 +5476,13 @@ async function main() {
       ${SEMANTIC_CHECKER}
       const base = () => {
         const doc = document.implementation.createHTMLDocument('semantic-selftest');
-        doc.body.innerHTML = '<main></main><button data-semantic-action aria-label="Action"></button>';
+        doc.body.innerHTML = '<main><h1>Heading</h1></main><button data-semantic-action aria-label="Action"></button>';
         return doc;
       };
       const cases = [];
-      { const doc = base(); doc.querySelector('button').removeAttribute('aria-label'); cases.push(['missing-accessible-name', semanticProblems(doc).includes('missing-accessible-name')]); }
+      { const doc = base(); doc.querySelector('button').removeAttribute('aria-label'); cases.push(['missing-accessible-name', semanticProblems(doc).some(problem => problem.startsWith('missing-accessible-name'))]); }
+      { const doc = base(); doc.body.insertAdjacentHTML('beforeend', '<input id="visible-control">'); cases.push(['visible-control-name', semanticProblems(doc).some(problem => problem === 'missing-accessible-name:#visible-control')]); }
+      { const doc = base(); doc.body.insertAdjacentHTML('beforeend', '<input id="hidden-control" hidden>'); cases.push(['hidden-control-excluded', !semanticProblems(doc).some(problem => problem === 'missing-accessible-name:#hidden-control')]); }
       { const doc = base(); doc.querySelector('main').remove(); cases.push(['invalid-landmark', semanticProblems(doc).includes('invalid-landmark')]); }
       { const doc = base(); const action = doc.querySelector('button'); const replacement = doc.createElement('div'); replacement.setAttribute('data-semantic-action', ''); replacement.setAttribute('aria-label', 'Action'); action.replaceWith(replacement); cases.push(['non-button-action', semanticProblems(doc).includes('non-button-action')]); }
       { const doc = base(); const dialog = doc.createElement('dialog'); dialog.open = true; doc.body.append(dialog); cases.push(['focus-escape', semanticProblems(doc).includes('focus-escape')]); }
@@ -5445,7 +5500,10 @@ async function main() {
   let task9LayoutMeasurements = [];
   let task9Artifacts = [];
   if (semanticSelftest) {
-    task9SemanticProblems = await evaluate(`(() => { ${SEMANTIC_CHECKER}; return semanticProblems(document, ${IS_DASHBOARD ? "[{ selector: '#m-toolcalls .bname', text: 'alpha' }]" : '[]'}); })()`);
+    task9SemanticProblems = [
+      ...semanticSurfaceProblems,
+      ...await evaluate(`(() => { ${SEMANTIC_CHECKER}; return semanticProblems(document, ${IS_DASHBOARD ? "[{ selector: '#m-toolcalls .bname', text: 'alpha' }]" : '[]'}); })()`),
+    ];
   }
   if ((semanticSelftest || layoutReport) && IS_DASHBOARD) {
     await evaluate(`document.querySelector('#side nav button[data-tab="models"]').click()`);
