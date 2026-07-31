@@ -917,8 +917,13 @@ function resolveVisualExpectations(rows = INTERACTION_ROWS) {
 function completeVisualObservations(rows = INTERACTION_ROWS) {
   return resolveVisualExpectations(rows).items.map(item => ({
     ...item,
+    artifactWritten: true,
     reached: true,
     rootVisible: true,
+    layoutProblems: [],
+    pageErrors: [],
+    consoleErrors: [],
+    promiseRejections: [],
   }));
 }
 
@@ -936,6 +941,12 @@ function visualCoverageProblems(observations, rows = INTERACTION_ROWS) {
   duplicateProblems(observations, 'identity', 'duplicate-identity');
   duplicateProblems(observations, 'path', 'duplicate-path');
 
+  const observationDetails = (observed, item, field, label) => {
+    const details = Array.isArray(observed[field]) ? observed[field] : [{ missing: field }];
+    for (const detail of details) {
+      problems.push(`visual-coverage:${item.identity}:${label}:${canonicalJson(detail)}`);
+    }
+  };
   const actual = new Map(observations.map(item => [item.identity, item]));
   const expectedIds = new Set(expected.map(item => item.identity));
   for (const item of observations) {
@@ -948,11 +959,16 @@ function visualCoverageProblems(observations, rows = INTERACTION_ROWS) {
       continue;
     }
     if (observed.path !== item.path) problems.push(`visual-coverage:${item.identity}:path-mismatch`);
+    if (observed.artifactWritten !== true) problems.push(`visual-coverage:${item.identity}:artifact-missing`);
     if (observed.root !== item.root || observed.reach !== item.reach) {
       problems.push(`visual-coverage:${item.identity}:root-mismatch`);
     } else if (!observed.reached || !observed.rootVisible) {
       problems.push(`visual-coverage:${item.identity}:root-unreached`);
     }
+    observationDetails(observed, item, 'layoutProblems', 'layout');
+    observationDetails(observed, item, 'pageErrors', 'page-error');
+    observationDetails(observed, item, 'consoleErrors', 'console-error');
+    observationDetails(observed, item, 'promiseRejections', 'promise-rejection');
   }
   return problems;
 }
