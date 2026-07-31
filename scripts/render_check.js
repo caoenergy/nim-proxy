@@ -4681,6 +4681,50 @@ function visualRootVisibleExpression(selector) {
   })()`;
 }
 
+function pngDimensions(bytes) {
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  if (bytes.length < 24 || !bytes.subarray(0, 8).equals(signature)
+      || bytes.readUInt32BE(8) !== 13 || bytes.toString('ascii', 12, 16) !== 'IHDR') {
+    throw new Error('visual artifact was not a PNG with an IHDR header');
+  }
+  const width = bytes.readUInt32BE(16);
+  const height = bytes.readUInt32BE(20);
+  if (!width || !height) throw new Error('visual artifact PNG had zero dimensions');
+  return { width, height };
+}
+
+async function visibleInternalVerticalScrollers(context) {
+  return evaluateRaw(context.browser, context.sessionId, `(() => {
+    const visible = node => {
+      if (node.closest('[hidden]')) return false;
+      const style = getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+    };
+    const selector = node => {
+      if (node.id) return '#' + node.id;
+      if (node.classList.contains('scroll') && node.parentElement?.id) return '#' + node.parentElement.id + ' > .scroll';
+      return node.tagName.toLowerCase() + (node.classList.length ? '.' + node.classList[0] : '');
+    };
+    return [...document.querySelectorAll('*')].flatMap(node => {
+      const style = getComputedStyle(node);
+      if (!visible(node) || !/(auto|scroll|overlay)/.test(style.overflowY)
+          || node.scrollHeight <= node.clientHeight + 1) return [];
+      const rect = node.getBoundingClientRect();
+      const directChild = node.firstElementChild?.tagName.toLowerCase() || null;
+      return [{
+        selector: selector(node),
+        geometry: {
+          left: rect.left, top: rect.top, width: rect.width, height: rect.height,
+          scrollHeight: node.scrollHeight, clientHeight: node.clientHeight,
+        },
+        intentionalTable: node.classList.contains('scroll') && node.children.length === 1 && directChild === 'table',
+        directChild,
+      }];
+    });
+  })()`);
+}
+
 async function reachVisualSurface(item, context) {
   const waitFor = (expression, label) => waitForMatrixCondition(
     context.browser,
@@ -4766,6 +4810,7 @@ async function captureCurrentVisualItems({ items, artifactDir, drafts }, context
     let rootVisible = false;
     let layoutProblemsForItem = [];
     let layoutMeasurements = null;
+    let capture = null;
     try {
       if (path.relative(artifactDir, absolutePath).startsWith('..')) {
         throw new Error(`visual artifact path escapes its directory: ${item.path}`);
@@ -4824,15 +4869,48 @@ async function captureCurrentVisualItems({ items, artifactDir, drafts }, context
       if (fs.existsSync(absolutePath)) {
         captureErrors.push(`artifact path already exists: ${item.path}`);
       } else {
+        await context.evaluate(`
+          document.scrollingElement.scrollTo(0, 0);
+          window.scrollTo(0, 0);
+          document.querySelector('.main')?.scrollTo(0, 0);
+        `);
+        await sleep(75);
+        const metrics = await context.browser.send('Page.getLayoutMetrics', {}, context.sessionId);
+        const viewport = metrics.cssLayoutViewport;
+        const content = metrics.cssContentSize;
+        const clip = {
+          x: 0,
+          y: 0,
+          width: viewport.clientWidth,
+          height: Math.max(height, Math.ceil(content.height)),
+          scale: 1,
+        };
+        const internalVerticalScrollers = await visibleInternalVerticalScrollers(context);
         const screenshot = await context.browser.send(
           'Page.captureScreenshot',
-          { format: 'png' },
+          { format: 'png', fromSurface: true, captureBeyondViewport: true, clip },
           context.sessionId,
         );
         const bytes = Buffer.from(screenshot.data, 'base64');
         if (!bytes.length) {
           captureErrors.push(`artifact was empty: ${item.path}`);
         } else {
+          const png = pngDimensions(bytes);
+          capture = {
+            kind: 'document-vertical-v1',
+            requestedViewport: { width, height },
+            cssLayoutViewport: {
+              pageX: viewport.pageX,
+              pageY: viewport.pageY,
+              clientWidth: viewport.clientWidth,
+              clientHeight: viewport.clientHeight,
+            },
+            cssContentSize: { x: content.x, y: content.y, width: content.width, height: content.height },
+            clip,
+            captureBeyondViewport: true,
+            png,
+            internalVerticalScrollers,
+          };
           fs.writeFileSync(absolutePath, bytes, { flag: 'wx' });
           artifactWritten = fs.statSync(absolutePath).size > 0;
           if (!artifactWritten) captureErrors.push(`artifact was empty after write: ${item.path}`);
@@ -4854,6 +4932,7 @@ async function captureCurrentVisualItems({ items, artifactDir, drafts }, context
       artifactWritten,
       reached,
       rootVisible,
+      capture,
       layoutProblems: layoutProblemsForItem,
       layoutMeasurements,
       captureErrors,
