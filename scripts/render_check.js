@@ -50,6 +50,10 @@ const INTERACTION_ROWS = [
     action: 'navigate to / and resolve bootstrap, config, catalog, and dashboard fixtures',
     visible: '#tab-overview is visible after catalog and dashboard fixtures resolve',
     dom: [{ selector: '#tab-overview', property: 'hidden', equals: false }],
+    visual: [{
+      case: 'dashboard-healthy', locales: ['en-US', 'en-XA'], roles: ['superuser'],
+      surfaces: ['dashboard-tabs', 'settings-panels'],
+    }],
   },
   {
     id: 'startup-setup-healthy',
@@ -58,6 +62,10 @@ const INTERACTION_ROWS = [
     action: 'navigate to /setup and resolve bootstrap and the public catalog',
     visible: '#step1 is visible after the public catalog resolves',
     dom: [{ selector: '#step1', property: 'hidden', equals: false }],
+    visual: [
+      { case: 'setup-step1', locales: ['en-US', 'en-XA'], roles: ['public'], surfaces: ['setup-step1'] },
+      { case: 'setup-client-validation-error', locales: ['en-US'], roles: ['public'], surfaces: ['setup-client-validation-error'] },
+    ],
   },
   {
     id: 'startup-login-healthy',
@@ -66,6 +74,7 @@ const INTERACTION_ROWS = [
     action: 'navigate to /login and resolve bootstrap and the public catalog',
     visible: 'the login form is visible after the public catalog resolves',
     dom: [{ selector: 'form.login-card', property: 'exists', equals: true }],
+    visual: [{ case: 'login-healthy', locales: ['en-US', 'en-XA'], roles: ['public'], surfaces: ['login-healthy'] }],
   },
   {
     id: 'login-invalid-credentials',
@@ -77,6 +86,7 @@ const INTERACTION_ROWS = [
       { selector: '#login-error', property: 'hidden', equals: false },
       { selector: '#login-error', property: 'textContent', equals: 'Incorrect username or password.' },
     ],
+    visual: [{ case: 'login-invalid-credentials', locales: ['en-US'], roles: ['public'], surfaces: ['login-invalid-credentials'] }],
   },
   {
     id: 'navigation-dashboard-tabs',
@@ -597,6 +607,7 @@ const INTERACTION_ROWS = [
       query: { from: '1700000000', points: '288', to: '1700003600' },
       body: null,
     },
+    visual: [{ case: 'dashboard-range-api-error', locales: ['en-US'], roles: ['superuser'], surfaces: ['dashboard-tabs'] }],
   },
   {
     id: 'error-dashboard-now',
@@ -623,6 +634,7 @@ const INTERACTION_ROWS = [
       path: '/api/config',
       body: null,
     },
+    visual: [{ case: 'settings-load-api-error', locales: ['en-US'], roles: ['superuser'], surfaces: ['settings-load-error'] }],
   },
   {
     id: 'error-settings-mutation',
@@ -689,6 +701,7 @@ const INTERACTION_ROWS = [
         key: 'nvapi-invalid-fixture',
       },
     },
+    visual: [{ case: 'setup-key-validation-api-error', locales: ['en-US'], roles: ['public'], surfaces: ['setup-key-validation-api-error'] }],
   },
   {
     id: 'setup-key-validation-success',
@@ -706,6 +719,10 @@ const INTERACTION_ROWS = [
         key: 'nvapi-ui-fixture',
       },
     },
+    visual: [
+      { case: 'setup-step2', locales: ['en-US', 'en-XA'], roles: ['public'], surfaces: ['setup-step2'] },
+      { case: 'setup-step3', locales: ['en-US', 'en-XA'], roles: ['public'], surfaces: ['setup-step3'] },
+    ],
   },
   {
     id: 'error-setup-submit',
@@ -728,6 +745,7 @@ const INTERACTION_ROWS = [
         username: 'fixture-user',
       },
     },
+    visual: [{ case: 'setup-submit-api-error', locales: ['en-US'], roles: ['public'], surfaces: ['setup-submit-api-error'] }],
   },
   {
     id: 'setup-submit-success',
@@ -751,6 +769,7 @@ const INTERACTION_ROWS = [
         username: 'fixture-user',
       },
     },
+    visual: [{ case: 'setup-step4', locales: ['en-US', 'en-XA'], roles: ['public'], surfaces: ['setup-step4'] }],
   },
   {
     id: 'state-empty',
@@ -775,6 +794,7 @@ const INTERACTION_ROWS = [
     action: 'fulfill dashboard requests from the partial/incomplete Rust-owned fixture',
     visible: 'partial data is distinguishable from complete data',
     dom: [{ selector: '#rangeinfo', property: 'effective-bound-summary', equals: true }],
+    visual: [{ case: 'dashboard-partial-incomplete', locales: ['en-US'], roles: ['superuser'], surfaces: ['dashboard-tabs'] }],
   },
   {
     id: 'state-extreme-numeric',
@@ -783,6 +803,7 @@ const INTERACTION_ROWS = [
     action: 'fulfill dashboard requests from the extreme-numeric Rust-owned fixture',
     visible: 'extreme numeric values render without a page error',
     dom: [{ selector: '#tab-overview', property: 'finite-layout', equals: true }],
+    visual: [{ case: 'dashboard-extreme-numeric', locales: ['en-US'], roles: ['superuser'], surfaces: ['dashboard-tabs'] }],
   },
   {
     id: 'state-settings-exact-large-values',
@@ -794,6 +815,7 @@ const INTERACTION_ROWS = [
       { selector: '#pool-note', property: 'textContent', equals: 'Pool: 12,345 enabled · Total: 67,890 rpm' },
       { selector: '[data-ksfp="f17e0001"]', property: 'textContent', equals: '12,345 / 67,890 in window' },
     ],
+    visual: [{ case: 'settings-exact-large-values', locales: ['en-US'], roles: ['superuser'], surfaces: ['settings-access'] }],
   },
   {
     id: 'state-long-machine-values',
@@ -802,8 +824,170 @@ const INTERACTION_ROWS = [
     action: 'fulfill dashboard/config requests from long-machine-value Rust-owned fixtures',
     visible: 'long model, client, publisher, and user values remain byte-identical',
     dom: [{ selector: '#tab-models,#tab-clients,#setbody', property: 'machine-value-byte-match', equals: true }],
+    visual: [{
+      case: 'long-machine-values', locales: ['en-US'], roles: ['superuser'],
+      surfaces: ['dashboard-tabs', 'settings-access', 'settings-users'],
+    }],
   },
 ];
+
+const VISUAL_VIEWPORTS = ['390x844', '768x1024', '900x1000', '1440x1000'];
+const DASHBOARD_VISUAL_SURFACES = [
+  { id: 'dashboard-overview', root: '#tab-overview', reach: 'dashboard:overview' },
+  { id: 'dashboard-models', root: '#tab-models', reach: 'dashboard:models' },
+  { id: 'dashboard-clients', root: '#tab-clients', reach: 'dashboard:clients' },
+  { id: 'dashboard-reliability', root: '#tab-reliability', reach: 'dashboard:reliability' },
+  { id: 'dashboard-capacity', root: '#tab-capacity', reach: 'dashboard:capacity' },
+];
+const SETTINGS_VISUAL_SURFACES = [
+  { id: 'settings-access', root: '#nk-key', reach: 'settings:access' },
+  { id: 'settings-server', root: '#sv-base', reach: 'settings:server' },
+  { id: 'settings-users', root: '#u-add', reach: 'settings:users' },
+  { id: 'settings-account', root: '#a-cur', reach: 'settings:account' },
+];
+const VISUAL_SURFACE_FAMILIES = {
+  'dashboard-tabs': DASHBOARD_VISUAL_SURFACES,
+  'settings-panels': SETTINGS_VISUAL_SURFACES,
+};
+const VISUAL_SURFACES = new Map([
+  ...DASHBOARD_VISUAL_SURFACES,
+  ...SETTINGS_VISUAL_SURFACES,
+  { id: 'settings-load-error', root: '#setbody .empty', reach: 'settings:load-error' },
+  { id: 'setup-step1', root: '#step1', reach: 'setup:step1' },
+  { id: 'setup-step2', root: '#step2', reach: 'setup:step2' },
+  { id: 'setup-step3', root: '#step3', reach: 'setup:review-after-successful-key' },
+  { id: 'setup-step4', root: '#step4', reach: 'setup:completion' },
+  { id: 'setup-client-validation-error', root: '#err', reach: 'setup:client-validation-error' },
+  { id: 'setup-key-validation-api-error', root: '#err', reach: 'setup:key-validation-api-error' },
+  { id: 'setup-submit-api-error', root: '#err', reach: 'setup:submit-api-error' },
+  { id: 'login-healthy', root: 'form.login-card', reach: 'login:healthy' },
+  { id: 'login-invalid-credentials', root: '#login-error', reach: 'login:invalid-credentials' },
+].map(surface => [surface.id, surface]));
+
+function visualIdentity(item) {
+  return [item.rowId, item.caseId, item.surfaceId, item.locale, item.role, item.viewport].join(':');
+}
+
+function visualArtifactPath(item) {
+  return [item.rowId, item.caseId, item.surfaceId, item.locale, item.role, item.viewport].join('__') + '.png';
+}
+
+function resolveVisualExpectations(rows = INTERACTION_ROWS) {
+  const items = [], problems = [];
+  for (const row of rows) {
+    for (const declaration of row.visual || []) {
+      if (!declaration.case || !Array.isArray(declaration.locales) || !Array.isArray(declaration.roles)
+          || !Array.isArray(declaration.surfaces)) {
+        problems.push(`visual-coverage:${row.id}:invalid-declaration`);
+        continue;
+      }
+      const surfaces = declaration.surfaces.flatMap(name => {
+        if (VISUAL_SURFACE_FAMILIES[name]) return VISUAL_SURFACE_FAMILIES[name];
+        const surface = VISUAL_SURFACES.get(name);
+        if (surface) return [surface];
+        problems.push(`visual-coverage:${row.id}:${declaration.case}:unknown-surface:${name}`);
+        return [];
+      });
+      for (const surface of surfaces) {
+        for (const locale of declaration.locales) {
+          for (const role of declaration.roles) {
+            for (const viewport of VISUAL_VIEWPORTS) {
+              const item = {
+                rowId: row.id,
+                caseId: declaration.case,
+                surfaceId: surface.id,
+                locale,
+                role,
+                viewport,
+                root: surface.root,
+                reach: declaration.reach || surface.reach,
+              };
+              item.identity = visualIdentity(item);
+              item.path = visualArtifactPath(item);
+              items.push(item);
+            }
+          }
+        }
+      }
+    }
+  }
+  return { items, problems };
+}
+
+function completeVisualObservations(rows = INTERACTION_ROWS) {
+  return resolveVisualExpectations(rows).items.map(item => ({
+    ...item,
+    reached: true,
+    rootVisible: true,
+  }));
+}
+
+function visualCoverageProblems(observations, rows = INTERACTION_ROWS) {
+  const { items: expected, problems } = resolveVisualExpectations(rows);
+  const duplicateProblems = (items, field, label) => {
+    const seen = new Set();
+    for (const item of items) {
+      if (seen.has(item[field])) problems.push(`visual-coverage:${item.identity}:${label}:${item[field]}`);
+      seen.add(item[field]);
+    }
+  };
+  duplicateProblems(expected, 'identity', 'duplicate-identity');
+  duplicateProblems(expected, 'path', 'duplicate-path');
+  duplicateProblems(observations, 'identity', 'duplicate-identity');
+  duplicateProblems(observations, 'path', 'duplicate-path');
+
+  const actual = new Map(observations.map(item => [item.identity, item]));
+  const expectedIds = new Set(expected.map(item => item.identity));
+  for (const item of observations) {
+    if (!expectedIds.has(item.identity)) problems.push(`visual-coverage:${item.identity}:unexpected`);
+  }
+  for (const item of expected) {
+    const observed = actual.get(item.identity);
+    if (!observed) {
+      problems.push(`visual-coverage:${item.identity}:missing`);
+      continue;
+    }
+    if (observed.path !== item.path) problems.push(`visual-coverage:${item.identity}:path-mismatch`);
+    if (observed.root !== item.root || observed.reach !== item.reach) {
+      problems.push(`visual-coverage:${item.identity}:root-mismatch`);
+    } else if (!observed.reached || !observed.rootVisible) {
+      problems.push(`visual-coverage:${item.identity}:root-unreached`);
+    }
+  }
+  return problems;
+}
+
+function visualCoverageSelftest() {
+  const failures = [];
+  const complete = completeVisualObservations();
+  if (visualCoverageProblems(complete).length) failures.push('visual complete observation set did not pass');
+  const target = complete.find(item => item.identity
+    === 'state-long-machine-values:long-machine-values:settings-users:en-US:superuser:390x844');
+  if (!target) {
+    failures.push('long-machine Settings Users visual case is missing');
+    return failures;
+  }
+  const expectOnly = (name, observations, expected) => {
+    const problems = visualCoverageProblems(observations);
+    if (problems.length !== 1 || problems[0] !== expected) failures.push(`${name} did not fire ${expected}`);
+  };
+  expectOnly('long-machine Settings Users missing mutation',
+    complete.filter(item => item.identity !== target.identity),
+    `visual-coverage:${target.identity}:missing`);
+  expectOnly('hidden visual root mutation',
+    complete.map(item => item.identity === target.identity ? { ...item, rootVisible: false } : item),
+    `visual-coverage:${target.identity}:root-unreached`);
+  const collisionTarget = complete.find(item => item.identity !== target.identity);
+  const collision = complete.map(item => item.identity === collisionTarget.identity
+    ? { ...item, path: target.path }
+    : item);
+  const collisionProblems = visualCoverageProblems(collision);
+  const expectedCollision = `visual-coverage:${target.identity}:duplicate-path:${target.path}`;
+  if (!collisionProblems.includes(expectedCollision)) {
+    failures.push(`duplicate visual artifact path mutation did not fire ${expectedCollision}`);
+  }
+  return failures;
+}
 
 const domContract = (check, expression, expected, collect) => ({
   check,
@@ -2122,13 +2306,14 @@ function interactionSelftest() {
       observation.run[field].push(`${field} fixture`);
     });
   }
+  const visualExpectationCount = resolveVisualExpectations().items.length;
   failures.push(...visualCoverageSelftest());
 
   if (failures.length) {
     for (const failure of failures) console.error(`[interaction-selftest] ${failure}`);
     return 1;
   }
-  console.log(`interaction selftest ok — ${INTERACTION_ROWS.length} named rows; DOM, request, fixture-recipe/reference, locale, asset, and clean-run mutations observed`);
+  console.log(`interaction selftest ok — ${INTERACTION_ROWS.length} named rows, ${visualExpectationCount} visual applicability items; DOM, request, fixture-recipe/reference, locale, asset, and clean-run mutations observed`);
   return 0;
 }
 
