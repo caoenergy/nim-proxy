@@ -274,6 +274,18 @@ const INTERACTION_ROWS = [
     requests: [],
   },
   {
+    id: 'dialog-client-secret-escape-focus-return',
+    category: 'keyboard-focus',
+    state: 'modal-client-secret',
+    action: 'press Escape in the one-time client-secret dialog after Settings rerenders',
+    visible: 'Escape closes the native dialog and returns focus to the current Generate key control',
+    dom: [
+      { selector: '#modal', property: 'class-contains-show', equals: false },
+      { selector: 'document', property: 'activeElement', equals: '#ck-add' },
+    ],
+    requests: [],
+  },
+  {
     id: 'dialog-confirm-cancel-focus-return',
     category: 'keyboard-focus',
     state: 'modal-confirm',
@@ -932,6 +944,11 @@ const DOM_CONTRACTS = {
     domContract('dialog-closed', `document.querySelector('#modal')?.open ?? null`, false),
     domContract('dialog-focus-returned', `document.activeElement?.matches('#ck-add') ?? false`, true),
   ],
+  'dialog-client-secret-escape-focus-return': [
+    domContract('dialog-closed', `document.querySelector('#modal')?.open ?? null`, false),
+    domContract('current-add-control-retained', `!!document.querySelector('#ck-add')`, true),
+    domContract('dialog-focus-returned', `document.activeElement?.matches('#ck-add') ?? false`, true),
+  ],
   'dialog-confirm-cancel-focus-return': [
     domContract('destructive-control-retained', `!!document.querySelector('[data-kdel="0"]')`, true),
     domContract('focus-returned', `document.activeElement?.matches('[data-kdel="0"]') ?? false`, true),
@@ -1404,6 +1421,10 @@ const FIXTURE_SCENARIOS = {
     response: 'clients-secret-present.json',
   }),
   'dialog-client-secret-close': dashboardRecipe({
+    config: 'scenarios.json#client-created-after',
+    requires: ['dialog-client-secret-open'],
+  }),
+  'dialog-client-secret-escape-focus-return': dashboardRecipe({
     config: 'scenarios.json#client-created-after',
     requires: ['dialog-client-secret-open'],
   }),
@@ -4033,6 +4054,16 @@ async function runMatrixContext({ browser, row, role, configuredProxy, setupProx
       } catch (error) {
         throw new Error(`${actionRow.id}: ${error.message}`);
       }
+    }
+    if (actionRow.id === 'dialog-client-secret-escape-focus-return') {
+      const key = {
+        key: 'Escape',
+        code: 'Escape',
+        windowsVirtualKeyCode: 27,
+        nativeVirtualKeyCode: 27,
+      };
+      await browser.send('Input.dispatchKeyEvent', { type: 'keyDown', ...key }, sessionId);
+      await browser.send('Input.dispatchKeyEvent', { type: 'keyUp', ...key }, sessionId);
     }
     await drain();
     const unused = activePlan.unconsumed();
