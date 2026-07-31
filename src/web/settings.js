@@ -72,6 +72,7 @@ async function copyText(text, btn) {
 /* show-once client-key secret: modal only closes on an explicit Done, so a
    stray re-render can't eat the one chance to copy it */
 function showSecret(name, secret) {
+  const modal = $('modal');
   $('modal-body').innerHTML =
     `<p data-style="margin:0 0 12px;color:var(--ink-2);font-size:13px">${escapeHtml(catalogMessage('settings.secret.ready', { name }))} <b data-style="color:var(--amber-lt)" data-i18n="settings.secret.warning"></b></p>
     <div class="secretbox">${escapeHtml(secret)}</div>
@@ -81,11 +82,9 @@ function showSecret(name, secret) {
     </div>`;
   applyStatic($('modal-body'));
   $('modal-copy').addEventListener('click', () => copyText(secret, $('modal-copy')));
-  $('modal-done').addEventListener('click', () => {
-    $('modal').close();
-    $('ck-add')?.focus();
-  });
-  $('modal').showModal();
+  modal.addEventListener('close', () => $('ck-add')?.focus(), { once: true });
+  $('modal-done').addEventListener('click', () => modal.close());
+  modal.showModal();
   $('modal-copy').focus();
 }
 
