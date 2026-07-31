@@ -25,6 +25,15 @@ Use the proof that exercises the changed surface, and preserve the limits of
 that proof.
 
 - **Rust logic:** `cargo test` and `cargo clippy --all-targets -- -D warnings`.
+- **Canonical history-v1 codec:** `cargo test history::codec::tests --lib`
+  exercises sanitized golden boot/sample/checkpoint bytes, canonical encode
+  ordering, reordered-object decoding, and every declared negative diagnostic:
+  truncated JSON, invalid UTF-8, scalar/type and non-finite failures, duplicate
+  semantic series, unknown state/record kinds, and distinct unknown
+  format/version refusals. Fixtures contain no local history body, credential,
+  prompt, completion, or client-selected value. This unit proof does not open
+  a history file or establish stream ordering; storage/startup and recovery
+  proofs are separate work.
 - **Handlers or wire types:** `UPDATE_OPENAPI=1 cargo test --test openapi`,
   then verify that `openapi.json` has only the deliberate diff.
 - **HTTP trust boundaries:** `cargo test routes::tests --lib` proves the

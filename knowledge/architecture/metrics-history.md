@@ -16,28 +16,54 @@ longer downloads or parses its raw exposition.
 
 ## Persisted format
 
-At startup the history component writes a v2 boot marker; the sampler appends
-its first full-registry snapshot immediately, then sleeps for five minutes
-between later samples. Real file size depends on the number of metric series,
-labels, and histogram buckets; the original fixed-size estimate was disproven
-by operation
-([decision](../decisions/history-retention-days-not-size.md)).
-`HISTORY_SAMPLE_SECS` is an undocumented test knob; five minutes is the
-operator contract.
+Task 10 defines the canonical successor format, `nimproxy-history/v1`; Task
+11 owns publication and runtime use. Until then, the checked-in runtime still
+uses its experimental history behavior and this codec does not open, read, or
+write any history path.
 
-The reader accepts two formats:
+Every canonical JSONL row begins, in this exact order, with
+`format:"nimproxy-history"`, `v:1`, and `kind`. The complete field order is:
 
-- **v1 legacy sample**: `{"t": <unix>, "m": "<Prometheus text>"}`.
-- **v2 boot marker/sample**: a boot marker records `v`, timestamp, random boot
-  id, `kind:"boot"`, and capacity; each v2 sample repeats its boot id and
-  contemporaneous capacity beside the exposition.
+```json
+{"format":"nimproxy-history","v":1,"kind":"boot","timestamp":1000,"boot_id":"boot-a","capacity":{"capacity_rpm":80,"enabled_keys":2,"key_rpms":[40,40]}}
+{"format":"nimproxy-history","v":1,"kind":"sample","timestamp":1000,"boot_id":"boot-a","capacity":{"capacity_rpm":80,"enabled_keys":2,"key_rpms":[40,40]},"state":[{"kind":"counter","metric":"nimproxy_requests_total","labels":{"client":"redacted-client"},"value":1.0}]}
+{"format":"nimproxy-history","v":1,"kind":"checkpoint","timestamp":1300,"boot_id":"boot-a","capacity":{"capacity_rpm":80,"enabled_keys":2,"key_rpms":[40,40]}}
+```
 
-The explicit boot id makes every future process reset unambiguous. v1 files
-remain readable: a sampled counter decrease, or a transition from a snapshot
-with no counters at all to one with counters, is treated as a best-effort
-inferred reset and counted in diagnostics. A legacy interval has no historical
-capacity metadata; the dashboard reports that capacity as unavailable rather
-than substituting today's configuration.
+`boot` and `checkpoint` carry no state. A `sample` has a complete state made
+of `counter` or `gauge` entries, each ordered `kind`, `metric`, `labels`, and
+`value`. The codec rejects non-finite values and duplicate semantic series
+`(kind, metric, labels)`; it never normalizes or chooses a last writer.
+Unknown non-state object fields are ignored, while any invalid state entry
+rejects the whole sample. Reordering otherwise valid object fields is accepted
+on decode and canonicalized by encode. Invalid UTF-8, invalid JSON, corrupt
+v1 record/state, and unknown v1 record kind are distinct codec diagnostics.
+An unknown `format` or `v` is explicitly `unsupported_format` or
+`unsupported_version`, not corrupt-line recovery; Task 11 uses those errors to
+refuse startup.
+
+The canonical destination is `history-v1.jsonl`. The production runtime must
+never read, rename, truncate, delete, or migrate experimental `history.jsonl`.
+Timestamp stream ordering, startup refusal, checkpoint expansion, and recovery
+semantics are intentionally outside this codec and belong to Tasks 11–12.
+
+### Sanitized corpus evidence
+
+On 2026-07-31, a read-only ephemeral container streamed the local
+`nim-proxy_history` volume through a metadata-only analyzer: 235,966,850 bytes,
+8,014 rows, one boot row and 8,013 legacy-sample rows, zero malformed rows,
+and timestamps 1,783,077,758 through 1,785,479,582. The dominant cadence was
+300 seconds (7,985 intervals), with 15 at 301 seconds and isolated restart or
+timing gaps. The analyzer self-check first extracted a synthetic metric and
+two synthetic label keys. The corpus extraction then found 45 repository metric
+names and their label-key sets without printing values; its three structural
+hashes were `ed3745ecb9bc2cc4` (7,503), `087debe8b773af5d` (510), and
+`bebe937ef48eda06` (1). Of 8,013 payloads, 7,238 were nonempty and all 7,238
+had distinct payload hashes; those nonempty payloads contributed 221,875,277
+bytes. Sampling rows are idle-cadenced, but byte growth is traffic/state-driven
+rather than empty-idle snapshots. Fixtures preserve only approved metric
+identifiers, label keys, scalar shapes, and ordering with synthetic redacted
+values.
 
 ## Startup index and range rollups
 

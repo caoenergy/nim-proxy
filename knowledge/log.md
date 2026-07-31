@@ -6,6 +6,18 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-31] component — canonical history-v1 codec foundation
+
+Task 10 defines the exact `nimproxy-history/v1` boot, sample, and checkpoint
+JSON field order with codec-only validation. Sanitized golden and negative
+fixtures prove canonical encoding, non-state extension tolerance, whole-sample
+state rejection, duplicate-series rejection, and distinct future
+format/version diagnostics. A metadata-only read-only corpus stream measured
+idle-cadenced sampling but traffic/state-driven history-byte growth without
+committing row bodies or label values. Runtime storage, startup, and recovery remain later work; see
+[metrics history](architecture/metrics-history.md) and the
+[test strategy](testing/test-strategy.md).
+
 ## [2026-07-30] decision — make delegation a managed contract
 
 The stable agent guide now treats delegation as a management boundary rather

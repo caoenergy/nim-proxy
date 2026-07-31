@@ -15,6 +15,11 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+// Task 10 establishes this public-to-history boundary before Task 11 connects
+// it to storage; until then no runtime caller constructs canonical records.
+#[allow(dead_code)]
+pub mod codec;
+
 pub const SAMPLE_SECS: u64 = 300;
 const MAX_EXPOSITION_LINE_BYTES: usize = 1024 * 1024;
 const MAX_EXPOSITION_SERIES: usize = 100_000;
