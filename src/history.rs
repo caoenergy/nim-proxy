@@ -398,16 +398,45 @@ struct HistoryInner {
     diagnostics: HistoryDiagnostics,
     last_parsed: Option<ParsedSnapshot>,
     last_sample_boot: Option<String>,
+    recovery_gaps: Vec<store::RecoveryGap>,
+    recovery_events: Vec<store::DiagnosticEvent>,
+    recovery_events_complete: bool,
 }
 
 /// ASCII-ordered: served inside `/api/dashboard` (see `src/api.rs`).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, ToSchema)]
 pub struct HistoryDiagnostics {
-    pub legacy_resets_inferred: usize,
+    pub excluded_epochs: usize,
+    pub excluded_records: usize,
     pub normalized_series: usize,
     pub skipped_metric_lines: usize,
-    pub skipped_records: usize,
+    pub valid_checkpoints: usize,
     pub valid_samples: usize,
+}
+
+pub struct HistoryWindow<T> {
+    pub complete: bool,
+    pub data: T,
+    pub diagnostics: HistoryDiagnostics,
+}
+
+fn diagnostics_at(inner: &HistoryInner, to: u64) -> HistoryDiagnostics {
+    if !inner.recovery_events_complete {
+        return inner.diagnostics.clone();
+    }
+    inner
+        .recovery_events
+        .iter()
+        .filter(|event| event.at <= to)
+        .fold(HistoryDiagnostics::default(), |mut total, event| {
+            total.excluded_epochs += event.diagnostics.excluded_epochs;
+            total.excluded_records += event.diagnostics.excluded_records;
+            total.normalized_series += event.diagnostics.normalized_series;
+            total.skipped_metric_lines += event.diagnostics.skipped_metric_lines;
+            total.valid_checkpoints += event.diagnostics.valid_checkpoints;
+            total.valid_samples += event.diagnostics.valid_samples;
+            total
+        })
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -565,8 +594,15 @@ impl History {
             );
         }
         let mut history = Self::load(None, days, initial_capacity);
-        let records = canonical.take_replay_records();
-        history.load_canonical(&records, days);
+        let replay = canonical.take_replay();
+        history.load_canonical(&replay.records, days);
+        {
+            let mut inner = history.inner.lock().unwrap();
+            inner.diagnostics = replay.diagnostics;
+            inner.recovery_gaps = replay.gaps;
+            inner.recovery_events = replay.diagnostic_events;
+            inner.recovery_events_complete = true;
+        }
         history.boot_id = canonical.boot_id().to_owned();
         history.boot_t = timestamp;
         history.canonical = Some(Mutex::new(canonical));
@@ -638,16 +674,16 @@ impl History {
                 source_bytes = f.metadata().map_or(0, |metadata| metadata.len());
                 for line in std::io::BufReader::new(f).lines() {
                     let Ok(line) = line else {
-                        diagnostics.skipped_records += 1;
+                        diagnostics.excluded_records += 1;
                         break;
                     };
                     let Ok(record) = serde_json::from_str::<StoredRecord>(&line) else {
-                        diagnostics.skipped_records += 1;
+                        diagnostics.excluded_records += 1;
                         continue;
                     };
                     match decode_record(record) {
                         Some(record) => records.push(record),
-                        None => diagnostics.skipped_records += 1,
+                        None => diagnostics.excluded_records += 1,
                     }
                 }
             }
@@ -694,9 +730,6 @@ impl History {
             diagnostics.valid_samples += 1;
             diagnostics.skipped_metric_lines += current.skipped_lines;
             diagnostics.normalized_series += normalized.deltas.len() + normalized.gauges.len();
-            if normalized.inferred_reset {
-                diagnostics.legacy_resets_inferred += 1;
-            }
             let retained = cutoff.is_none_or(|cutoff| point.t >= cutoff);
             if retained {
                 indexed_points.push(IndexedPoint {
@@ -726,6 +759,9 @@ impl History {
                 diagnostics,
                 last_parsed,
                 last_sample_boot,
+                recovery_gaps: Vec::new(),
+                recovery_events: Vec::new(),
+                recovery_events_complete: false,
             }),
             file,
             days: AtomicU64::new(days),
@@ -747,10 +783,10 @@ impl History {
              {} normalized series, {} inferred resets, indexed in {:?}; retention {}",
             source_bytes,
             inner.diagnostics.valid_samples,
-            inner.diagnostics.skipped_records,
+            inner.diagnostics.excluded_records,
             inner.diagnostics.skipped_metric_lines,
             inner.diagnostics.normalized_series,
-            inner.diagnostics.legacy_resets_inferred,
+            inner.diagnostics.excluded_epochs,
             started.elapsed(),
             if days == 0 {
                 "infinite".to_owned()
@@ -832,11 +868,19 @@ impl History {
         let explicit_reset = inner.last_parsed.is_some()
             && inner.last_sample_boot.as_deref() != Some(self.boot_id.as_str());
         let normalized = normalize(inner.last_parsed.as_ref(), &current, explicit_reset);
-        inner.diagnostics.valid_samples += 1;
-        inner.diagnostics.skipped_metric_lines += current.skipped_lines;
-        inner.diagnostics.normalized_series += normalized.deltas.len() + normalized.gauges.len();
-        if normalized.inferred_reset {
-            inner.diagnostics.legacy_resets_inferred += 1;
+        let diagnostics = HistoryDiagnostics {
+            normalized_series: normalized.deltas.len() + normalized.gauges.len(),
+            skipped_metric_lines: current.skipped_lines,
+            valid_samples: 1,
+            ..HistoryDiagnostics::default()
+        };
+        inner.diagnostics.valid_samples += diagnostics.valid_samples;
+        inner.diagnostics.skipped_metric_lines += diagnostics.skipped_metric_lines;
+        inner.diagnostics.normalized_series += diagnostics.normalized_series;
+        if inner.recovery_events_complete {
+            inner
+                .recovery_events
+                .push(store::DiagnosticEvent { at: t, diagnostics });
         }
 
         let days = self.days.load(Ordering::Relaxed);
@@ -892,8 +936,9 @@ impl History {
         }
     }
 
-    pub fn rollup(&self, from: u64, to: u64, points: usize) -> Rollup {
+    pub fn rollup(&self, from: u64, to: u64, points: usize) -> HistoryWindow<Rollup> {
         let inner = self.inner.lock().unwrap();
+        let diagnostics = diagnostics_at(&inner, to);
         let empty = || Rollup {
             available_from: inner.available_from,
             available_to: inner.available_to,
@@ -902,17 +947,35 @@ impl History {
             totals: Vec::new(),
             latest: Vec::new(),
             points: Vec::new(),
-            diagnostics: inner.diagnostics.clone(),
+            diagnostics: diagnostics.clone(),
             history_revision: inner.revision,
         };
+        let incomplete = |inner: &HistoryInner| {
+            from >= to
+                || inner.points.is_empty()
+                || inner
+                    .recovery_gaps
+                    .iter()
+                    .any(|gap| gap.from < to && from < gap.to)
+        };
         if from >= to {
-            return empty();
+            let data = empty();
+            return HistoryWindow {
+                complete: false,
+                data,
+                diagnostics,
+            };
         }
 
         let first = inner.points.partition_point(|point| point.t <= from);
         let end = inner.points.partition_point(|point| point.t <= to);
         if first == end {
-            return empty();
+            let data = empty();
+            return HistoryWindow {
+                complete: false,
+                data,
+                diagnostics,
+            };
         }
 
         let point_budget = points.clamp(2, 1000);
@@ -975,7 +1038,7 @@ impl History {
             .filter_map(BucketAccumulator::finish)
             .collect();
 
-        Rollup {
+        let data = Rollup {
             available_from: inner.available_from,
             available_to: inner.available_to,
             effective_from,
@@ -983,8 +1046,13 @@ impl History {
             totals: metric_values(totals),
             latest: metric_values(latest),
             points,
-            diagnostics: inner.diagnostics.clone(),
+            diagnostics: diagnostics.clone(),
             history_revision: inner.revision,
+        };
+        HistoryWindow {
+            complete: !incomplete(&inner),
+            data,
+            diagnostics,
         }
     }
 
@@ -1535,8 +1603,8 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         assert_eq!(h.inner.lock().unwrap().points.len(), 1);
         h.append(200_300, "newer", capacity(40));
         let rollup = h.rollup(199_999, 200_100, 100);
-        assert_eq!(rollup.points.len(), 1);
-        assert_eq!(rollup.points[0].to, 200_000);
+        assert_eq!(rollup.data.points.len(), 1);
+        assert_eq!(rollup.data.points[0].to, 200_000);
     }
 
     #[test]
@@ -1574,9 +1642,9 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         history.clone().reconfigure_retention(1, 200_000);
 
         let rollup = history.rollup(0, u64::MAX, 100);
-        assert_eq!(rollup.available_from, Some(120_000));
+        assert_eq!(rollup.data.available_from, Some(120_000));
         assert_eq!(history.status().available_from, Some(120_000));
-        assert_eq!(value(&rollup.totals, "requests_total"), 7.0);
+        assert_eq!(value(&rollup.data.totals, "requests_total"), 7.0);
         assert!(history.revision() > before_revision);
     }
 
@@ -1606,7 +1674,7 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         assert!(timestamps.windows(2).all(|pair| pair[0] <= pair[1]));
         assert_eq!(history.status().available_to, Some(300));
         let rollup = history.rollup(299, 300, 20);
-        assert_eq!(value(&rollup.totals, "requests_total"), 15.0);
+        assert_eq!(value(&rollup.data.totals, "requests_total"), 15.0);
     }
 
     #[tokio::test]
@@ -1678,7 +1746,7 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
             10.0
         );
         assert_eq!(inner.points[2].capacity.as_ref().unwrap().rpms, [40, 30]);
-        assert_eq!(inner.diagnostics.legacy_resets_inferred, 0);
+        assert_eq!(inner.diagnostics.excluded_epochs, 0);
     }
 
     #[test]
@@ -1706,7 +1774,7 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
             })
             .sum::<f64>();
         assert_eq!(total, 7.0);
-        assert_eq!(inner.diagnostics.legacy_resets_inferred, 1);
+        assert_eq!(inner.diagnostics.excluded_epochs, 0);
     }
 
     fn history_with_points() -> Arc<History> {
@@ -1793,27 +1861,27 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         let h = history_with_points();
         let coarse = h.rollup(99, 300, 2);
         let fine = h.rollup(99, 300, 1000);
-        assert_eq!(coarse.totals, fine.totals);
-        assert_eq!(value(&coarse.totals, "requests_total"), 40.0);
-        assert!(coarse.points.len() <= 2);
+        assert_eq!(coarse.data.totals, fine.data.totals);
+        assert_eq!(value(&coarse.data.totals, "requests_total"), 40.0);
+        assert!(coarse.data.points.len() <= 2);
     }
 
     #[test]
     fn rollup_uses_open_closed_sample_boundaries() {
         let h = history_with_points();
         let rollup = h.rollup(100, 200, 20);
-        assert_eq!(value(&rollup.totals, "requests_total"), 15.0);
+        assert_eq!(value(&rollup.data.totals, "requests_total"), 15.0);
     }
 
     #[test]
     fn rollup_preserves_grouped_labels() {
         let rollup = history_with_points().rollup(99, 300, 20);
         assert_eq!(
-            labeled_value(&rollup.totals, "prompt_tokens_total", "model", "alpha"),
+            labeled_value(&rollup.data.totals, "prompt_tokens_total", "model", "alpha"),
             240.0
         );
         assert_eq!(
-            labeled_value(&rollup.totals, "prompt_tokens_total", "model", "beta"),
+            labeled_value(&rollup.data.totals, "prompt_tokens_total", "model", "beta"),
             110.0
         );
     }
@@ -1821,13 +1889,13 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
     #[test]
     fn rollup_keeps_latest_gauges_and_histogram_buckets() {
         let rollup = history_with_points().rollup(99, 300, 20);
-        assert_eq!(value(&rollup.latest, "active"), 3.0);
+        assert_eq!(value(&rollup.data.latest, "active"), 3.0);
         assert_eq!(
-            labeled_value(&rollup.totals, "latency_seconds_bucket", "le", "0.5"),
+            labeled_value(&rollup.data.totals, "latency_seconds_bucket", "le", "0.5"),
             12.0
         );
         assert_eq!(
-            labeled_value(&rollup.totals, "latency_seconds_bucket", "le", "+Inf"),
+            labeled_value(&rollup.data.totals, "latency_seconds_bucket", "le", "+Inf"),
             40.0
         );
     }
@@ -1835,41 +1903,42 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
     #[test]
     fn rollup_empty_window_retains_only_available_bounds() {
         let rollup = history_with_points().rollup(300, 400, 20);
-        assert_eq!(rollup.available_from, Some(100));
-        assert_eq!(rollup.available_to, Some(300));
-        assert_eq!(rollup.effective_from, None);
-        assert_eq!(rollup.effective_to, None);
-        assert!(rollup.totals.is_empty());
-        assert!(rollup.latest.is_empty());
-        assert!(rollup.points.is_empty());
+        assert_eq!(rollup.data.available_from, Some(100));
+        assert_eq!(rollup.data.available_to, Some(300));
+        assert_eq!(rollup.data.effective_from, None);
+        assert_eq!(rollup.data.effective_to, None);
+        assert!(rollup.data.totals.is_empty());
+        assert!(rollup.data.latest.is_empty());
+        assert!(rollup.data.points.is_empty());
     }
 
     #[test]
     fn rollup_reports_effective_and_available_bounds() {
         let rollup = history_with_points().rollup(0, 250, 20);
-        assert_eq!(rollup.available_from, Some(100));
-        assert_eq!(rollup.available_to, Some(300));
-        assert_eq!(rollup.effective_from, Some(100));
-        assert_eq!(rollup.effective_to, Some(200));
+        assert_eq!(rollup.data.available_from, Some(100));
+        assert_eq!(rollup.data.available_to, Some(300));
+        assert_eq!(rollup.data.effective_from, Some(100));
+        assert_eq!(rollup.data.effective_to, Some(200));
     }
 
     #[test]
     fn rollup_does_not_invent_capacity_before_the_first_retained_sample() {
         let rollup = history_with_points().rollup(0, 100, 20);
 
-        assert_eq!(value(&rollup.totals, "requests_total"), 10.0);
-        assert_eq!(rollup.effective_from, Some(100));
-        assert_eq!(rollup.points.len(), 1);
-        assert_eq!(rollup.points[0].from, 100);
-        assert_eq!(rollup.points[0].to, 100);
-        assert_eq!(rollup.points[0].duration_seconds, 0);
-        assert_eq!(rollup.points[0].capacity, None);
+        assert_eq!(value(&rollup.data.totals, "requests_total"), 10.0);
+        assert_eq!(rollup.data.effective_from, Some(100));
+        assert_eq!(rollup.data.points.len(), 1);
+        assert_eq!(rollup.data.points[0].from, 100);
+        assert_eq!(rollup.data.points[0].to, 100);
+        assert_eq!(rollup.data.points[0].duration_seconds, 0);
+        assert_eq!(rollup.data.points[0].capacity, None);
     }
 
     #[test]
     fn rollup_time_weights_capacity() {
         let rollup = history_with_points().rollup(99, 300, 2);
         let weighted_rpm = rollup
+            .data
             .points
             .iter()
             .filter_map(|point| {
@@ -1880,6 +1949,7 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
             })
             .sum::<f64>();
         let duration = rollup
+            .data
             .points
             .iter()
             .map(|point| point.duration_seconds)
@@ -1888,6 +1958,7 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         assert!((weighted_rpm / duration as f64 - 80.0).abs() < 1e-12);
         assert_eq!(
             rollup
+                .data
                 .points
                 .last()
                 .unwrap()
@@ -2099,7 +2170,7 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         let temporary = temporary_path(&path);
         fs::write(&temporary, "stale partial rewrite").unwrap();
         history.clone().reconfigure_retention(1, now);
-        let expected = history.rollup(0, u64::MAX, 100).totals;
+        let expected = history.rollup(0, u64::MAX, 100).data.totals;
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while history.status().compaction_pending {
             assert!(
@@ -2136,8 +2207,8 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
 
         let reloaded = History::load(Some(dir.0.clone()), 1, capacity(40));
         let after = reloaded.rollup(0, u64::MAX, 100);
-        assert_eq!(after.available_from, Some(retained_one));
-        assert_eq!(after.totals, expected);
+        assert_eq!(after.data.available_from, Some(retained_one));
+        assert_eq!(after.data.totals, expected);
     }
 
     #[tokio::test]

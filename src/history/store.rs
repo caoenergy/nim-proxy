@@ -8,6 +8,7 @@ use super::codec::{
     decode_record, encode_record, BootRecord, Capacity, CheckpointRecord, DecodeError, Record,
     SampleRecord, StateEntry,
 };
+use super::HistoryDiagnostics;
 
 const CANONICAL_NAME: &str = "history-v1.jsonl";
 const TEMP_PREFIX: &str = "history-v1.jsonl.tmp-";
@@ -17,9 +18,31 @@ pub struct HistoryStore {
     file: File,
     boot_id: String,
     last_state: Option<Vec<StateEntry>>,
-    replay_records: Vec<Record>,
+    replay: Replay,
     last_timestamp: Option<u64>,
     poisoned: bool,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct Replay {
+    pub records: Vec<Record>,
+    pub diagnostics: HistoryDiagnostics,
+    pub diagnostic_events: Vec<DiagnosticEvent>,
+    pub gaps: Vec<RecoveryGap>,
+    pub ordering_bound: Option<u64>,
+    pub needs_separator: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RecoveryGap {
+    pub from: u64,
+    pub to: u64,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DiagnosticEvent {
+    pub at: u64,
+    pub diagnostics: HistoryDiagnostics,
 }
 
 #[derive(Debug)]
@@ -120,19 +143,22 @@ impl HistoryStore {
             boot_id: boot_id.clone(),
             capacity,
         });
+        let boot_timestamp = record_timestamp(&boot);
         match OpenOptions::new().read(true).open(&path) {
             Ok(_) => {
-                let mut records = validate_canonical(&path)?;
-                ensure_open_timestamp(&records, &boot)?;
+                let mut replay = validate_canonical(&path)?;
+                ensure_open_timestamp(replay.ordering_bound, &boot)?;
                 let mut file = OpenOptions::new().append(true).open(&path)?;
+                append_recovery_separator(&mut file, replay.needs_separator)?;
                 append_record(&mut file, &boot, failure.as_deref_mut(), true)?;
-                records.push(boot);
-                let last_timestamp = records.last().map(record_timestamp);
+                replay.records.push(boot);
+                close_open_gap(&mut replay, boot_timestamp);
+                let last_timestamp = replay.records.last().map(record_timestamp);
                 Ok(Self {
                     file,
                     boot_id,
                     last_state: None,
-                    replay_records: records,
+                    replay,
                     last_timestamp,
                     poisoned: false,
                 })
@@ -147,23 +173,28 @@ impl HistoryStore {
                             file,
                             boot_id,
                             last_state: None,
-                            replay_records: vec![boot],
+                            replay: Replay {
+                                records: vec![boot],
+                                ..Replay::default()
+                            },
                             last_timestamp,
                             poisoned: false,
                         })
                     }
                     Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                        let mut records = validate_canonical(&path)?;
-                        ensure_open_timestamp(&records, &boot)?;
+                        let mut replay = validate_canonical(&path)?;
+                        ensure_open_timestamp(replay.ordering_bound, &boot)?;
                         let mut file = OpenOptions::new().append(true).open(&path)?;
+                        append_recovery_separator(&mut file, replay.needs_separator)?;
                         append_record(&mut file, &boot, failure, true)?;
-                        records.push(boot);
-                        let last_timestamp = records.last().map(record_timestamp);
+                        replay.records.push(boot);
+                        close_open_gap(&mut replay, boot_timestamp);
+                        let last_timestamp = replay.records.last().map(record_timestamp);
                         Ok(Self {
                             file,
                             boot_id,
                             last_state: None,
-                            replay_records: records,
+                            replay,
                             last_timestamp,
                             poisoned: false,
                         })
@@ -244,8 +275,8 @@ impl HistoryStore {
         &self.boot_id
     }
 
-    pub(crate) fn take_replay_records(&mut self) -> Vec<Record> {
-        std::mem::take(&mut self.replay_records)
+    pub(crate) fn take_replay(&mut self) -> Replay {
+        std::mem::take(&mut self.replay)
     }
 
     pub(crate) fn file_bytes(&self) -> io::Result<u64> {
@@ -260,14 +291,14 @@ pub(crate) fn stale_temporary_count(directory: &Path) -> io::Result<usize> {
     })
 }
 
-fn validate_canonical(path: &Path) -> Result<Vec<Record>, OpenError> {
+fn validate_canonical(path: &Path) -> Result<Replay, OpenError> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
-    let mut records = Vec::new();
-    let mut active_boot: Option<String> = None;
-    let mut last_timestamp = None;
+    let mut replay = Replay::default();
+    let mut state = ScannerState::AwaitBoot;
     let mut line = Vec::new();
     let mut index = 0;
+    let mut saw_nonblank = false;
     loop {
         line.clear();
         let read = reader.read_until(b'\n', &mut line)?;
@@ -276,40 +307,267 @@ fn validate_canonical(path: &Path) -> Result<Vec<Record>, OpenError> {
         }
         index += 1;
         if line.last() != Some(&b'\n') {
-            return Err(OpenError::UnterminatedRecord);
+            saw_nonblank |= !line.iter().all(u8::is_ascii_whitespace);
+            if let Err(error @ (DecodeError::UnsupportedFormat | DecodeError::UnsupportedVersion)) =
+                decode_record(&line)
+            {
+                return Err(OpenError::InvalidCanonical { line: index, error });
+            }
+            let at = trustworthy_timestamp(&line);
+            if let Some(timestamp) = at {
+                advance_ordering_bound(&mut replay, timestamp);
+            }
+            replay.needs_separator = !line.iter().all(u8::is_ascii_whitespace);
+            let decision_at = at.or(replay.ordering_bound).unwrap_or(0);
+            invalidate(&mut state, &mut replay, decision_at);
+            break;
         }
         line.pop();
         if line.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
-        let record = decode_record(&line)
-            .map_err(|error| OpenError::InvalidCanonical { line: index, error })?;
-        let (timestamp, boot_id, is_boot) = match &record {
-            Record::Boot(record) => (record.timestamp, &record.boot_id, true),
-            Record::Sample(record) => (record.timestamp, &record.boot_id, false),
-            Record::Checkpoint(record) => (record.timestamp, &record.boot_id, false),
+        saw_nonblank = true;
+        let record = match decode_record(&line) {
+            Ok(record) => record,
+            Err(error @ (DecodeError::UnsupportedFormat | DecodeError::UnsupportedVersion)) => {
+                return Err(OpenError::InvalidCanonical { line: index, error });
+            }
+            Err(_) => {
+                let at = trustworthy_timestamp(&line);
+                if let Some(timestamp) = at {
+                    advance_ordering_bound(&mut replay, timestamp);
+                }
+                let decision_at = at.or(replay.ordering_bound).unwrap_or(0);
+                invalidate(&mut state, &mut replay, decision_at);
+                continue;
+            }
         };
-        if last_timestamp.is_some_and(|previous| timestamp < previous) {
-            return Err(OpenError::InvalidStream {
-                line: index,
-                reason: "timestamp regresses",
-            });
+        let timestamp = record_timestamp(&record);
+        if replay.ordering_bound.is_some_and(|bound| timestamp < bound) {
+            invalidate(&mut state, &mut replay, timestamp);
+            continue;
         }
-        if !is_boot && active_boot.as_deref() != Some(boot_id.as_str()) {
-            return Err(OpenError::InvalidStream {
-                line: index,
-                reason: "sample or checkpoint has no preceding matching boot",
-            });
+        advance_ordering_bound(&mut replay, timestamp);
+        if matches!(record, Record::Boot(_)) {
+            start_boot(&mut state, &mut replay, record);
+            continue;
         }
-        if is_boot {
-            active_boot = Some(boot_id.clone());
-        }
-        last_timestamp = Some(timestamp);
-        records.push(record);
+        ingest_record(&mut state, &mut replay, record);
     }
-    (!records.is_empty())
-        .then_some(records)
+    match state {
+        ScannerState::Usable(epoch) => commit_epoch(epoch, &mut replay),
+        ScannerState::AwaitSample(epoch) => exclude_epoch(epoch, &mut replay, None),
+        ScannerState::AwaitBoot | ScannerState::InvalidEpoch => {}
+    }
+    saw_nonblank
+        .then_some(replay)
         .ok_or(OpenError::EmptyCanonical)
+}
+
+#[derive(Debug)]
+enum ScannerState {
+    AwaitBoot,
+    AwaitSample(Epoch),
+    Usable(Epoch),
+    InvalidEpoch,
+}
+
+#[derive(Debug)]
+struct Epoch {
+    boot_id: String,
+    from: u64,
+    records: Vec<Record>,
+    state: Option<Vec<StateEntry>>,
+    diagnostic_events: Vec<DiagnosticEvent>,
+}
+
+impl Epoch {
+    fn new(record: Record) -> Self {
+        let Record::Boot(boot) = &record else {
+            unreachable!()
+        };
+        Self {
+            boot_id: boot.boot_id.clone(),
+            from: boot.timestamp,
+            records: vec![record],
+            state: None,
+            diagnostic_events: Vec::new(),
+        }
+    }
+}
+
+fn start_boot(state: &mut ScannerState, replay: &mut Replay, record: Record) {
+    let previous = std::mem::replace(state, ScannerState::AwaitBoot);
+    match previous {
+        ScannerState::AwaitSample(epoch) => exclude_epoch(epoch, replay, None),
+        ScannerState::Usable(epoch) => commit_epoch(epoch, replay),
+        ScannerState::AwaitBoot | ScannerState::InvalidEpoch => {}
+    }
+    close_open_gap(replay, record_timestamp(&record));
+    *state = ScannerState::AwaitSample(Epoch::new(record));
+}
+
+fn ingest_record(state: &mut ScannerState, replay: &mut Replay, record: Record) {
+    let timestamp = record_timestamp(&record);
+    let boot_id = record_boot_id(&record);
+    let previous = std::mem::replace(state, ScannerState::AwaitBoot);
+    match previous {
+        ScannerState::AwaitSample(mut epoch) if epoch.boot_id == boot_id => match record {
+            Record::Sample(sample) => {
+                add_sample(&mut epoch, &sample);
+                epoch.records.push(Record::Sample(sample));
+                *state = ScannerState::Usable(epoch);
+            }
+            Record::Checkpoint(_) => {
+                exclude_epoch(epoch, replay, Some(timestamp));
+                *state = ScannerState::InvalidEpoch;
+            }
+            Record::Boot(_) => unreachable!(),
+        },
+        ScannerState::Usable(mut epoch) if epoch.boot_id == boot_id => match record {
+            Record::Sample(sample) => {
+                add_sample(&mut epoch, &sample);
+                epoch.records.push(Record::Sample(sample));
+                *state = ScannerState::Usable(epoch);
+            }
+            Record::Checkpoint(checkpoint) => {
+                add_checkpoint(&mut epoch, &checkpoint);
+                epoch.records.push(Record::Checkpoint(checkpoint));
+                *state = ScannerState::Usable(epoch);
+            }
+            Record::Boot(_) => unreachable!(),
+        },
+        ScannerState::AwaitSample(epoch) | ScannerState::Usable(epoch) => {
+            exclude_epoch(epoch, replay, Some(timestamp));
+            *state = ScannerState::InvalidEpoch;
+        }
+        ScannerState::AwaitBoot | ScannerState::InvalidEpoch => {
+            exclude_record(replay, timestamp);
+            open_gap(replay, timestamp);
+            *state = ScannerState::InvalidEpoch;
+        }
+    }
+}
+
+fn add_sample(epoch: &mut Epoch, sample: &SampleRecord) {
+    epoch.state = Some(sample.state.clone());
+    epoch.diagnostic_events.push(DiagnosticEvent {
+        at: sample.timestamp,
+        diagnostics: HistoryDiagnostics {
+            normalized_series: sample.state.len(),
+            valid_samples: 1,
+            ..HistoryDiagnostics::default()
+        },
+    });
+}
+
+fn add_checkpoint(epoch: &mut Epoch, checkpoint: &CheckpointRecord) {
+    let normalized_series = epoch.state.as_ref().map_or(0, Vec::len);
+    epoch.diagnostic_events.push(DiagnosticEvent {
+        at: checkpoint.timestamp,
+        diagnostics: HistoryDiagnostics {
+            normalized_series,
+            valid_checkpoints: 1,
+            ..HistoryDiagnostics::default()
+        },
+    });
+}
+
+fn invalidate(state: &mut ScannerState, replay: &mut Replay, at: u64) {
+    let previous = std::mem::replace(state, ScannerState::InvalidEpoch);
+    match previous {
+        ScannerState::AwaitSample(epoch) | ScannerState::Usable(epoch) => {
+            exclude_epoch(epoch, replay, Some(at));
+        }
+        ScannerState::AwaitBoot | ScannerState::InvalidEpoch => {
+            exclude_record(replay, at);
+            open_gap(replay, at);
+        }
+    }
+}
+
+fn exclude_epoch(epoch: Epoch, replay: &mut Replay, damaging_timestamp: Option<u64>) {
+    let diagnostics = HistoryDiagnostics {
+        excluded_epochs: 1,
+        ..HistoryDiagnostics::default()
+    };
+    add_diagnostics(&mut replay.diagnostics, &diagnostics);
+    replay.diagnostic_events.push(DiagnosticEvent {
+        at: epoch.from,
+        diagnostics,
+    });
+    for record in epoch.records {
+        exclude_record(replay, record_timestamp(&record));
+    }
+    if let Some(timestamp) = damaging_timestamp {
+        exclude_record(replay, timestamp);
+    }
+    open_gap(replay, epoch.from);
+}
+
+fn exclude_record(replay: &mut Replay, at: u64) {
+    let diagnostics = HistoryDiagnostics {
+        excluded_records: 1,
+        ..HistoryDiagnostics::default()
+    };
+    add_diagnostics(&mut replay.diagnostics, &diagnostics);
+    replay
+        .diagnostic_events
+        .push(DiagnosticEvent { at, diagnostics });
+}
+
+fn commit_epoch(epoch: Epoch, replay: &mut Replay) {
+    for event in epoch.diagnostic_events {
+        let diagnostics = event.diagnostics.clone();
+        add_diagnostics(&mut replay.diagnostics, &diagnostics);
+        replay.diagnostic_events.push(event);
+    }
+    replay.records.extend(epoch.records);
+}
+
+fn open_gap(replay: &mut Replay, from: u64) {
+    if let Some(gap) = replay.gaps.last_mut().filter(|gap| gap.to == u64::MAX) {
+        gap.from = gap.from.min(from);
+    } else {
+        replay.gaps.push(RecoveryGap { from, to: u64::MAX });
+    }
+}
+
+fn close_open_gap(replay: &mut Replay, timestamp: u64) {
+    if let Some(gap) = replay.gaps.iter_mut().rev().find(|gap| gap.to == u64::MAX) {
+        gap.to = timestamp;
+    }
+}
+
+fn record_boot_id(record: &Record) -> &str {
+    match record {
+        Record::Boot(record) => &record.boot_id,
+        Record::Sample(record) => &record.boot_id,
+        Record::Checkpoint(record) => &record.boot_id,
+    }
+}
+
+fn trustworthy_timestamp(line: &[u8]) -> Option<u64> {
+    serde_json::from_slice::<serde_json::Value>(line)
+        .ok()
+        .and_then(|record| record.get("timestamp")?.as_u64())
+}
+
+fn advance_ordering_bound(replay: &mut Replay, timestamp: u64) {
+    replay.ordering_bound = Some(
+        replay
+            .ordering_bound
+            .map_or(timestamp, |previous| previous.max(timestamp)),
+    );
+}
+
+fn add_diagnostics(total: &mut HistoryDiagnostics, delta: &HistoryDiagnostics) {
+    total.excluded_epochs += delta.excluded_epochs;
+    total.excluded_records += delta.excluded_records;
+    total.normalized_series += delta.normalized_series;
+    total.skipped_metric_lines += delta.skipped_metric_lines;
+    total.valid_checkpoints += delta.valid_checkpoints;
+    total.valid_samples += delta.valid_samples;
 }
 
 fn record_timestamp(record: &Record) -> u64 {
@@ -320,13 +578,10 @@ fn record_timestamp(record: &Record) -> u64 {
     }
 }
 
-fn ensure_open_timestamp(records: &[Record], next: &Record) -> Result<(), OpenError> {
-    if records
-        .last()
-        .is_some_and(|previous| record_timestamp(next) < record_timestamp(previous))
-    {
+fn ensure_open_timestamp(last_timestamp: Option<u64>, next: &Record) -> Result<(), OpenError> {
+    if last_timestamp.is_some_and(|previous| record_timestamp(next) < previous) {
         return Err(OpenError::InvalidStream {
-            line: records.len() + 1,
+            line: 0,
             reason: "timestamp regresses",
         });
     }
@@ -337,6 +592,16 @@ fn ensure_runtime_timestamp(last_timestamp: Option<u64>, next: &Record) -> Resul
     if last_timestamp.is_some_and(|previous| record_timestamp(next) < previous) {
         return Err(WriteError::TimestampRegression);
     }
+    Ok(())
+}
+
+fn append_recovery_separator(file: &mut File, needs_separator: bool) -> Result<(), OpenError> {
+    if !needs_separator {
+        return Ok(());
+    }
+    file.write_all(b"\n")?;
+    file.flush()?;
+    file.sync_all()?;
     Ok(())
 }
 
@@ -559,9 +824,11 @@ fn append_with_test_failure(
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::sync::Arc;
 
     use super::{
-        append_with_test_failure, open_with_test_failure, FailurePoint, HistoryStore, OpenError,
+        add_sample, append_with_test_failure, open_with_test_failure, validate_canonical, Epoch,
+        FailurePoint, HistoryStore, OpenError, ScannerState,
     };
     use crate::history::{
         codec::{decode_record, Capacity, DecodeError, Record, StateEntry, StateKind},
@@ -989,12 +1256,15 @@ mod tests {
                 complete: actual_complete,
                 data,
                 diagnostics,
+                ..
             } = history.rollup(0, u64::MAX, 1000);
             assert_eq!(actual_complete, complete, "{name}: query completeness");
             assert_eq!(data.points.len(), point_count, "{name}: included points");
-            let expected_totals = (total != 0.0)
-                .then(|| vec![metric_value("nimproxy_requests_total", total)])
-                .unwrap_or_default();
+            let expected_totals = if total != 0.0 {
+                vec![metric_value("nimproxy_requests_total", total)]
+            } else {
+                Vec::new()
+            };
             assert_eq!(data.totals, expected_totals, "{name}: exact totals");
             let expected_latest = if name == "valid-checkpoint-carries-state-within-usable-epoch" {
                 vec![metric_value("nimproxy_active_requests", 9.0)]
@@ -1105,6 +1375,7 @@ mod tests {
                     complete: usable_complete,
                     data: usable,
                     diagnostics: usable_diagnostics,
+                    ..
                 } = history.rollup(t + 3, t + 4, 1000);
                 assert!(usable_complete, "later usable epoch is query-complete");
                 assert_eq!(
@@ -1145,6 +1416,7 @@ mod tests {
                     complete: unavailable_complete,
                     data: unavailable,
                     diagnostics: unavailable_diagnostics,
+                    ..
                 } = history.rollup(t + 20, t + 21, 1000);
                 assert!(
                     !unavailable_complete,
@@ -1213,8 +1485,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_canonical_history_refuses_without_changing_its_bytes() {
-        // This catches accepting a corrupt canonical file as if it were absent.
+    fn corrupt_canonical_history_recovers_by_appending_a_fresh_boot() {
         let dir = std::env::temp_dir().join(format!(
             "nim-proxy-history-store-red-invalid-{}",
             std::process::id()
@@ -1225,15 +1496,13 @@ mod tests {
         let before = b"{not canonical}\n";
         fs::write(&path, before).unwrap();
 
-        let error = HistoryStore::open(&dir, 1_000, capacity()).unwrap_err();
-        assert!(matches!(error, OpenError::InvalidCanonical { .. }));
-        assert_eq!(fs::read(path).unwrap(), before);
+        HistoryStore::open(&dir, 1_000, capacity()).unwrap();
+        assert!(fs::read(path).unwrap().starts_with(before));
         let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn structurally_invalid_canonical_streams_refuse_before_fresh_boot_append() {
-        // Task 11 is strict: recovery of bad epochs belongs to Task 12.
+    fn recoverable_canonical_stream_damage_appends_a_fresh_boot() {
         let boot = b"{\"format\":\"nimproxy-history\",\"v\":1,\"kind\":\"boot\",\"timestamp\":10,\"boot_id\":\"boot-a\",\"capacity\":{\"capacity_rpm\":80,\"enabled_keys\":2,\"key_rpms\":[40,40]}}\n";
         let sample_a = b"{\"format\":\"nimproxy-history\",\"v\":1,\"kind\":\"sample\",\"timestamp\":11,\"boot_id\":\"boot-a\",\"capacity\":{\"capacity_rpm\":80,\"enabled_keys\":2,\"key_rpms\":[40,40]},\"state\":[]}\n";
         let sample_b = b"{\"format\":\"nimproxy-history\",\"v\":1,\"kind\":\"sample\",\"timestamp\":11,\"boot_id\":\"boot-b\",\"capacity\":{\"capacity_rpm\":80,\"enabled_keys\":2,\"key_rpms\":[40,40]},\"state\":[]}\n";
@@ -1251,8 +1520,8 @@ mod tests {
             let dir = test_dir(name);
             let path = dir.join("history-v1.jsonl");
             fs::write(&path, bytes).unwrap();
-            assert!(HistoryStore::open(&dir, 20, capacity()).is_err(), "{name}");
-            assert_eq!(fs::read(&path).unwrap(), bytes, "{name} stays evidence");
+            HistoryStore::open(&dir, 20, capacity()).unwrap();
+            assert!(fs::read(&path).unwrap().starts_with(bytes), "{name}");
             let _ = fs::remove_dir_all(dir);
         }
         let dir = test_dir("checkpoint-after-boot");
@@ -1266,14 +1535,294 @@ mod tests {
     }
 
     #[test]
-    fn final_canonical_record_requires_a_terminating_newline() {
+    fn unterminated_canonical_tail_recovers_with_a_fresh_boot() {
         let dir = test_dir("unterminated-record");
         let path = dir.join("history-v1.jsonl");
         let bytes = b"{\"format\":\"nimproxy-history\",\"v\":1,\"kind\":\"boot\",\"timestamp\":1,\"boot_id\":\"boot-a\",\"capacity\":{\"capacity_rpm\":80,\"enabled_keys\":2,\"key_rpms\":[40,40]}}";
         fs::write(&path, bytes).unwrap();
-        assert!(HistoryStore::open(&dir, 2, capacity()).is_err());
-        assert_eq!(fs::read(path).unwrap(), bytes);
+        HistoryStore::open(&dir, 2, capacity()).unwrap();
+        assert!(fs::read(&path).unwrap().starts_with(bytes));
+        HistoryStore::open(&dir, 3, capacity()).unwrap();
+        assert!(fs::read(&path).unwrap().starts_with(bytes));
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn boot_only_epoch_is_excluded_and_leaves_a_bounded_gap() {
+        let dir = test_dir("boot-only-epoch");
+        let path = dir.join("history-v1.jsonl");
+        fs::write(
+            &path,
+            format!("{}{}", boot(10, "boot-a"), boot(20, "boot-b")),
+        )
+        .unwrap();
+
+        let replay = validate_canonical(&path).unwrap();
+        assert_eq!(replay.diagnostics.excluded_epochs, 2);
+        assert_eq!(replay.diagnostics.excluded_records, 2);
+        assert_eq!(replay.gaps.len(), 2);
+        assert_eq!(replay.gaps[0].from, 10);
+        assert_eq!(replay.gaps[0].to, 20);
+        assert_eq!(replay.gaps[1].from, 20);
+        assert_eq!(replay.gaps[1].to, u64::MAX);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn complete_unterminated_future_tail_refuses_without_mutating_evidence() {
+        for (name, before, expected) in [
+            (
+                "future-version-tail",
+                b"{\"format\":\"nimproxy-history\",\"v\":2,\"kind\":\"boot\",\"timestamp\":1,\"boot_id\":\"x\",\"capacity\":{\"capacity_rpm\":80,\"enabled_keys\":2,\"key_rpms\":[40,40]}}".as_slice(),
+                DecodeError::UnsupportedVersion,
+            ),
+            (
+                "future-format-tail",
+                b"{\"format\":\"future-history\",\"v\":1,\"kind\":\"boot\",\"timestamp\":1,\"boot_id\":\"x\",\"capacity\":{\"capacity_rpm\":80,\"enabled_keys\":2,\"key_rpms\":[40,40]}}".as_slice(),
+                DecodeError::UnsupportedFormat,
+            ),
+        ] {
+            let dir = test_dir(name);
+            let path = dir.join("history-v1.jsonl");
+            fs::write(&path, before).unwrap();
+
+            assert!(matches!(
+                HistoryStore::open(&dir, 2, capacity()),
+                Err(OpenError::InvalidCanonical { error, .. }) if error == expected
+            ));
+            assert_eq!(fs::read(&path).unwrap(), before);
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn whitespace_only_canonical_refuses_without_mutating_evidence() {
+        let dir = test_dir("whitespace-only");
+        let path = dir.join("history-v1.jsonl");
+        let before = b" \t\n\r\n";
+        fs::write(&path, before).unwrap();
+
+        assert!(matches!(
+            HistoryStore::open(&dir, 2, capacity()),
+            Err(OpenError::EmptyCanonical)
+        ));
+        assert_eq!(fs::read(&path).unwrap(), before);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rejected_higher_timestamp_still_bounds_startup_append() {
+        let dir = test_dir("rejected-high-timestamp");
+        let path = dir.join("history-v1.jsonl");
+        let before = format!("{}{}", boot(10, "boot-a"), sample(100, "wrong-boot", 1.0));
+        fs::write(&path, &before).unwrap();
+
+        assert!(matches!(
+            HistoryStore::open(&dir, 20, capacity()),
+            Err(OpenError::InvalidStream {
+                reason: "timestamp regresses",
+                ..
+            })
+        ));
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn repeated_damage_without_a_boot_creates_one_bounded_recovery_gap() {
+        let dir = test_dir("bounded-recovery-gap");
+        let path = dir.join("history-v1.jsonl");
+        fs::write(
+            &path,
+            format!(
+                "{}{{not-json}}\n{{not-json}}\n{}{}",
+                boot(10, "boot-a"),
+                boot(20, "boot-b"),
+                sample(21, "boot-b", 1.0)
+            ),
+        )
+        .unwrap();
+
+        let replay = validate_canonical(&path).unwrap();
+        assert_eq!(replay.gaps.len(), 1);
+        assert_eq!(replay.gaps[0].from, 10);
+        assert_eq!(replay.gaps[0].to, 20);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn diagnostics_are_cumulative_only_through_the_query_end() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let t = now.saturating_sub(100);
+        let dir = test_dir("query-end-diagnostics");
+        let path = dir.join("history-v1.jsonl");
+        fs::write(
+            &path,
+            format!(
+                "{}{}{{not-json}}\n{}{}",
+                boot(t, "boot-a"),
+                sample(t + 1, "boot-a", 2.0),
+                boot(t + 3, "boot-b"),
+                sample(t + 4, "boot-b", 7.0)
+            ),
+        )
+        .unwrap();
+
+        let history = History::open(dir.clone(), 0, history_capacity()).unwrap();
+        let before_damage = history.rollup(t, t + 1, 1000).diagnostics;
+        assert_eq!(before_damage.excluded_epochs, 1);
+        assert_eq!(before_damage.excluded_records, 3);
+        assert_eq!(before_damage.valid_samples, 0);
+        let after_damage = history.rollup(t, t + 4, 1000).diagnostics;
+        assert_eq!(after_damage.excluded_epochs, 1);
+        assert_eq!(after_damage.excluded_records, 3);
+        assert_eq!(after_damage.valid_samples, 1);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn runtime_sample_after_recovery_boot_is_complete_in_its_own_window() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let dir = test_dir("recovery-boot-closes-gap");
+        fs::write(
+            dir.join("history-v1.jsonl"),
+            format!(
+                "{}{}{{not-json}}\n",
+                boot(now - 10, "boot-a"),
+                sample(now - 9, "boot-a", 2.0)
+            ),
+        )
+        .unwrap();
+        let history = Arc::new(History::open(dir.clone(), 0, history_capacity()).unwrap());
+        let sample_t = now + 2;
+        history.append(sample_t, "nimproxy_requests_total 1\n", history_capacity());
+
+        assert!(history.rollup(sample_t - 1, sample_t, 1000).complete);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn runtime_diagnostics_are_cumulative_only_through_the_query_end() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let dir = test_dir("runtime-query-end-diagnostics");
+        let history = Arc::new(History::open(dir.clone(), 0, history_capacity()).unwrap());
+        let first_t = now + 2;
+        history.append(first_t, "nimproxy_requests_total 1\n", history_capacity());
+        history.append(
+            first_t + 1,
+            "nimproxy_requests_total 2\n",
+            history_capacity(),
+        );
+
+        let before_second = history.rollup(first_t - 1, first_t, 1000).diagnostics;
+        assert_eq!(before_second.valid_samples, 1);
+        assert_eq!(before_second.normalized_series, 1);
+        let after_second = history.rollup(first_t - 1, first_t + 1, 1000).diagnostics;
+        assert_eq!(after_second.valid_samples, 2);
+        assert_eq!(after_second.normalized_series, 2);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn invalidation_counts_buffered_records_only_at_their_physical_times() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let t = now.saturating_sub(100);
+        let dir = test_dir("invalidation-physical-times");
+        let damage = format!(
+            r#"{{"format":"nimproxy-history","v":1,"kind":"unknown","timestamp":{},"boot_id":"boot-a","capacity":{{"capacity_rpm":80,"enabled_keys":2,"key_rpms":[40,40]}}}}"#,
+            t + 13
+        ) + "\n";
+        fs::write(
+            dir.join("history-v1.jsonl"),
+            format!(
+                "{}{}{}{}",
+                boot(t + 10, "boot-a"),
+                sample(t + 11, "boot-a", 1.0),
+                sample(t + 12, "boot-a", 2.0),
+                damage,
+            ),
+        )
+        .unwrap();
+
+        let history = History::open(dir.clone(), 0, history_capacity()).unwrap();
+        let before_damage = history.rollup(t, t + 12, 1000);
+        assert!(!before_damage.complete);
+        assert_eq!(before_damage.diagnostics.excluded_epochs, 1);
+        assert_eq!(before_damage.diagnostics.excluded_records, 3);
+        let after_damage = history.rollup(t, t + 13, 1000);
+        assert_eq!(after_damage.diagnostics.excluded_records, 4);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rejected_high_timestamp_requires_a_later_recovery_boot() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let t = now.saturating_sub(200);
+        let invalid_state = format!(
+            r#"{{"format":"nimproxy-history","v":1,"kind":"sample","timestamp":{},"boot_id":"boot-a","capacity":{{"capacity_rpm":80,"enabled_keys":2,"key_rpms":[40,40]}},"state":[{{"kind":"unknown","metric":"nimproxy_requests_total","labels":{{}},"value":1.0}}]}}"#,
+            t + 100
+        );
+        let dir = test_dir("rejected-high-timestamp-recovery");
+        fs::write(
+            dir.join("history-v1.jsonl"),
+            format!(
+                "{}{}\n{}{}{}{}",
+                boot(t + 10, "boot-a"),
+                invalid_state,
+                boot(t + 20, "boot-b"),
+                sample(t + 21, "boot-b", 2.0),
+                boot(t + 100, "boot-c"),
+                sample(t + 101, "boot-c", 7.0),
+            ),
+        )
+        .unwrap();
+
+        let history = History::open(dir.clone(), 0, history_capacity()).unwrap();
+        let early = history.rollup(t, t + 21, 1000);
+        assert!(early.data.points.is_empty());
+        let recovered = history.rollup(t, t + 101, 1000);
+        assert_eq!(
+            recovered.data.totals,
+            vec![metric_value("nimproxy_requests_total", 7.0)]
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn scanner_state_enum_covers_all_locked_transitions() {
+        let waiting = Epoch::new(decode_record(boot(10, "boot-a").trim().as_bytes()).unwrap());
+        let mut usable = Epoch::new(decode_record(boot(20, "boot-b").trim().as_bytes()).unwrap());
+        let sample = decode_record(sample(21, "boot-b", 1.0).trim().as_bytes()).unwrap();
+        let Record::Sample(sample) = sample else {
+            unreachable!()
+        };
+        add_sample(&mut usable, &sample);
+        usable.records.push(Record::Sample(sample));
+        let states = [
+            ScannerState::AwaitBoot,
+            ScannerState::AwaitSample(waiting),
+            ScannerState::Usable(usable),
+            ScannerState::InvalidEpoch,
+        ];
+        assert!(matches!(states[0], ScannerState::AwaitBoot));
+        assert!(matches!(states[1], ScannerState::AwaitSample(_)));
+        assert!(matches!(states[2], ScannerState::Usable(_)));
+        assert!(matches!(states[3], ScannerState::InvalidEpoch));
     }
 
     #[test]
@@ -1363,11 +1912,9 @@ mod tests {
     }
 
     #[test]
-    fn invalid_empty_corrupt_and_future_files_remain_exactly_unchanged() {
-        // This catches treating existing invalid evidence as a missing file.
+    fn empty_and_future_files_remain_exactly_unchanged() {
         for (name, before) in [
             ("empty", b"".as_slice()),
-            ("corrupt", b"{not json}\n".as_slice()),
             ("future", b"{\"format\":\"nimproxy-history\",\"v\":2,\"kind\":\"boot\",\"timestamp\":1,\"boot_id\":\"x\",\"capacity\":{\"capacity_rpm\":80,\"enabled_keys\":2,\"key_rpms\":[40,40]}}\n".as_slice()),
         ] {
             let dir = test_dir(name);

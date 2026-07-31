@@ -1042,10 +1042,11 @@ mod tests {
         DashboardResponse {
             config_revision: 7,
             diagnostics: HistoryDiagnostics {
-                legacy_resets_inferred: usize::from(partial),
+                excluded_epochs: usize::from(partial),
+                excluded_records: usize::from(partial),
                 normalized_series: usize::from(!empty),
                 skipped_metric_lines: usize::from(partial),
-                skipped_records: usize::from(partial),
+                valid_checkpoints: 0,
                 valid_samples: usize::from(!empty),
             },
             history_revision: 11,
