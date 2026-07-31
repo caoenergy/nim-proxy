@@ -3168,6 +3168,32 @@ async fn corrupt_or_future_store_refuses_to_start() {
     expect_refuses_to_start(future).await;
 }
 
+/// Canonical history is durable evidence: malformed bytes must block startup
+/// rather than being treated as an empty or legacy history file.
+#[tokio::test]
+async fn history_startup_is_fail_closed() {
+    let mock = start_mock().await;
+    for (name, contents) in [
+        ("empty", b"".as_slice()),
+        ("corrupt", b"{not canonical}\n".as_slice()),
+        (
+            "future",
+            br#"{"format":"nimproxy-history","v":2,"kind":"boot","timestamp":1,"boot_id":"future","capacity":{"capacity_rpm":80,"enabled_keys":2,"key_rpms":[40,40]}}\n"#,
+        ),
+    ] {
+        let data_dir = scratch_data_dir();
+        std::fs::write(
+            data_dir.join("config.json"),
+            serde_json::to_vec_pretty(&StoreOpts::default().json(&mock.url)).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(data_dir.join("history-v1.jsonl"), contents).unwrap();
+
+        expect_refuses_to_start(data_dir).await;
+        eprintln!("history-startup:{name}: refused malformed canonical input");
+    }
+}
+
 #[tokio::test]
 async fn invalid_noncanonical_and_uninstalled_durable_locales_refuse_to_start() {
     let mock = start_mock().await;
