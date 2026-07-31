@@ -323,4 +323,8 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
   .krow .sin { max-width: 100%; }
   .addrow > input { min-width: 0; }
   #setbody .addrow > input:not([type="number"]) { flex: 1 0 100%; }
+  .setbody { width: 100%; }
+  .card h2 { flex-wrap: wrap; }
+  .card h2 .note { min-width: 0; overflow-wrap: anywhere; }
+  .shint { overflow-wrap: anywhere; }
 }
