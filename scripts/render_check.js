@@ -977,6 +977,26 @@ function visualCoverageSelftest() {
   expectOnly('hidden visual root mutation',
     complete.map(item => item.identity === target.identity ? { ...item, rootVisible: false } : item),
     `visual-coverage:${target.identity}:root-unreached`);
+  const expectProblem = (name, observations, expected) => {
+    if (!visualCoverageProblems(observations).includes(expected)) {
+      failures.push(`${name} did not fire ${expected}`);
+    }
+  };
+  expectProblem('artifact missing mutation',
+    complete.map(item => item.identity === target.identity ? { ...item, artifactWritten: false } : item),
+    `visual-coverage:${target.identity}:artifact-missing`);
+  expectProblem('layout problem mutation',
+    complete.map(item => item.identity === target.identity ? { ...item, layoutProblems: ['layout fixture'] } : item),
+    `visual-coverage:${target.identity}:layout:${canonicalJson('layout fixture')}`);
+  expectProblem('page error mutation',
+    complete.map(item => item.identity === target.identity ? { ...item, pageErrors: ['page fixture'] } : item),
+    `visual-coverage:${target.identity}:page-error:${canonicalJson('page fixture')}`);
+  expectProblem('console error mutation',
+    complete.map(item => item.identity === target.identity ? { ...item, consoleErrors: ['console fixture'] } : item),
+    `visual-coverage:${target.identity}:console-error:${canonicalJson('console fixture')}`);
+  expectProblem('promise rejection mutation',
+    complete.map(item => item.identity === target.identity ? { ...item, promiseRejections: ['promise fixture'] } : item),
+    `visual-coverage:${target.identity}:promise-rejection:${canonicalJson('promise fixture')}`);
   const collisionTarget = complete.find(item => item.identity !== target.identity);
   const collision = complete.map(item => item.identity === collisionTarget.identity
     ? { ...item, path: target.path }
