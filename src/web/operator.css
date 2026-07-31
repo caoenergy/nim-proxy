@@ -226,7 +226,7 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
 .setnav { width: 186px; flex: none; position: sticky; top: 22px; display: flex; flex-direction: column; gap: 2px; }
 .setnav button {
   display: flex; align-items: center; gap: 10px; padding: 8px 11px; border-radius: 9px;
-  font-size: 13px; color: var(--ink-nav); white-space: nowrap;
+  font-size: 13px; color: var(--ink-nav); white-space: normal; overflow-wrap: anywhere;
 }
 .setnav button .nbar { width: 3px; height: 15px; border-radius: 2px; background: transparent; flex: none; }
 .setnav button svg { width: 15px; height: 15px; flex: none; fill: none; stroke: var(--ink-3); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
@@ -307,6 +307,9 @@ body.on-settings .tright, body.on-settings #custom { display: none; }
 @media (max-width: 1024px) {
   .setwrap { flex-direction: column; }
   .setnav { position: static; width: 100%; flex-direction: row; flex-wrap: wrap; }
+  .tright { margin-left: 0; width: 100%; min-width: 0; }
+  #rangeinfo { min-width: 0; overflow-wrap: anywhere; }
+  #ranges { max-width: 100%; flex-wrap: wrap; }
 
   #side { width: 58px; padding: 20px 8px; }
   #side .wordmark, #side nav .label, .foot span:not(.dot), .foot #uptime, .foot #verinfo, .live #liveText { display: none; }
