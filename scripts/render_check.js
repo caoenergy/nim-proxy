@@ -3345,11 +3345,16 @@ const SCAN_DATA_DERIVED = `
       try { out.add(prettyName(id)); } catch (e) {}
       try { out.add(publisher(id).name); } catch (e) {}
     }
-    // Anything Intl produces is CLDR data, not catalog text — weekday names and
-    // hour labels are correct-by-construction for the active locale and will
-    // never be accented under en-XA. Ask the page's own cached formatters
-    // rather than hardcoding a list that would drift from them.
+    // Anything Intl produces is CLDR data, not catalog text. Ask the page's
+    // own cached formatters rather than accepting a text-shaped heuristic that
+    // could hide an owned label such as "Key 12".
     try { for (const d of DAYS) out.add(d); } catch (e) {}
+    try {
+      for (let month = 0; month < 12; month++) for (let day = 1; day <= 31; day++) {
+        const ms = Date.UTC(2024, month, day);
+        if (new Date(ms).getUTCMonth() === month) out.add(DAY_SHORT.format(ms));
+      }
+    } catch (e) {}
     try {
       for (let h = 0; h < 24; h++) {
         out.add(HOUR_ONLY.format(Date.UTC(2024, 0, 1, h)));
@@ -5433,10 +5438,9 @@ async function main() {
     // frozen tokens, digits and punctuation are removed. "tok/s" goes; "24 rpm
     // available" stays, because "available" is a word we wrote.
     const isFrozen = (t) => {
-      // These are already-localized output from Intl.NumberFormat or
-      // Intl.DateTimeFormat. A catalog must not own dynamic numeric/date data.
+      // This is the exact trio of already-localized output shapes from secs().
+      // A catalog must not own dynamic numeric data.
       if (isIntlDurationRun(t)) return true;
-      if (/^[A-Z][a-z]{2}\s+\d{1,2}$/.test(t)) return true;
       let rest = t;
       for (const f of [...frozen].sort((a, b) => b.length - a.length)) rest = rest.split(f).join(' ');
       return !/[a-zA-Z]{2,}/.test(rest);
