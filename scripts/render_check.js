@@ -833,17 +833,17 @@ const INTERACTION_ROWS = [
 
 const VISUAL_VIEWPORTS = ['390x844', '768x1024', '900x1000', '1440x1000'];
 const DASHBOARD_VISUAL_SURFACES = [
-  { id: 'dashboard-overview', root: '#tab-overview', reach: 'dashboard:overview' },
-  { id: 'dashboard-models', root: '#tab-models', reach: 'dashboard:models' },
-  { id: 'dashboard-clients', root: '#tab-clients', reach: 'dashboard:clients' },
-  { id: 'dashboard-reliability', root: '#tab-reliability', reach: 'dashboard:reliability' },
-  { id: 'dashboard-capacity', root: '#tab-capacity', reach: 'dashboard:capacity' },
+  { id: 'dashboard-overview', root: '#tab-overview', reach: 'dashboard:overview', layoutRoot: '#tab-overview', layoutBoundary: '.main' },
+  { id: 'dashboard-models', root: '#tab-models', reach: 'dashboard:models', layoutRoot: '#tab-models', layoutBoundary: '.main' },
+  { id: 'dashboard-clients', root: '#tab-clients', reach: 'dashboard:clients', layoutRoot: '#tab-clients', layoutBoundary: '.main' },
+  { id: 'dashboard-reliability', root: '#tab-reliability', reach: 'dashboard:reliability', layoutRoot: '#tab-reliability', layoutBoundary: '.main' },
+  { id: 'dashboard-capacity', root: '#tab-capacity', reach: 'dashboard:capacity', layoutRoot: '#tab-capacity', layoutBoundary: '.main' },
 ];
 const SETTINGS_VISUAL_SURFACES = [
-  { id: 'settings-access', root: '#nk-key', reach: 'settings:access' },
-  { id: 'settings-server', root: '#sv-base', reach: 'settings:server' },
-  { id: 'settings-users', root: '#u-add', reach: 'settings:users' },
-  { id: 'settings-account', root: '#a-cur', reach: 'settings:account' },
+  { id: 'settings-access', root: '#nk-key', reach: 'settings:access', layoutRoot: '#setbody', layoutBoundary: '.main' },
+  { id: 'settings-server', root: '#sv-base', reach: 'settings:server', layoutRoot: '#setbody', layoutBoundary: '.main' },
+  { id: 'settings-users', root: '#u-add', reach: 'settings:users', layoutRoot: '#setbody', layoutBoundary: '.main' },
+  { id: 'settings-account', root: '#a-cur', reach: 'settings:account', layoutRoot: '#setbody', layoutBoundary: '.main' },
 ];
 const VISUAL_SURFACE_FAMILIES = {
   'dashboard-tabs': DASHBOARD_VISUAL_SURFACES,
@@ -852,16 +852,16 @@ const VISUAL_SURFACE_FAMILIES = {
 const VISUAL_SURFACES = new Map([
   ...DASHBOARD_VISUAL_SURFACES,
   ...SETTINGS_VISUAL_SURFACES,
-  { id: 'settings-load-error', root: '#setbody .empty', reach: 'settings:load-error' },
-  { id: 'setup-step1', root: '#step1', reach: 'setup:step1' },
-  { id: 'setup-step2', root: '#step2', reach: 'setup:step2' },
-  { id: 'setup-step3', root: '#step3', reach: 'setup:review-after-successful-key' },
-  { id: 'setup-step4', root: '#step4', reach: 'setup:completion' },
-  { id: 'setup-client-validation-error', root: '#err', reach: 'setup:client-validation-error' },
-  { id: 'setup-key-validation-api-error', root: '#err', reach: 'setup:key-validation-api-error' },
-  { id: 'setup-submit-api-error', root: '#err', reach: 'setup:submit-api-error' },
-  { id: 'login-healthy', root: 'form.login-card', reach: 'login:healthy' },
-  { id: 'login-invalid-credentials', root: '#login-error', reach: 'login:invalid-credentials' },
+  { id: 'settings-load-error', root: '#setbody .empty', reach: 'settings:load-error', layoutRoot: '#setbody', layoutBoundary: '.main' },
+  { id: 'setup-step1', root: '#step1', reach: 'setup:step1', layoutRoot: '#step1', layoutBoundary: 'main' },
+  { id: 'setup-step2', root: '#step2', reach: 'setup:step2', layoutRoot: '#step2', layoutBoundary: 'main' },
+  { id: 'setup-step3', root: '#step3', reach: 'setup:review-after-successful-key', layoutRoot: '#step3', layoutBoundary: 'main' },
+  { id: 'setup-step4', root: '#step4', reach: 'setup:completion', layoutRoot: '#step4', layoutBoundary: 'main' },
+  { id: 'setup-client-validation-error', root: '#err', reach: 'setup:client-validation-error', layoutRoot: '#step1', layoutBoundary: 'main' },
+  { id: 'setup-key-validation-api-error', root: '#err', reach: 'setup:key-validation-api-error', layoutRoot: '#step2', layoutBoundary: 'main' },
+  { id: 'setup-submit-api-error', root: '#err', reach: 'setup:submit-api-error', layoutRoot: '#step3', layoutBoundary: 'main' },
+  { id: 'login-healthy', root: 'form.login-card', reach: 'login:healthy', layoutRoot: 'main', layoutBoundary: 'main' },
+  { id: 'login-invalid-credentials', root: '#login-error', reach: 'login:invalid-credentials', layoutRoot: 'main', layoutBoundary: 'main' },
 ].map(surface => [surface.id, surface]));
 
 function visualIdentity(item) {
@@ -901,6 +901,8 @@ function resolveVisualExpectations(rows = INTERACTION_ROWS) {
                 viewport,
                 root: surface.root,
                 reach: declaration.reach || surface.reach,
+                layoutRoot: surface.layoutRoot,
+                layoutBoundary: surface.layoutBoundary,
               };
               item.identity = visualIdentity(item);
               item.path = visualArtifactPath(item);
@@ -3982,7 +3984,7 @@ const SETTINGS_PRESTATE_PANEL = new Map([
   ['error-nim-key-validation', 'access'],
 ]);
 
-async function runMatrixContext({ browser, row, role, configuredProxy, setupProxy }) {
+async function runMatrixContext({ browser, row, role, configuredProxy, setupProxy, visualCapture = null }) {
   const origin = row.fixtures.page === 'setup' ? setupProxy.origin : configuredProxy.origin;
   const pagePath = row.fixtures.page === 'dashboard'
     ? '/'
@@ -4446,6 +4448,19 @@ async function runMatrixContext({ browser, row, role, configuredProxy, setupProx
         });
       }
     }
+    if (visualCapture) {
+      await visualCapture({
+        browser,
+        sessionId,
+        row,
+        role,
+        plan,
+        run,
+        requests,
+        assets,
+        evaluate,
+      });
+    }
     run.pageErrors.push(...await evaluateRaw(
       browser,
       sessionId,
@@ -4573,12 +4588,192 @@ function prepareVisualArtifactDir() {
   return resolved;
 }
 
+async function captureCurrentVisualItems({ items, artifactDir, drafts }, context) {
+  for (const item of items) {
+    const [width, height] = item.viewport.split('x').map(Number);
+    const captureErrors = [];
+    let artifactWritten = false;
+    let absolutePath = path.resolve(artifactDir, item.path);
+    let reached = false;
+    let rootVisible = false;
+    let layoutProblemsForItem = [];
+    let layoutMeasurements = null;
+    try {
+      if (path.relative(artifactDir, absolutePath).startsWith('..')) {
+        throw new Error(`visual artifact path escapes its directory: ${item.path}`);
+      }
+      await context.browser.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: 1,
+        mobile: false,
+      }, context.sessionId);
+      await context.evaluate(`
+        document.querySelector(${JSON.stringify(item.layoutRoot)}).scrollIntoView({ block: 'start' });
+        window.scrollTo(0, 0);
+      `);
+      await sleep(75);
+      const state = await evaluateRaw(context.browser, context.sessionId, `(() => {
+        const visible = node => {
+          if (!node || node.closest('[hidden]')) return false;
+          const style = getComputedStyle(node);
+          const rect = node.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden'
+            && rect.width > 0 && rect.height > 0;
+        };
+        const root = document.querySelector(${JSON.stringify(item.root)});
+        const owner = document.querySelector(${JSON.stringify(item.layoutRoot)});
+        return { rootVisible: visible(root), ownerVisible: visible(owner) };
+      })()`);
+      rootVisible = state.rootVisible;
+      reached = state.rootVisible && state.ownerVisible;
+      if (!reached) continue;
+      const geometry = await evaluateRaw(context.browser, context.sessionId, `(() => {
+        ${LAYOUT_CHECKER}
+        const root = document.querySelector(${JSON.stringify(item.layoutRoot)});
+        const boundary = document.querySelector(${JSON.stringify(item.layoutBoundary)});
+        const measure = node => node ? {
+          scrollWidth: node.scrollWidth,
+          scrollHeight: node.scrollHeight,
+          clientWidth: node.clientWidth,
+          clientHeight: node.clientHeight,
+        } : null;
+        return {
+          problems: [
+            ...layoutProblems(${JSON.stringify(item.layoutRoot)}, ${JSON.stringify(item.layoutBoundary)}, ${JSON.stringify(item.identity)}),
+            ...primaryAddRowProblems(${JSON.stringify(item.layoutRoot)}, ${JSON.stringify(item.identity)}),
+          ],
+          root: measure(root),
+          boundary: measure(boundary),
+        };
+      })()`);
+      layoutProblemsForItem = geometry.problems;
+      layoutMeasurements = { root: geometry.root, boundary: geometry.boundary };
+      if (fs.existsSync(absolutePath)) {
+        captureErrors.push(`artifact path already exists: ${item.path}`);
+      } else {
+        const screenshot = await context.browser.send(
+          'Page.captureScreenshot',
+          { format: 'png' },
+          context.sessionId,
+        );
+        const bytes = Buffer.from(screenshot.data, 'base64');
+        if (!bytes.length) {
+          captureErrors.push(`artifact was empty: ${item.path}`);
+        } else {
+          fs.writeFileSync(absolutePath, bytes, { flag: 'wx' });
+          artifactWritten = fs.statSync(absolutePath).size > 0;
+          if (!artifactWritten) captureErrors.push(`artifact was empty after write: ${item.path}`);
+        }
+      }
+    } catch (error) {
+      captureErrors.push(error.message);
+    } finally {
+      try {
+        await context.browser.send('Emulation.clearDeviceMetricsOverride', {}, context.sessionId);
+      } catch (error) {
+        captureErrors.push(error.message);
+      }
+    }
+    if (!reached) continue;
+    drafts.push({
+      ...item,
+      absolutePath,
+      artifactWritten,
+      reached,
+      rootVisible,
+      layoutProblems: layoutProblemsForItem,
+      layoutMeasurements,
+      captureErrors,
+      run: context.run,
+      fixturesConsumed: context.plan.consumed,
+      requests: context.requests,
+      assets: context.assets,
+    });
+  }
+}
+
+function visualObservationFromDraft(draft) {
+  return {
+    ...draft,
+    fixturesConsumed: [...draft.fixturesConsumed],
+    requests: [...draft.requests],
+    requestedAssets: [...draft.assets],
+    pageErrors: [...draft.run.pageErrors, ...draft.captureErrors],
+    consoleErrors: [...draft.run.consoleErrors],
+    promiseRejections: [...draft.run.promiseRejections],
+    failedAssets: [...draft.run.failedAssets],
+    unexpectedRequests: [...draft.run.unexpectedRequests],
+    unconsumedFixtures: [...draft.run.unconsumedFixtures],
+    run: undefined,
+    captureErrors: undefined,
+    assets: undefined,
+  };
+}
+
+function visualIntegrityProblems(observations) {
+  const problems = [];
+  for (const observation of observations) {
+    for (const field of ['failedAssets', 'unexpectedRequests', 'unconsumedFixtures']) {
+      for (const detail of observation[field] || []) {
+        problems.push(`visual-integrity:${observation.identity}:${field}:${canonicalJson(detail)}`);
+      }
+    }
+  }
+  return problems;
+}
+
 async function runVisualMatrix({ browser, configuredProxy, tmpdir, artifactDir }) {
-  void browser;
-  void configuredProxy;
-  void tmpdir;
-  void artifactDir;
-  return [];
+  const startedAt = Date.now();
+  const expected = resolveVisualExpectations().items;
+  const drafts = [];
+  const setupDir = path.join(tmpdir, 'matrix-setup');
+  fs.mkdirSync(setupDir);
+  const setupProxy = await startProxy(setupDir, true);
+  let matrixError = null;
+  try {
+    for (const row of INTERACTION_ROWS) {
+      for (const declaration of row.visual || []) {
+        for (const role of declaration.roles) {
+          const items = expected.filter(item => item.rowId === row.id
+            && item.caseId === declaration.case
+            && item.locale === 'en-US'
+            && item.role === role);
+          if (!items.length) continue;
+          await runMatrixContext({
+            browser,
+            row,
+            role,
+            configuredProxy,
+            setupProxy,
+            visualCapture: async context => {
+              await captureCurrentVisualItems({ items, artifactDir, drafts }, context);
+            },
+          });
+        }
+      }
+    }
+  } catch (error) {
+    matrixError = error;
+  } finally {
+    if (!await stopChild(setupProxy.proc) && !matrixError) {
+      matrixError = new Error('visual setup proxy did not exit');
+    }
+  }
+  const observations = drafts.map(visualObservationFromDraft);
+  const coverageProblems = visualCoverageProblems(observations);
+  const integrityProblems = visualIntegrityProblems(observations);
+  const report = path.join(artifactDir, 'visual-matrix.json');
+  fs.writeFileSync(report, JSON.stringify({
+    expectedCount: expected.length,
+    observedCount: observations.length,
+    observations,
+    coverageProblems,
+    integrityProblems,
+    elapsedMs: Date.now() - startedAt,
+  }, null, 2) + '\n');
+  if (matrixError) throw matrixError;
+  return { observations, coverageProblems, integrityProblems, report };
 }
 
 const SEMANTIC_CHECKER = `
@@ -4767,16 +4962,16 @@ async function main() {
     await browser.send('Target.closeTarget', { targetId });
     const artifactDir = prepareVisualArtifactDir();
     const startedAt = Date.now();
-    const observations = await runVisualMatrix({
+    const matrix = await runVisualMatrix({
       browser,
       configuredProxy: proxy,
       tmpdir,
       artifactDir,
     });
-    const problems = visualCoverageProblems(observations);
-    console.log(`[visual-matrix] artifact-dir=${artifactDir} observed=${observations.length} expected=${resolveVisualExpectations().items.length} elapsed-ms=${Date.now() - startedAt}`);
-    if (problems.length) {
-      for (const problem of problems) console.error(`[visual-matrix] ${problem}`);
+    console.log(`[visual-matrix] artifact-dir=${artifactDir} report=${matrix.report} observed=${matrix.observations.length} expected=${resolveVisualExpectations().items.length} elapsed-ms=${Date.now() - startedAt}`);
+    if (matrix.coverageProblems.length || matrix.integrityProblems.length) {
+      const first = matrix.coverageProblems[0] || matrix.integrityProblems[0];
+      console.error(`[visual-matrix] ${first}`);
       throw reportedFailure();
     }
     return;
