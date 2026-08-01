@@ -311,9 +311,12 @@ def _observed_evidence(fixtures):
             non_empty_events = [event for event in events if not event[4]]
             if any(event[1] and event[3] is None and not event[2] for event in non_empty_events):
                 found["malformed_json_event"].add(filename)
-            if non_empty_events:
-                final = non_empty_events[-1][3]
-                if final is not None and pairs_get(final, "usage") and not pairs_get(final, "choices"):
+            json_events = [event[3] for event in non_empty_events if not event[2] and event[3] is not None]
+            if json_events:
+                final = json_events[-1]
+                usage = pairs_get(final, "usage")
+                choices = pairs_get(final, "choices")
+                if usage and usage[0] != "null" and choices == [("array", ())]:
                     found["usage_only_final_sse_event"].add(filename)
         saw_usage = False
         terminal_reasons = {}
@@ -559,7 +562,8 @@ def _validate_destination_fd(descriptor, allow_stale_evidence=False):
         try:
             file_descriptor = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=descriptor)
             metadata = os.fstat(file_descriptor)
-            if not stat.S_ISREG(metadata.st_mode):
+            if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid()
+                    or stat.S_IMODE(metadata.st_mode) not in {0o600, 0o644}):
                 raise SanitizeError("fixture-set-invalid")
             content_parts = []
             while True:
@@ -576,7 +580,8 @@ def _validate_destination_fd(descriptor, allow_stale_evidence=False):
     try:
         manifest_descriptor = os.open("manifest.json", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=descriptor)
         manifest_metadata = os.fstat(manifest_descriptor)
-        if not stat.S_ISREG(manifest_metadata.st_mode):
+        if (not stat.S_ISREG(manifest_metadata.st_mode) or manifest_metadata.st_uid != os.getuid()
+                or stat.S_IMODE(manifest_metadata.st_mode) not in {0o600, 0o644}):
             raise SanitizeError("manifest-invalid")
         manifest_content = b"".join(iter(lambda: os.read(manifest_descriptor, 64 * 1024), b""))
         os.close(manifest_descriptor)
@@ -599,6 +604,7 @@ def _validate_destination_fd(descriptor, allow_stale_evidence=False):
     expected_content = (json.dumps(manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
     if manifest_content != expected_content:
         raise SanitizeError("manifest-stale")
+    return fixtures, contents
 
 
 def validate_destination(destination):
@@ -608,6 +614,38 @@ def validate_destination(destination):
             raise SanitizeError("fixture-set-invalid")
         _validate_destination_fd(descriptor)
     finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        os.close(parent)
+
+
+def refresh_manifest(destination):
+    parent, descriptor = _open_destination(destination)
+    temporary_identity = None
+    try:
+        if descriptor is None:
+            raise SanitizeError("fixture-set-invalid")
+        fixtures, contents = _validate_destination_fd(descriptor, allow_stale_evidence=True)
+        manifest = manifest_for(fixtures, contents)
+        manifest_content = (json.dumps(
+            manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        ) + "\n").encode("ascii")
+        temporary_name = ".manifest.json.tmp"
+        try:
+            os.stat(temporary_name, dir_fd=descriptor, follow_symlinks=False)
+            raise SanitizeError("fixture-write-failed")
+        except FileNotFoundError:
+            pass
+        temporary_identity = _write_private_at(descriptor, temporary_name, manifest_content)
+        os.replace(temporary_name, "manifest.json", src_dir_fd=descriptor, dst_dir_fd=descriptor)
+        os.fsync(descriptor)
+        if not _public_destination_matches(destination, parent, descriptor):
+            raise SanitizeError("fixture-boundary")
+    except (OSError, SanitizeError) as error:
+        raise SanitizeError("fixture-write-failed") from error
+    finally:
+        if temporary_identity is not None:
+            _unlink_private_if_matches_at(descriptor, temporary_name, temporary_identity)
         if descriptor is not None:
             os.close(descriptor)
         os.close(parent)
@@ -639,16 +677,31 @@ def _create_staging_at(parent_descriptor):
     raise SanitizeError("fixture-write-failed")
 
 
+def _unlink_private_if_matches_at(directory_descriptor, name, identity):
+    try:
+        metadata = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    if (metadata.st_dev, metadata.st_ino) == identity:
+        os.unlink(name, dir_fd=directory_descriptor)
+
+
 def _write_private_at(directory_descriptor, name, content):
     descriptor = -1
+    identity = None
     try:
         descriptor = os.open(
             name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
             dir_fd=directory_descriptor,
         )
+        metadata = os.fstat(descriptor)
+        identity = (metadata.st_dev, metadata.st_ino)
         _write_all(descriptor, content)
         os.fsync(descriptor)
+        return identity
     except OSError as error:
+        if identity is not None:
+            _unlink_private_if_matches_at(directory_descriptor, name, identity)
         raise SanitizeError("fixture-write-failed") from error
     finally:
         if descriptor != -1:
@@ -1102,6 +1155,170 @@ def operational_cases(sentinel):
         if not stale_check_rejected or not refresh_succeeded:
             checks.append("sanitize-stale-destination-refresh")
 
+        # A fixture-only evidence refresh preserves the four validated fixture
+        # bytes, makes the stale destination strict-checkable, and rejects any
+        # stale manifest content other than the evidence table.
+        write_output(input_dir, destination)
+        stale_manifest = json.loads(manifest_path.read_text("ascii"))
+        stale_manifest["evidence"] = []
+        manifest_path.write_text(
+            json.dumps(stale_manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="ascii",
+        )
+        fixture_hashes_before = {
+            filename: hashlib.sha256((destination / filename).read_bytes()).hexdigest()
+            for filename in sorted(case + ".json" for case in CASES)
+        }
+        try:
+            refresh_result = main(["--refresh-manifest", str(destination)])
+        except SystemExit as error:
+            refresh_result = error.code
+        fixture_hashes_after = {
+            filename: hashlib.sha256((destination / filename).read_bytes()).hexdigest()
+            for filename in sorted(case + ".json" for case in CASES)
+        }
+        if (refresh_result != 0 or main(["--check", str(destination)]) != 0
+                or fixture_hashes_after != fixture_hashes_before):
+            checks.append("sanitize-manifest-refresh")
+
+        drifted_manifest = json.loads(manifest_path.read_text("ascii"))
+        drifted_manifest["fixtures"][0]["case"] = "drifted"
+        manifest_path.write_text(
+            json.dumps(drifted_manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="ascii",
+        )
+        drifted_before = manifest_path.read_bytes()
+        try:
+            drifted_result = main(["--refresh-manifest", str(destination)])
+        except SystemExit as error:
+            drifted_result = error.code
+        if drifted_result == 0 or manifest_path.read_bytes() != drifted_before:
+            checks.append("sanitize-manifest-refresh-non-evidence")
+
+        # Private leaves from a failed write or refresh are removed only while
+        # they retain the inode this invocation created.
+        cleanup_destination = root / "destination-refresh-cleanup"
+        write_output(input_dir, cleanup_destination)
+        cleanup_parent, cleanup_descriptor = _open_destination(cleanup_destination)
+        partial_name, partial_swap_name = ".partial.tmp", ".partial-swap.tmp"
+        original_fsync = os.fsync
+        def fail_fsync(_descriptor):
+            raise OSError("forced private write failure")
+        os.fsync = fail_fsync
+        try:
+            try:
+                _write_private_at(cleanup_descriptor, partial_name, b"partial")
+            except SanitizeError:
+                partial_rejected = True
+            else:
+                partial_rejected = False
+        finally:
+            os.fsync = original_fsync
+        def swap_then_fail_fsync(_descriptor):
+            os.unlink(partial_swap_name, dir_fd=cleanup_descriptor)
+            attacker_descriptor = os.open(
+                partial_swap_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600, dir_fd=cleanup_descriptor,
+            )
+            try:
+                os.write(attacker_descriptor, b"replacement")
+            finally:
+                os.close(attacker_descriptor)
+            raise OSError("forced swapped private write failure")
+        os.fsync = swap_then_fail_fsync
+        try:
+            try:
+                _write_private_at(cleanup_descriptor, partial_swap_name, b"owned")
+            except SanitizeError:
+                partial_swap_rejected = True
+            else:
+                partial_swap_rejected = False
+        finally:
+            os.fsync = original_fsync
+            os.close(cleanup_descriptor)
+            os.close(cleanup_parent)
+
+        partial_owned_remaining = (cleanup_destination / partial_name).exists()
+        partial_swap_path = cleanup_destination / partial_swap_name
+        partial_swap_survives = partial_swap_path.exists() and partial_swap_path.read_bytes() == b"replacement"
+        cleanup_parent, cleanup_descriptor = _open_destination(cleanup_destination)
+        try:
+            for name in (partial_name, partial_swap_name):
+                try:
+                    os.unlink(name, dir_fd=cleanup_descriptor)
+                except FileNotFoundError:
+                    pass
+        finally:
+            os.close(cleanup_descriptor)
+            os.close(cleanup_parent)
+
+        refresh_temp = ".manifest.json.tmp"
+        original_replace = os.replace
+        def fail_replace(source, target, **kwargs):
+            if source == refresh_temp:
+                raise OSError("forced refresh replace failure")
+            return original_replace(source, target, **kwargs)
+        os.replace = fail_replace
+        try:
+            refresh_failure_result = main(["--refresh-manifest", str(cleanup_destination)])
+        finally:
+            os.replace = original_replace
+        owned_refresh_cleaned = not (cleanup_destination / refresh_temp).exists()
+        def swap_then_fail_replace(source, target, **kwargs):
+            if source == refresh_temp:
+                os.unlink(source, dir_fd=kwargs["src_dir_fd"])
+                attacker_descriptor = os.open(
+                    source, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600, dir_fd=kwargs["src_dir_fd"],
+                )
+                try:
+                    os.write(attacker_descriptor, b"replacement")
+                finally:
+                    os.close(attacker_descriptor)
+                raise OSError("forced swapped refresh replace failure")
+            return original_replace(source, target, **kwargs)
+        os.replace = swap_then_fail_replace
+        try:
+            refresh_swap_result = main(["--refresh-manifest", str(cleanup_destination)])
+        finally:
+            os.replace = original_replace
+        replacement_path = cleanup_destination / refresh_temp
+        replacement_survives = replacement_path.exists() and replacement_path.read_bytes() == b"replacement"
+        cleanup_parent, cleanup_descriptor = _open_destination(cleanup_destination)
+        try:
+            for name in (refresh_temp,):
+                try:
+                    os.unlink(name, dir_fd=cleanup_descriptor)
+                except FileNotFoundError:
+                    pass
+        finally:
+            os.close(cleanup_descriptor)
+            os.close(cleanup_parent)
+        if (not partial_rejected or partial_owned_remaining
+                or not partial_swap_rejected or not partial_swap_survives
+                or refresh_failure_result == 0 or not owned_refresh_cleaned
+                or refresh_swap_result == 0 or not replacement_survives):
+            checks.append("sanitize-private-temp-cleanup")
+
+        # Refresh refuses destination file mode drift and leaves its manifest
+        # inode untouched when validation fails.
+        mode_destination = root / "destination-refresh-mode"
+        write_output(input_dir, mode_destination)
+        mode_manifest = mode_destination / "manifest.json"
+        fixture_path = mode_destination / "buffered-basic.json"
+        os.chmod(fixture_path, 0o666)
+        fixture_manifest_before = os.stat(mode_manifest).st_ino
+        fixture_mode_result = main(["--refresh-manifest", str(mode_destination)])
+        fixture_rejected = fixture_mode_result != 0 and os.stat(mode_manifest).st_ino == fixture_manifest_before
+        os.chmod(fixture_path, 0o600)
+        os.chmod(mode_manifest, 0o666)
+        manifest_before = os.stat(mode_manifest).st_ino
+        manifest_mode_result = main(["--refresh-manifest", str(mode_destination)])
+        manifest_rejected = manifest_mode_result != 0 and os.stat(mode_manifest).st_ino == manifest_before
+        os.chmod(mode_manifest, 0o600)
+        if not fixture_rejected or not manifest_rejected:
+            checks.append("sanitize-refresh-destination-mode")
+
         # The destination must be a real directory, both for update and check.
         input_dir = root / "raw-destination"
         operational_raw_set(input_dir)
@@ -1197,6 +1414,16 @@ def operational_cases(sentinel):
         )
         if evidence_status(evidence_rows({streamed: usage_final}), "missing_usage") != "unavailable":
             checks.append("sanitize-evidence-missing-usage")
+
+        usage_only_final_sse_event = operational_fixture(
+            "streamed-basic",
+            'data: {"choices":[{"index":0,"finish_reason":"stop"}],"usage":null}\n\ndata: {"choices":[],"usage":{"prompt_tokens":1}}\n\ndata: [DONE]\n\n',
+        )
+        if evidence_status(
+            evidence_rows({streamed: usage_only_final_sse_event}),
+            "usage_only_final_sse_event",
+        ) != "captured":
+            checks.append("sanitize-evidence-usage-only-final-sse")
 
         distinct = operational_fixture(
             "streamed-basic", 'data: {"choices":[{"index":0,"finish_reason":"stop"}]}\n\ndata: {"choices":[{"index":1,"finish_reason":"length"}]}\n\n'
@@ -1446,10 +1673,11 @@ def main(argv=None):
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--input-dir", type=Path, help="directory holding raw NIM envelopes")
     mode.add_argument("--check", type=Path, help="validate an existing fixture directory")
+    mode.add_argument("--refresh-manifest", type=Path, help="refresh evidence for validated fixtures")
     parser.add_argument("--output-dir", type=Path, help="destination for sanitized fixtures")
     args = parser.parse_args(argv)
     if args.selftest:
-        if args.input_dir or args.check or args.output_dir:
+        if args.input_dir or args.check or args.refresh_manifest or args.output_dir:
             parser.error("--selftest cannot be combined with fixture modes")
         return selftest()
     if args.check:
@@ -1459,6 +1687,15 @@ def main(argv=None):
             validate_destination(args.check)
         except SanitizeError as error:
             print(f"sanitize check failed: {error}")
+            return 1
+        return 0
+    if args.refresh_manifest:
+        if args.output_dir:
+            parser.error("--refresh-manifest cannot be combined with --output-dir")
+        try:
+            refresh_manifest(args.refresh_manifest)
+        except SanitizeError as error:
+            print(f"sanitize refresh failed: {error}")
             return 1
         return 0
     if not args.input_dir or not args.output_dir:
