@@ -54,6 +54,19 @@ that proof.
   revision at point budgets 2 and 1000. `cargo test --test e2e
   dashboard_history_reports_completeness -- --exact` proves raw ASCII field
   order plus partial and unavailable API states through the real binary.
+- **Canonical history retention:** `cargo test history::store::tests --lib`
+  proves cutoff selection, the owning boot and full-sample baseline, recovery
+  deferral, every pre/post-rename failure point, replacement-inode append, and
+  writer serialization. `cargo test --test e2e
+  history_retention_survives_restart -- --exact` is the fast real-binary
+  compaction/restart equivalence proof. `cargo test --test e2e
+  release_restart_and_idle_history -- --ignored --exact` seeds more than two
+  30-day horizons and classifies three exact idle checkpoints plus three exact
+  no-traffic restart epochs. Its byte allowances are established from the
+  first member of each class before later cycles; the fixed fixture measured a
+  6,469-byte base, 195-byte checkpoint allowance, 391-byte restart allowance,
+  and 8,227-byte final bound/file. Those values validate the proof fixture,
+  not arbitrary metric cardinality or workload payload size.
 - **Handlers or wire types:** `UPDATE_OPENAPI=1 cargo test --test openapi`,
   then verify that `openapi.json` has only the deliberate diff.
 - **HTTP trust boundaries:** `cargo test routes::tests --lib` proves the
@@ -276,6 +289,24 @@ cargo run --release &     # boots into first-run setup (no app-level env vars)
 # keys, set the API mode to open (or mint a client key for --proxy-keys)
 python3 scripts/loadtest.py --clients 100 --requests 3
 ```
+
+For a release run, provide all three measurement options or none:
+
+```sh
+python3 scripts/loadtest.py --clients 100 --requests 3 \
+  --history-path /absolute/data/history-v1.jsonl \
+  --proxy-pid "$PROXY_PID" \
+  --report-json /absolute/run/load-report.json
+```
+
+The atomic JSON report records start/end history bytes, sampled peak RSS from
+Linux `/proc/<pid>/status`, completed/client/upstream counts, worker
+exhaustions, and rate violations. It is published before client- or
+rate-failure exit evaluation, but invalid history/RSS measurement produces no
+report. `python3 scripts/loadtest.py --selftest` is service-free and fails
+closed across incomplete CLI options, relative/missing/non-file/symlink/FIFO
+history paths, dead/malformed/changing RSS, sampler lifecycle/thread failure,
+and report write/fsync/replace/directory-sync crash points.
 
 This layer earned its keep on day one: it caught ~2% boundary-jitter
 violations that unit and e2e tests structurally cannot see, leading to

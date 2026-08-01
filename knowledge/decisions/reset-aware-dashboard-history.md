@@ -89,9 +89,11 @@ Choose option 5.
 - Page rendering stays frontend-owned, avoiding a matrix of page caches and
   invalidation rules. History and config revisions provide the only
   invalidation boundaries the browser needs.
-- Lowering retention changes visible bounds immediately and performs atomic
-  background compaction while preserving the hidden boundary baseline and
-  relevant boot marker
+- Lowering finite retention changes visible bounds immediately and schedules
+  atomic background compaction while preserving the hidden full-sample
+  boundary baseline and relevant boot marker. Replacement remains pending when
+  intersecting recovery evidence would otherwise be erased; unlimited
+  retention cancels stale finite work
   ([retention decision](history-retention-days-not-size.md)).
 - The old `/api/history` and `/dash/config.json` dashboard transports are
   removed. Prometheus `/metrics` remains for authenticated scrapers.
