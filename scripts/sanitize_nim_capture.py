@@ -339,7 +339,9 @@ def _observed_evidence(fixtures):
                     indexes = pairs_get(choice, "index")
                     choice_index = repr(indexes[0]) if indexes else "absent"
                     reasons = pairs_get(choice, "finish_reason")
-                    terminal_reasons.setdefault(choice_index, set()).update(reasons)
+                    terminal_reasons.setdefault(choice_index, set()).update(
+                        reason for reason in reasons if reason is not None
+                    )
                     for reason in reasons:
                         if reason in KNOWN_FINISH:
                             found[f"known_finish_reason:{reason}"].add(filename)
@@ -542,7 +544,7 @@ def _open_destination(destination, create=False):
         raise SanitizeError("fixture-boundary") from error
 
 
-def _validate_destination_fd(descriptor):
+def _validate_destination_fd(descriptor, allow_stale_evidence=False):
     try:
         names = set(os.listdir(descriptor))
     except OSError as error:
@@ -588,7 +590,11 @@ def _validate_destination_fd(descriptor):
             or manifest["sanitizer_version"] != 1
             or not isinstance(manifest.get("fixtures"), list) or not isinstance(manifest.get("evidence"), list)):
         raise SanitizeError("manifest-invalid")
-    if manifest != manifest_for(fixtures, contents):
+    expected_manifest = manifest_for(fixtures, contents)
+    comparable_manifest = dict(manifest)
+    if allow_stale_evidence:
+        comparable_manifest["evidence"] = expected_manifest["evidence"]
+    if comparable_manifest != expected_manifest:
         raise SanitizeError("manifest-stale")
     expected_content = (json.dumps(manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
     if manifest_content != expected_content:
@@ -690,7 +696,7 @@ def write_output(input_dir, destination):
     staging_name = None
     try:
         if existing is not None:
-            _validate_destination_fd(existing)
+            _validate_destination_fd(existing, allow_stale_evidence=True)
         staging_name, staging_descriptor = _create_staging_at(parent)
         for filename in sorted(contents):
             _write_private_at(staging_descriptor, filename, contents[filename])
