@@ -4,6 +4,10 @@ mod config;
 mod dispatch;
 mod governor;
 mod history;
+// RED checkpoint: Task 15's private interface is deliberately not wired into
+// the proxy until its behavior exists, so the production build has no caller.
+#[allow(dead_code)]
+mod observation;
 mod pool;
 mod presentation;
 mod proxy;

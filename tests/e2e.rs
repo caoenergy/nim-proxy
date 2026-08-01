@@ -2530,6 +2530,95 @@ async fn models_catalog_is_cached_and_auth_gated() {
 }
 
 #[tokio::test]
+async fn observation_preserves_upstream_bytes() {
+    // Mutation caught: the old side-band reader accepts an invalid reasoning
+    // value (3 > completion 2) and records it, instead of omitting it while
+    // preserving every upstream byte at the proxy boundary.
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+
+    for fixture in [
+        include_str!("fixtures/nim-observations/buffered-basic.json"),
+        include_str!("fixtures/nim-observations/buffered-tools.json"),
+        include_str!("fixtures/nim-observations/streamed-basic.json"),
+        include_str!("fixtures/nim-observations/streamed-tools.json"),
+    ] {
+        let evidence: serde_json::Value = serde_json::from_str(fixture).unwrap();
+        let body = evidence["body"].as_str().unwrap().to_owned();
+        let content_type = evidence["content_type"].as_str().unwrap().to_owned();
+        let stream = evidence["transport"] == "sse";
+        mock.state.push(Behavior::ExactResponse {
+            content_type: content_type.clone(),
+            body: body.clone(),
+        });
+        let response = client()
+            .post(proxy.url("/v1/chat/completions"))
+            .json(&chat_body(evidence["case"].as_str().unwrap(), stream))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status().as_u16(),
+            evidence["status"].as_u64().unwrap() as u16
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(CONTENT_TYPE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            content_type
+        );
+        // Streaming already has a fixed local connection frame; the fixture
+        // bytes must follow it unchanged. Buffered responses are pure relay.
+        let expected_proxy_bytes = if stream {
+            format!(": connected\n\n{body}")
+        } else {
+            body.clone()
+        };
+        assert_eq!(
+            response.bytes().await.unwrap().as_ref(),
+            expected_proxy_bytes.as_bytes(),
+            "observation must preserve the literal {} bytes in the established proxy frame",
+            evidence["case"].as_str().unwrap()
+        );
+    }
+
+    let invalid_reasoning = r#"{"choices":[{"index":0,"message":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"completion_tokens_details":{"reasoning_tokens":3}}}"#;
+    mock.state.push(Behavior::ExactResponse {
+        content_type: "application/json".to_owned(),
+        body: invalid_reasoning.to_owned(),
+    });
+
+    let response = client()
+        .post(proxy.url("/v1/chat/completions"))
+        .json(&chat_body("observation byte boundary", false))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200, "observation must not change status");
+    assert_eq!(
+        response.headers().get(CONTENT_TYPE).unwrap(),
+        "application/json",
+        "observation must not change content type"
+    );
+    assert_eq!(
+        response.bytes().await.unwrap().as_ref(),
+        invalid_reasoning.as_bytes(),
+        "observation must relay the exact upstream bytes"
+    );
+
+    assert!(
+        !metrics(&proxy)
+            .await
+            .lines()
+            .any(|line| line.starts_with("nimproxy_reasoning_tokens_total{")),
+        "invalid reasoning must be omitted instead of accepted by the old side-band reader"
+    );
+}
+
+#[tokio::test]
 async fn usage_injection_asks_for_usage_and_backs_off_on_rejection() {
     // Default: stream_options injected.
     let mock = start_mock().await;

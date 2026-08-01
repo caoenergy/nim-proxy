@@ -16,7 +16,7 @@ use futures_util::StreamExt;
 
 /// One scripted response for the next chat-completions request. The queue is
 /// consumed front-to-back; when empty, `Ok` is the default.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Behavior {
     /// Respond normally (stream or JSON per the request's `stream` flag).
     Ok,
@@ -45,6 +45,8 @@ pub enum Behavior {
     /// Buffered response with an unknown `finish_reason` — exercises the
     /// server-side clamp that collapses odd values to `other`.
     OddFinish,
+    /// A fixed upstream response for an exact proxy-boundary assertion.
+    ExactResponse { content_type: String, body: String },
 }
 
 pub struct Hit {
@@ -164,6 +166,11 @@ async fn mock_chat(
             "usage": {"prompt_tokens": 11, "completion_tokens": 2}
         }))
         .into_response(),
+        Behavior::ExactResponse { content_type, body } => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, content_type)
+            .body(Body::from(body))
+            .unwrap(),
         Behavior::Hang => {
             let stream = futures_util::stream::once(async {
                 Ok::<_, std::io::Error>(Bytes::from("data: {\"choices\":[]}\n\n"))
