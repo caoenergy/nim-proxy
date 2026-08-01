@@ -268,6 +268,7 @@ impl HistoryStore {
         self.checkpoint_inner(timestamp, capacity, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn compact(&mut self, cutoff: u64) -> io::Result<CompactionOutcome> {
         self.compact_inner(cutoff, None)
     }
@@ -319,6 +320,7 @@ impl HistoryStore {
         retained != self.replay.records
     }
 
+    #[cfg(test)]
     fn compact_inner(
         &mut self,
         cutoff: u64,
