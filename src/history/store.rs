@@ -22,6 +22,8 @@ pub struct HistoryStore {
     replay: Replay,
     last_timestamp: Option<u64>,
     poisoned: bool,
+    #[cfg(test)]
+    test_compaction_directory_sync_failure: bool,
 }
 
 #[derive(Debug, Default)]
@@ -113,6 +115,7 @@ pub enum WriteError {
 pub(crate) enum CompactionOutcome {
     Durable,
     Deferred,
+    Superseded,
     CommittedSyncPending(io::Error),
 }
 
@@ -170,6 +173,8 @@ impl HistoryStore {
                     replay,
                     last_timestamp,
                     poisoned: false,
+                    #[cfg(test)]
+                    test_compaction_directory_sync_failure: false,
                 })
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -189,6 +194,8 @@ impl HistoryStore {
                             },
                             last_timestamp,
                             poisoned: false,
+                            #[cfg(test)]
+                            test_compaction_directory_sync_failure: false,
                         })
                     }
                     Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
@@ -208,6 +215,8 @@ impl HistoryStore {
                             replay,
                             last_timestamp,
                             poisoned: false,
+                            #[cfg(test)]
+                            test_compaction_directory_sync_failure: false,
                         })
                     }
                     Err(error) => Err(error.into()),
@@ -263,10 +272,66 @@ impl HistoryStore {
         self.compact_inner(cutoff, None)
     }
 
+    pub(crate) fn compact_if_authorized<T>(
+        &mut self,
+        cutoff: u64,
+        authorize: impl FnOnce() -> Option<T>,
+    ) -> io::Result<CompactionOutcome> {
+        #[cfg(test)]
+        if std::mem::take(&mut self.test_compaction_directory_sync_failure) {
+            let mut failure = FailureSwitch {
+                point: FailurePoint::CompactionDirectorySync,
+                fired: None,
+            };
+            return self.compact_inner_if_authorized(cutoff, Some(&mut failure), authorize);
+        }
+        self.compact_inner_if_authorized(cutoff, None, authorize)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_test_compaction_directory_sync_failure(&mut self) {
+        self.test_compaction_directory_sync_failure = true;
+    }
+
+    pub(crate) fn compaction_needed(&self, cutoff: u64) -> bool {
+        if !self.replay.gaps.is_empty()
+            || self.replay.needs_separator
+            || self.replay.diagnostics.excluded_epochs != 0
+            || self.replay.diagnostics.excluded_records != 0
+        {
+            return true;
+        }
+        let (records, fresh_boot) = match self.replay.records.last() {
+            Some(Record::Boot(boot))
+                if boot.boot_id == self.boot_id && self.last_state.is_none() =>
+            {
+                (
+                    &self.replay.records[..self.replay.records.len() - 1],
+                    Some(boot.clone()),
+                )
+            }
+            Some(_) | None => (&self.replay.records[..], None),
+        };
+        let mut retained = retained_compaction_records(records, cutoff, &self.boot_id, false);
+        if let Some(boot) = fresh_boot {
+            retained.push(Record::Boot(boot));
+        }
+        retained != self.replay.records
+    }
+
     fn compact_inner(
         &mut self,
         cutoff: u64,
+        failure: Option<&mut FailureSwitch>,
+    ) -> io::Result<CompactionOutcome> {
+        self.compact_inner_if_authorized(cutoff, failure, || Some(()))
+    }
+
+    fn compact_inner_if_authorized<T>(
+        &mut self,
+        cutoff: u64,
         mut failure: Option<&mut FailureSwitch>,
+        authorize: impl FnOnce() -> Option<T>,
     ) -> io::Result<CompactionOutcome> {
         let replay = validate_canonical(&self.path).map_err(open_error_to_io)?;
         if replay.gaps.iter().any(|gap| gap.to > cutoff) || self.last_state.is_none() {
@@ -310,8 +375,14 @@ impl HistoryStore {
                 "compaction replacement does not exactly validate as retained canonical history",
             ));
         }
+        let Some(authorization) = authorize() else {
+            drop(output);
+            let _ = fs::remove_file(&temporary);
+            return Ok(CompactionOutcome::Superseded);
+        };
         fail(&mut failure, FailurePoint::CompactionRename)?;
         fs::rename(&temporary, &self.path)?;
+        drop(authorization);
 
         self.file = output;
         self.last_timestamp = replacement_replay.records.last().map(record_timestamp);
