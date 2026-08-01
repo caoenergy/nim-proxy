@@ -66,6 +66,13 @@ impl SseObserver {
     pub(crate) fn finish(self, _outcome: StreamOutcome) -> ResponseObservations {
         unavailable()
     }
+
+    #[cfg(test)]
+    fn retained_event_bytes(&self) -> usize {
+        // Deliberately fails the RED bound assertion. GREEN must derive this
+        // directly from the actual current-event storage.
+        usize::MAX
+    }
 }
 
 pub(crate) fn observe_buffered(_body: &[u8]) -> ResponseObservations {
@@ -269,6 +276,60 @@ mod tests {
     }
 
     #[test]
+    fn relationship_matrix_invalidates_only_dependent_usage_fields() {
+        // Mutation caught: accepting unchecked totals or discarding healthy
+        // siblings after one sum/parent relationship is invalid.
+        let actual = observe_buffered(b"{\"usage\":{\"prompt_tokens\":18446744073709551615,\"completion_tokens\":1,\"total_tokens\":18446744073709551615}}");
+        assert_eq!(actual.usage.prompt_tokens, Observation::Measured(u64::MAX));
+        assert_eq!(actual.usage.completion_tokens, Observation::Measured(1));
+        assert_eq!(actual.usage.total_tokens, Observation::Invalid);
+        assert_eq!(actual.usage.cached_tokens, Observation::Unavailable);
+        assert_eq!(actual.usage.reasoning_tokens, Observation::Unavailable);
+
+        let actual = observe_buffered(
+            b"{\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":2}}",
+        );
+        assert_eq!(actual.usage.prompt_tokens, Observation::Measured(1));
+        assert_eq!(actual.usage.completion_tokens, Observation::Measured(2));
+        assert_eq!(actual.usage.total_tokens, Observation::Invalid);
+
+        let actual = observe_buffered(
+            b"{\"usage\":{\"completion_tokens\":2,\"prompt_tokens_details\":{\"cached_tokens\":1}}}",
+        );
+        assert_eq!(actual.usage.prompt_tokens, Observation::Unavailable);
+        assert_eq!(actual.usage.completion_tokens, Observation::Measured(2));
+        assert_eq!(actual.usage.cached_tokens, Observation::Invalid);
+
+        let actual = observe_buffered(
+            b"{\"usage\":{\"prompt_tokens\":\"1\",\"completion_tokens\":2,\"prompt_tokens_details\":{\"cached_tokens\":1}}}",
+        );
+        assert_eq!(actual.usage.prompt_tokens, Observation::Invalid);
+        assert_eq!(actual.usage.completion_tokens, Observation::Measured(2));
+        assert_eq!(actual.usage.cached_tokens, Observation::Invalid);
+
+        let actual = observe_buffered(
+            b"{\"usage\":{\"prompt_tokens\":1,\"completion_tokens_details\":{\"reasoning_tokens\":1}}}",
+        );
+        assert_eq!(actual.usage.prompt_tokens, Observation::Measured(1));
+        assert_eq!(actual.usage.completion_tokens, Observation::Unavailable);
+        assert_eq!(actual.usage.reasoning_tokens, Observation::Invalid);
+
+        let actual = observe_buffered(
+            b"{\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":\"2\",\"completion_tokens_details\":{\"reasoning_tokens\":1}}}",
+        );
+        assert_eq!(actual.usage.prompt_tokens, Observation::Measured(1));
+        assert_eq!(actual.usage.completion_tokens, Observation::Invalid);
+        assert_eq!(actual.usage.reasoning_tokens, Observation::Invalid);
+
+        let mut observer = SseObserver::default();
+        observer.push(b"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"completion_tokens_details\":{\"reasoning_tokens\":1}}}\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":3}}\n\n");
+        let actual = observer.finish(StreamOutcome::Completed);
+        assert_eq!(actual.usage.prompt_tokens, Observation::Measured(1));
+        assert_eq!(actual.usage.completion_tokens, Observation::Invalid);
+        assert_eq!(actual.usage.reasoning_tokens, Observation::Invalid);
+    }
+
+    #[test]
     fn choice_and_tool_observations_reject_old_first_choice_and_max_index_rules() {
         // Mutation caught: first-choice-only finish extraction and max-index
         // tool counting lose valid choices, accept malformed shapes, and count
@@ -296,6 +357,27 @@ mod tests {
         let actual = observe_buffered(b"{\"choices\":{}}");
         assert_eq!(actual.tool_calls, Observation::Invalid);
 
+        let actual = observe_buffered(b"{\"choices\":[{\"index\":0,\"message\":{\"tool_calls\":[{},{}]}},{\"index\":1,\"message\":{\"tool_calls\":[{},{},{}]}}]}");
+        assert_eq!(actual.tool_calls, Observation::Measured(5));
+
+        let actual = observe_buffered(b"{\"choices\":[7]}");
+        assert_eq!(actual.tool_calls, Observation::Invalid);
+        assert!(actual.finish_reasons.is_empty());
+
+        for body in [
+            b"{\"choices\":[{\"message\":{}}]}".as_slice(),
+            b"{\"choices\":[{\"index\":-1,\"message\":{}}]}".as_slice(),
+            b"{\"choices\":[{\"index\":1.5,\"message\":{}}]}".as_slice(),
+            b"{\"choices\":[{\"index\":18446744073709551616,\"message\":{}}]}".as_slice(),
+        ] {
+            let actual = observe_buffered(body);
+            assert_eq!(actual.tool_calls, Observation::Invalid);
+            assert!(
+                actual.finish_reasons.is_empty(),
+                "unrepresentable choice index must not fabricate a finish observation"
+            );
+        }
+
         let mut observer = SseObserver::default();
         observer.push(b"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0},{\"index\":0}]}}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":1}]}}]}\n\n");
         assert_eq!(
@@ -311,6 +393,27 @@ mod tests {
             malformed.finish(StreamOutcome::Completed).tool_calls,
             Observation::Invalid
         );
+
+        for bytes in [
+            b"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[7]}}]}\n\n"
+                .as_slice(),
+            b"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{}]}}]}\n\n"
+                .as_slice(),
+            b"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":-1}]}}]}\n\n"
+                .as_slice(),
+            b"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":1.5}]}}]}\n\n"
+                .as_slice(),
+            b"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":18446744073709551616}]}}]}\n\n"
+                .as_slice(),
+        ] {
+            let mut observer = SseObserver::default();
+            observer.push(bytes);
+            assert_eq!(
+                observer.finish(StreamOutcome::Completed).tool_calls,
+                Observation::Invalid,
+                "malformed streamed tool-call presentation must be invalid"
+            );
+        }
     }
 
     #[test]
@@ -352,6 +455,113 @@ mod tests {
     }
 
     #[test]
+    fn completed_stream_estimate_counts_only_valid_nonterminal_choice_events() {
+        // Mutation caught: the old scanner counts every data line, estimates
+        // zero, or replaces invalid/measured completion with an estimate.
+        let mut zero = SseObserver::default();
+        zero.push(b"data: [DONE]\n\ndata: {\"choices\":[]}\n\n");
+        assert_eq!(
+            zero.finish(StreamOutcome::Completed)
+                .usage
+                .completion_tokens,
+            Observation::Unavailable
+        );
+
+        let mut measured = SseObserver::default();
+        measured.push(b"data: {\"choices\":[{\"index\":0,\"delta\":{}}]}\n\ndata: {\"choices\":[],\"usage\":{\"completion_tokens\":7}}\n\n");
+        assert_eq!(
+            measured
+                .finish(StreamOutcome::Completed)
+                .usage
+                .completion_tokens,
+            Observation::Measured(7)
+        );
+
+        let mut invalid = SseObserver::default();
+        invalid.push(b"data: {\"choices\":[{\"index\":0,\"delta\":{}}],\"usage\":{\"completion_tokens\":\"2\"}}\n\n");
+        assert_eq!(
+            invalid
+                .finish(StreamOutcome::Completed)
+                .usage
+                .completion_tokens,
+            Observation::Invalid
+        );
+
+        let mut conflicting = SseObserver::default();
+        conflicting.push(b"data: {\"choices\":[{\"index\":0,\"delta\":{}}],\"usage\":{\"completion_tokens\":2}}\n\ndata: {\"choices\":[],\"usage\":{\"completion_tokens\":3}}\n\n");
+        assert_eq!(
+            conflicting
+                .finish(StreamOutcome::Completed)
+                .usage
+                .completion_tokens,
+            Observation::Invalid
+        );
+
+        let mut usage_only = SseObserver::default();
+        usage_only.push(b"data: {\"choices\":[],\"usage\":{\"completion_tokens\":2}}\n\n");
+        assert_eq!(
+            usage_only
+                .finish(StreamOutcome::Completed)
+                .usage
+                .completion_tokens,
+            Observation::Measured(2),
+            "usage-only event supplies measured completion but does not estimate"
+        );
+
+        for bytes in [
+            b"data: {]\n\n".as_slice(),
+            b"data: \xff\n\n".as_slice(),
+            b"data: [DONE]\n\n".as_slice(),
+            b"data: {\"choices\":[]}\n\n".as_slice(),
+            b"data: {\"choices\":[{\"index\":0,\"finish_reason\":\"stop\"}]}\n\n".as_slice(),
+            b"data: {\"choices\":[{\"index\":0,\"finish_reason\":1}]}\n\n".as_slice(),
+        ] {
+            let mut observer = SseObserver::default();
+            observer.push(bytes);
+            assert_eq!(
+                observer
+                    .finish(StreamOutcome::Completed)
+                    .usage
+                    .completion_tokens,
+                Observation::Unavailable,
+                "non-countable literal SSE event must not estimate completion"
+            );
+        }
+
+        let mut counted = SseObserver::default();
+        counted.push(b"data: {\"choices\":[{\"index\":0,\"delta\":{}}]}\n\ndata: {\"choices\":[{\"index\":1,\"delta\":{}}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{}}]}\n\n");
+        assert_eq!(
+            counted
+                .finish(StreamOutcome::Completed)
+                .usage
+                .completion_tokens,
+            Observation::Estimated(3)
+        );
+    }
+
+    #[test]
+    fn completed_unterminated_final_event_has_truncated_observation_outcome() {
+        // Mutation caught: clean EOF publishes a partial final SSE event as
+        // measured or estimated instead of treating the observation as truncated.
+        let mut observer = SseObserver::default();
+        observer.push(b"data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2}}");
+        let actual = observer.finish(StreamOutcome::Completed);
+        assert_eq!(actual.usage.prompt_tokens, Observation::Unavailable);
+        assert_eq!(actual.usage.completion_tokens, Observation::Unavailable);
+        assert_eq!(actual.usage.total_tokens, Observation::Unavailable);
+        assert_eq!(actual.usage.cached_tokens, Observation::Unavailable);
+        assert_eq!(actual.usage.reasoning_tokens, Observation::Unavailable);
+        assert_eq!(actual.tool_calls, Observation::Unavailable);
+        assert_eq!(
+            actual.finish_reasons,
+            vec![FinishObservation {
+                choice_index: 0,
+                result: FinishResult::Unavailable,
+            }]
+        );
+    }
+
+    #[test]
     fn stream_observer_discards_numeric_partial_observations_on_disconnect_or_truncation() {
         // Mutation caught: end-of-loop accounting publishes partial measured or
         // estimated usage after a client disconnect or unterminated final event.
@@ -370,5 +580,50 @@ mod tests {
                 }]
             );
         }
+    }
+
+    #[test]
+    fn unobservable_events_are_bounded_noncountable_and_do_not_block_recovery() {
+        // Mutation caught: retaining an over-bound event or counting malformed
+        // bytes makes the observer exceed its memory bound or inflate estimates.
+        let mut observer = SseObserver::default();
+        let mut over_bound = b"data: ".to_vec();
+        over_bound.extend(std::iter::repeat_n(b'x', 1_048_577));
+        observer.push(&over_bound);
+        assert!(
+            observer.retained_event_bytes() <= 1_048_576,
+            "over-bound current SSE event must be discarded rather than retained"
+        );
+        observer.push(b"\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{}}]}\n\n");
+        assert_eq!(
+            observer
+                .finish(StreamOutcome::Completed)
+                .usage
+                .completion_tokens,
+            Observation::Estimated(1),
+            "discarded over-bound event must not count and later framed input must recover"
+        );
+
+        let mut malformed = SseObserver::default();
+        malformed.push(b"data: {]\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{}}]}\n\n");
+        assert_eq!(
+            malformed
+                .finish(StreamOutcome::Completed)
+                .usage
+                .completion_tokens,
+            Observation::Estimated(1),
+            "malformed JSON event must be unobservable and non-countable"
+        );
+
+        let mut invalid_utf8 = SseObserver::default();
+        invalid_utf8.push(b"data: \xff\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{}}]}\n\n");
+        assert_eq!(
+            invalid_utf8
+                .finish(StreamOutcome::Completed)
+                .usage
+                .completion_tokens,
+            Observation::Estimated(1),
+            "invalid UTF-8 event must be unobservable and non-countable"
+        );
     }
 }
