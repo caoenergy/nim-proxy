@@ -16,6 +16,7 @@ const TEMP_PREFIX: &str = "history-v1.jsonl.tmp-";
 #[derive(Debug)]
 pub struct HistoryStore {
     file: File,
+    path: PathBuf,
     boot_id: String,
     last_state: Option<Vec<StateEntry>>,
     replay: Replay,
@@ -108,6 +109,13 @@ pub enum WriteError {
     TimestampRegression,
 }
 
+#[derive(Debug)]
+pub(crate) enum CompactionOutcome {
+    Durable,
+    Deferred,
+    CommittedSyncPending(io::Error),
+}
+
 impl std::fmt::Display for WriteError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -156,6 +164,7 @@ impl HistoryStore {
                 let last_timestamp = replay.records.last().map(record_timestamp);
                 Ok(Self {
                     file,
+                    path: path.clone(),
                     boot_id,
                     last_state: None,
                     replay,
@@ -171,6 +180,7 @@ impl HistoryStore {
                         let last_timestamp = Some(record_timestamp(&boot));
                         Ok(Self {
                             file,
+                            path: path.clone(),
                             boot_id,
                             last_state: None,
                             replay: Replay {
@@ -192,6 +202,7 @@ impl HistoryStore {
                         let last_timestamp = replay.records.last().map(record_timestamp);
                         Ok(Self {
                             file,
+                            path: path.clone(),
                             boot_id,
                             last_state: None,
                             replay,
@@ -246,6 +257,82 @@ impl HistoryStore {
 
     pub fn checkpoint(&mut self, timestamp: u64, capacity: Capacity) -> Result<(), WriteError> {
         self.checkpoint_inner(timestamp, capacity, None)
+    }
+
+    pub(crate) fn compact(&mut self, cutoff: u64) -> io::Result<CompactionOutcome> {
+        self.compact_inner(cutoff, None)
+    }
+
+    fn compact_inner(
+        &mut self,
+        cutoff: u64,
+        mut failure: Option<&mut FailureSwitch>,
+    ) -> io::Result<CompactionOutcome> {
+        let replay = validate_canonical(&self.path).map_err(open_error_to_io)?;
+        if replay.gaps.iter().any(|gap| gap.to > cutoff) || self.last_state.is_none() {
+            return Ok(CompactionOutcome::Deferred);
+        }
+
+        let retained = retained_compaction_records(
+            &replay.records,
+            cutoff,
+            &self.boot_id,
+            self.last_state.is_some(),
+        );
+        let directory = self
+            .path
+            .parent()
+            .ok_or_else(|| io::Error::other("history path has no parent"))?
+            .to_path_buf();
+        let (temporary, mut output) =
+            create_temporary(&directory, &mut failure, FailurePoint::CompactionTempCreate)?;
+        for record in &retained {
+            write_record(
+                &mut output,
+                record,
+                failure.as_deref_mut(),
+                Some(FailurePoint::CompactionTempWrite),
+            )
+            .map_err(write_error_to_io)?;
+        }
+        output.flush()?;
+        fail(&mut failure, FailurePoint::CompactionTempSync)?;
+        output.sync_all()?;
+
+        let replacement_replay = validate_canonical(&temporary).map_err(open_error_to_io)?;
+        if replacement_replay.records != retained
+            || !replacement_replay.gaps.is_empty()
+            || replacement_replay.needs_separator
+            || replacement_replay.diagnostics.excluded_epochs != 0
+            || replacement_replay.diagnostics.excluded_records != 0
+        {
+            return Err(io::Error::other(
+                "compaction replacement does not exactly validate as retained canonical history",
+            ));
+        }
+        fail(&mut failure, FailurePoint::CompactionRename)?;
+        fs::rename(&temporary, &self.path)?;
+
+        self.file = output;
+        self.last_timestamp = replacement_replay.records.last().map(record_timestamp);
+        self.last_state = replacement_replay
+            .records
+            .iter()
+            .rev()
+            .find_map(|record| match record {
+                Record::Sample(sample) if sample.boot_id == self.boot_id => {
+                    Some(sample.state.clone())
+                }
+                Record::Boot(_) | Record::Sample(_) | Record::Checkpoint(_) => None,
+            });
+        self.replay = replacement_replay;
+
+        match fail(&mut failure, FailurePoint::CompactionDirectorySync)
+            .and_then(|()| sync_directory(&directory))
+        {
+            Ok(()) => Ok(CompactionOutcome::Durable),
+            Err(error) => Ok(CompactionOutcome::CommittedSyncPending(error)),
+        }
     }
 
     fn checkpoint_inner(
@@ -613,7 +700,8 @@ fn publish_first_boot(
     let directory = path
         .parent()
         .ok_or_else(|| io::Error::other("history path has no parent"))?;
-    let (temporary, mut file) = create_temporary(directory, &mut failure)?;
+    let (temporary, mut file) =
+        create_temporary(directory, &mut failure, FailurePoint::TempCreate)?;
     write_record(
         &mut file,
         boot,
@@ -634,11 +722,12 @@ fn publish_first_boot(
 fn create_temporary(
     directory: &Path,
     failure: &mut Option<&mut FailureSwitch>,
+    failure_point: FailurePoint,
 ) -> io::Result<(PathBuf, File)> {
     for _ in 0..32 {
         let path = directory.join(format!("{TEMP_PREFIX}{}", new_boot_id()));
-        fail(failure, FailurePoint::TempCreate)?;
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
+        fail(failure, failure_point)?;
+        match OpenOptions::new().append(true).create_new(true).open(&path) {
             Ok(file) => return Ok((path, file)),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),
@@ -648,6 +737,44 @@ fn create_temporary(
         io::ErrorKind::AlreadyExists,
         "unique history temporary unavailable",
     ))
+}
+
+fn retained_compaction_records(
+    records: &[Record],
+    cutoff: u64,
+    live_boot_id: &str,
+    live_epoch_usable: bool,
+) -> Vec<Record> {
+    let mut retained = Vec::new();
+    let mut start = 0;
+    while start < records.len() {
+        let end = records[start + 1..]
+            .iter()
+            .position(|record| matches!(record, Record::Boot(_)))
+            .map_or(records.len(), |offset| start + 1 + offset);
+        let epoch = &records[start..end];
+        let is_live_epoch = live_epoch_usable
+            && matches!(epoch.first(), Some(Record::Boot(boot)) if boot.boot_id == live_boot_id);
+        let has_retained_observation = epoch
+            .iter()
+            .any(|record| record_timestamp(record) >= cutoff);
+        if is_live_epoch || has_retained_observation {
+            let baseline = epoch
+                .iter()
+                .enumerate()
+                .filter_map(|(index, record)| match record {
+                    Record::Sample(sample) if sample.timestamp < cutoff => Some(index),
+                    Record::Boot(_) | Record::Sample(_) | Record::Checkpoint(_) => None,
+                })
+                .last();
+            retained.extend(epoch.iter().enumerate().filter_map(|(index, record)| {
+                (index == 0 || Some(index) == baseline || record_timestamp(record) >= cutoff)
+                    .then(|| record.clone())
+            }));
+        }
+        start = end;
+    }
+    retained
 }
 
 fn append_record(
@@ -713,6 +840,13 @@ fn write_error_to_io(error: WriteError) -> io::Error {
     }
 }
 
+fn open_error_to_io(error: OpenError) -> io::Error {
+    match error {
+        OpenError::Io(error) => error,
+        error => io::Error::other(error.to_string()),
+    }
+}
+
 #[cfg(unix)]
 fn sync_directory(directory: &Path) -> io::Result<()> {
     File::open(directory)?.sync_all()
@@ -758,6 +892,11 @@ enum FailurePoint {
     TempCreate,
     TempWrite,
     TempSync,
+    CompactionTempCreate,
+    CompactionTempWrite,
+    CompactionTempSync,
+    CompactionRename,
+    CompactionDirectorySync,
     HardLink,
     ParentDirectorySync,
     RestartBootAppend,
@@ -857,7 +996,10 @@ mod tests {
         ScannerState,
     };
     use crate::history::{
-        codec::{decode_record, Capacity, DecodeError, Record, StateEntry, StateKind},
+        codec::{
+            decode_record, BootRecord, Capacity, DecodeError, Record, SampleRecord, StateEntry,
+            StateKind,
+        },
         CapacitySnapshot, History, HistoryWindow, MetricValue,
     };
 
@@ -876,6 +1018,15 @@ mod tests {
             labels: Default::default(),
             value,
         }]
+    }
+
+    fn runtime_sample(timestamp: u64, boot_id: &str, value: f64) -> Record {
+        Record::Sample(SampleRecord {
+            timestamp,
+            boot_id: boot_id.to_owned(),
+            capacity: capacity(),
+            state: state(value),
+        })
     }
 
     fn test_dir(label: &str) -> std::path::PathBuf {
@@ -2173,7 +2324,14 @@ mod tests {
             .unwrap_or_else(|| panic!("{name}: pre-cutoff full-sample baseline is required"));
         assert_eq!(
             baseline.state,
-            state(expected_value),
+            vec![StateEntry {
+                kind: StateKind::Counter,
+                metric: "nimproxy_requests_total".into(),
+                labels: [("client".to_owned(), "synthetic-client".to_owned())]
+                    .into_iter()
+                    .collect(),
+                value: expected_value,
+            }],
             "{name}: the latest strictly pre-cutoff full sample, not a checkpoint, is retained"
         );
     }
@@ -2335,10 +2493,11 @@ mod tests {
             let path = dir.join("history-v1.jsonl");
             fs::write(&path, source).unwrap();
             let mut store = HistoryStore::open(&dir, opened_at, capacity()).unwrap();
-            let live_boot = canonical_records(&fs::read(&path).unwrap())
-                .last()
-                .cloned()
-                .expect("open appends its fresh boot");
+            let live_boot = Record::Boot(BootRecord {
+                timestamp: opened_at,
+                boot_id: store.boot_id().to_owned(),
+                capacity: capacity(),
+            });
 
             if sample_fresh_boot {
                 store
@@ -2352,12 +2511,8 @@ mod tests {
                 );
             }
             let before = fs::read(&path).unwrap();
-            let live_sample = expect_durable.then(|| {
-                canonical_records(&before)
-                    .last()
-                    .cloned()
-                    .expect("durable compaction has a full sample for its fresh runtime boot")
-            });
+            let live_sample =
+                expect_durable.then(|| runtime_sample(opened_at + 1, store.boot_id(), 9.0));
 
             let outcome = store.compact(cutoff).unwrap();
             if !expect_durable {
@@ -2605,8 +2760,8 @@ mod tests {
             records_from_fixture(&sample(11, "boot-a", 1.0))[0].clone(),
             records_from_fixture(&sample(13, "boot-a", 2.0))[0].clone(),
             records_from_fixture(&boot(20, &live_boot_id))[0].clone(),
-            records_from_fixture(&sample(21, &live_boot_id, 7.0))[0].clone(),
-            records_from_fixture(&sample(22, &live_boot_id, 9.0))[0].clone(),
+            runtime_sample(21, &live_boot_id, 7.0),
+            runtime_sample(22, &live_boot_id, 9.0),
         ];
         assert_complete_canonical_path(&path, &expected, "serialized append");
         assert_eq!(
