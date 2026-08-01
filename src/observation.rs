@@ -364,6 +364,30 @@ mod tests {
         assert_eq!(actual.tool_calls, Observation::Invalid);
         assert!(actual.finish_reasons.is_empty());
 
+        let actual = observe_buffered(
+            b"{\"choices\":[{\"index\":0,\"message\":7,\"finish_reason\":\"stop\"}]}",
+        );
+        assert_eq!(actual.tool_calls, Observation::Invalid);
+        assert_eq!(
+            actual.finish_reasons,
+            vec![FinishObservation {
+                choice_index: 0,
+                result: FinishResult::Measured(FinishReason::Stop),
+            }]
+        );
+
+        let actual = observe_buffered(
+            b"{\"choices\":[{\"index\":0,\"message\":{\"tool_calls\":{}},\"finish_reason\":\"stop\"}]}",
+        );
+        assert_eq!(actual.tool_calls, Observation::Invalid);
+        assert_eq!(
+            actual.finish_reasons,
+            vec![FinishObservation {
+                choice_index: 0,
+                result: FinishResult::Measured(FinishReason::Stop),
+            }]
+        );
+
         for body in [
             b"{\"choices\":[{\"message\":{}}]}".as_slice(),
             b"{\"choices\":[{\"index\":-1,\"message\":{}}]}".as_slice(),
@@ -412,6 +436,20 @@ mod tests {
                 observer.finish(StreamOutcome::Completed).tool_calls,
                 Observation::Invalid,
                 "malformed streamed tool-call presentation must be invalid"
+            );
+        }
+
+        for bytes in [
+            b"data: {\"choices\":{}}\n\n".as_slice(),
+            b"data: {\"choices\":[7]}\n\n".as_slice(),
+        ] {
+            let mut observer = SseObserver::default();
+            observer.push(bytes);
+            let actual = observer.finish(StreamOutcome::Completed);
+            assert_eq!(actual.tool_calls, Observation::Invalid);
+            assert!(
+                actual.finish_reasons.is_empty(),
+                "malformed streamed choices must not fabricate finish observations"
             );
         }
     }
@@ -506,6 +544,40 @@ mod tests {
                 .completion_tokens,
             Observation::Measured(2),
             "usage-only event supplies measured completion but does not estimate"
+        );
+
+        let mut comment_only = SseObserver::default();
+        comment_only.push(b": keepalive\n\n");
+        assert_eq!(
+            comment_only
+                .finish(StreamOutcome::Completed)
+                .usage
+                .completion_tokens,
+            Observation::Unavailable,
+            "comment-only event must not count toward completion estimate"
+        );
+
+        let mut json_error = SseObserver::default();
+        json_error.push(b"data: {\"error\":{\"message\":\"redacted\"}}\n\n");
+        assert_eq!(
+            json_error
+                .finish(StreamOutcome::Completed)
+                .usage
+                .completion_tokens,
+            Observation::Unavailable,
+            "parsed JSON error event must not count toward completion estimate"
+        );
+
+        let mut usage_without_completion = SseObserver::default();
+        usage_without_completion
+            .push(b"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1}}\n\n");
+        assert_eq!(
+            usage_without_completion
+                .finish(StreamOutcome::Completed)
+                .usage
+                .completion_tokens,
+            Observation::Unavailable,
+            "usage-only event without completion tokens must not estimate completion"
         );
 
         for bytes in [
