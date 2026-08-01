@@ -139,6 +139,15 @@ catalog-owned range status through the same served-byte CDP boundary. The Task
 8 numbers above remain the dated scope of that supersession rather than current
 totals.
 
+### Supersession — Task 16 observation quality (2026-08-01)
+
+Tasks 15 and 16 extend the typed fixture authority to 35 stable JSON files and
+the served-app interaction authority to 69 named rows. The added fixtures and
+rows cover bounded NIM observation topology and the catalog-backed
+absent/zero/dominance/tie/live-tail quality states without changing the gate's
+Rust-serialization or served-byte boundaries. The Task 8 and Task 12 totals
+above remain dated provenance rather than current counts.
+
 - Two CI steps in the existing `check` job, so the required-status-check list
   in [release.md](../ops/release.md) does not change.
 - `scripts/mock_nim.py` honors `max_tokens` so a capped request finishes with
