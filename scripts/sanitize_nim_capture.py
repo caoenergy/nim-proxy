@@ -1073,6 +1073,29 @@ def operational_cases(sentinel):
         if not events or events[0] != "validate" or not replaces or replaces[-1] != ".manifest.json.tmp":
             checks.append("sanitize-manifest-last")
 
+        # Check rejects semantically stale evidence, while an explicit update
+        # may refresh the same exact descriptor-contained five-file set.
+        manifest_path = destination / "manifest.json"
+        stale_manifest = json.loads(manifest_path.read_text("ascii"))
+        stale_manifest["evidence"] = []
+        manifest_path.write_text(
+            json.dumps(stale_manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="ascii",
+        )
+        stale_check_rejected = False
+        try:
+            validate_destination(destination)
+        except SanitizeError:
+            stale_check_rejected = True
+        refresh_succeeded = True
+        try:
+            write_output(input_dir, destination)
+            validate_destination(destination)
+        except SanitizeError:
+            refresh_succeeded = False
+        if not stale_check_rejected or not refresh_succeeded:
+            checks.append("sanitize-stale-destination-refresh")
+
         # The destination must be a real directory, both for update and check.
         input_dir = root / "raw-destination"
         operational_raw_set(input_dir)
