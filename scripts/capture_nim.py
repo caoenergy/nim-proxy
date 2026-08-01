@@ -745,7 +745,7 @@ def oracle_url(base_url: str) -> bool:
         or parsed.password
         or parsed.query
         or parsed.fragment
-    )
+    ) and parsed.path.rstrip("/") == "/v1"
     return not safe
 
 
@@ -2042,6 +2042,14 @@ def selftest() -> int:
                 *exact_boundary_sets(
                     oracle_url("http://127.0.0.1:8000/v1"),
                     candidate_url("http://127.0.0.1:8000/v1").rejected,
+                    "capture-url-boundary",
+                ),
+            ),
+            (
+                "missing-v1-service-root",
+                *exact_boundary_sets(
+                    oracle_url("http://127.0.0.1:8000"),
+                    candidate_url("http://127.0.0.1:8000").rejected,
                     "capture-url-boundary",
                 ),
             ),
