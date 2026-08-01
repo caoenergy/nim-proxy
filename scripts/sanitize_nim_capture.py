@@ -311,9 +311,12 @@ def _observed_evidence(fixtures):
             non_empty_events = [event for event in events if not event[4]]
             if any(event[1] and event[3] is None and not event[2] for event in non_empty_events):
                 found["malformed_json_event"].add(filename)
-            if non_empty_events:
-                final = non_empty_events[-1][3]
-                if final is not None and pairs_get(final, "usage") and not pairs_get(final, "choices"):
+            json_events = [event[3] for event in non_empty_events if not event[2] and event[3] is not None]
+            if json_events:
+                final = json_events[-1]
+                usage = pairs_get(final, "usage")
+                choices = pairs_get(final, "choices")
+                if usage and usage[0] != "null" and choices == [("array", ())]:
                     found["usage_only_final_sse_event"].add(filename)
         saw_usage = False
         terminal_reasons = {}
@@ -599,6 +602,7 @@ def _validate_destination_fd(descriptor, allow_stale_evidence=False):
     expected_content = (json.dumps(manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
     if manifest_content != expected_content:
         raise SanitizeError("manifest-stale")
+    return fixtures, contents
 
 
 def validate_destination(destination):
@@ -607,6 +611,35 @@ def validate_destination(destination):
         if descriptor is None:
             raise SanitizeError("fixture-set-invalid")
         _validate_destination_fd(descriptor)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        os.close(parent)
+
+
+def refresh_manifest(destination):
+    parent, descriptor = _open_destination(destination)
+    try:
+        if descriptor is None:
+            raise SanitizeError("fixture-set-invalid")
+        fixtures, contents = _validate_destination_fd(descriptor, allow_stale_evidence=True)
+        manifest = manifest_for(fixtures, contents)
+        manifest_content = (json.dumps(
+            manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        ) + "\n").encode("ascii")
+        temporary_name = ".manifest.json.tmp"
+        try:
+            os.stat(temporary_name, dir_fd=descriptor, follow_symlinks=False)
+            raise SanitizeError("fixture-write-failed")
+        except FileNotFoundError:
+            pass
+        _write_private_at(descriptor, temporary_name, manifest_content)
+        os.replace(temporary_name, "manifest.json", src_dir_fd=descriptor, dst_dir_fd=descriptor)
+        os.fsync(descriptor)
+        if not _public_destination_matches(destination, parent, descriptor):
+            raise SanitizeError("fixture-boundary")
+    except (OSError, SanitizeError) as error:
+        raise SanitizeError("fixture-write-failed") from error
     finally:
         if descriptor is not None:
             os.close(descriptor)
@@ -1102,6 +1135,46 @@ def operational_cases(sentinel):
         if not stale_check_rejected or not refresh_succeeded:
             checks.append("sanitize-stale-destination-refresh")
 
+        # A fixture-only evidence refresh preserves the four validated fixture
+        # bytes, makes the stale destination strict-checkable, and rejects any
+        # stale manifest content other than the evidence table.
+        write_output(input_dir, destination)
+        stale_manifest = json.loads(manifest_path.read_text("ascii"))
+        stale_manifest["evidence"] = []
+        manifest_path.write_text(
+            json.dumps(stale_manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="ascii",
+        )
+        fixture_hashes_before = {
+            filename: hashlib.sha256((destination / filename).read_bytes()).hexdigest()
+            for filename in sorted(case + ".json" for case in CASES)
+        }
+        try:
+            refresh_result = main(["--refresh-manifest", str(destination)])
+        except SystemExit as error:
+            refresh_result = error.code
+        fixture_hashes_after = {
+            filename: hashlib.sha256((destination / filename).read_bytes()).hexdigest()
+            for filename in sorted(case + ".json" for case in CASES)
+        }
+        if (refresh_result != 0 or main(["--check", str(destination)]) != 0
+                or fixture_hashes_after != fixture_hashes_before):
+            checks.append("sanitize-manifest-refresh")
+
+        drifted_manifest = json.loads(manifest_path.read_text("ascii"))
+        drifted_manifest["fixtures"][0]["case"] = "drifted"
+        manifest_path.write_text(
+            json.dumps(drifted_manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="ascii",
+        )
+        drifted_before = manifest_path.read_bytes()
+        try:
+            drifted_result = main(["--refresh-manifest", str(destination)])
+        except SystemExit as error:
+            drifted_result = error.code
+        if drifted_result == 0 or manifest_path.read_bytes() != drifted_before:
+            checks.append("sanitize-manifest-refresh-non-evidence")
+
         # The destination must be a real directory, both for update and check.
         input_dir = root / "raw-destination"
         operational_raw_set(input_dir)
@@ -1456,10 +1529,11 @@ def main(argv=None):
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--input-dir", type=Path, help="directory holding raw NIM envelopes")
     mode.add_argument("--check", type=Path, help="validate an existing fixture directory")
+    mode.add_argument("--refresh-manifest", type=Path, help="refresh evidence for validated fixtures")
     parser.add_argument("--output-dir", type=Path, help="destination for sanitized fixtures")
     args = parser.parse_args(argv)
     if args.selftest:
-        if args.input_dir or args.check or args.output_dir:
+        if args.input_dir or args.check or args.refresh_manifest or args.output_dir:
             parser.error("--selftest cannot be combined with fixture modes")
         return selftest()
     if args.check:
@@ -1469,6 +1543,15 @@ def main(argv=None):
             validate_destination(args.check)
         except SanitizeError as error:
             print(f"sanitize check failed: {error}")
+            return 1
+        return 0
+    if args.refresh_manifest:
+        if args.output_dir:
+            parser.error("--refresh-manifest cannot be combined with --output-dir")
+        try:
+            refresh_manifest(args.refresh_manifest)
+        except SanitizeError as error:
+            print(f"sanitize refresh failed: {error}")
             return 1
         return 0
     if not args.input_dir or not args.output_dir:
