@@ -6,6 +6,21 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-08-01] component — bounded typed NIM response observations
+
+Task 15 replaces the separate buffered shortcuts and `SseScan` with one private
+typed observer. It classifies five usage outcomes, finish results, and tool
+counts from the already-buffered body or one bounded current SSE event without
+altering relayed bytes. Valid completed nonterminal events are the sole
+completion-estimate source; malformed, incomplete, invalid, and unavailable
+observations do not invent existing metrics. The ordinary in-process and load
+mock reasoning values now satisfy the same `reasoning <= completion` rule used
+in production, while the dedicated E2E keeps its invalid response to prove
+omission. See [NIM observations](architecture/nim-observations.md), the
+[streaming pipeline](architecture/streaming-pipeline.md), the
+[test strategy](testing/test-strategy.md), and the
+[Task 15 plan](../docs/plans/v0.6.6-foundation-implementation.md).
+
 ## [2026-08-01] research finding — bounded NIM response topology
 
 One authorized four-request run through local nim-proxy produced successful

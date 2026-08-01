@@ -130,7 +130,7 @@ class Handler(BaseHTTPRequestHandler):
         truncated = emitted < 4
         finish = "length" if truncated else ("tool_calls" if offers_tools else "stop")
         usage = {"prompt_tokens": 120, "completion_tokens": emitted,
-                 "completion_tokens_details": {"reasoning_tokens": 12}}
+                 "completion_tokens_details": {"reasoning_tokens": min(2, emitted)}}
 
         if req.get("stream"):
             self.send_response(200)

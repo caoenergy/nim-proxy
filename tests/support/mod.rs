@@ -211,7 +211,7 @@ async fn mock_chat(
             // a request that offers tools gets a tool_calls response, otherwise
             // a normal stop. Usage always carries reasoning-token details.
             let offers_tools = parsed.get("tools").is_some();
-            let usage = "\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":2,\"completion_tokens_details\":{\"reasoning_tokens\":3}}";
+            let usage = "\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":2,\"completion_tokens_details\":{\"reasoning_tokens\":2}}";
             if wants_stream {
                 let mut chunks: Vec<Result<Bytes, std::io::Error>> = Vec::new();
                 if offers_tools {
@@ -240,14 +240,14 @@ async fn mock_chat(
                     "choices": [{"index": 0, "message": {"role": "assistant", "tool_calls": [
                         {"index": 0, "id": "c1", "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}
                     ]}, "finish_reason": "tool_calls"}],
-                    "usage": {"prompt_tokens": 11, "completion_tokens": 2, "completion_tokens_details": {"reasoning_tokens": 3}}
+                    "usage": {"prompt_tokens": 11, "completion_tokens": 2, "completion_tokens_details": {"reasoning_tokens": 2}}
                 }))
                 .into_response()
             } else {
                 axum::Json(serde_json::json!({
                     "id": "mock-1", "object": "chat.completion",
                     "choices": [{"index": 0, "message": {"role": "assistant", "content": "hello world"}, "finish_reason": "stop"}],
-                    "usage": {"prompt_tokens": 11, "completion_tokens": 2, "completion_tokens_details": {"reasoning_tokens": 3}}
+                    "usage": {"prompt_tokens": 11, "completion_tokens": 2, "completion_tokens_details": {"reasoning_tokens": 2}}
                 }))
                 .into_response()
             }
