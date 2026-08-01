@@ -835,15 +835,20 @@ fn retained_compaction_records(
             let baseline = epoch
                 .iter()
                 .enumerate()
-                .filter_map(|(index, record)| match record {
-                    Record::Sample(sample) if sample.timestamp < cutoff => Some(index),
-                    Record::Boot(_) | Record::Sample(_) | Record::Checkpoint(_) => None,
+                .filter(|(_, record)| {
+                    matches!(record, Record::Sample(sample) if sample.timestamp < cutoff)
                 })
-                .last();
-            retained.extend(epoch.iter().enumerate().filter_map(|(index, record)| {
-                (index == 0 || Some(index) == baseline || record_timestamp(record) >= cutoff)
-                    .then(|| record.clone())
-            }));
+                .map(|(index, _)| index)
+                .next_back();
+            retained.extend(
+                epoch
+                    .iter()
+                    .enumerate()
+                    .filter(|&(index, record)| {
+                        index == 0 || Some(index) == baseline || record_timestamp(record) >= cutoff
+                    })
+                    .map(|(_, record)| record.clone()),
+            );
         }
         start = end;
     }
@@ -2393,7 +2398,7 @@ mod tests {
                 Record::Sample(sample) if sample.timestamp < cutoff => Some(sample),
                 Record::Boot(_) | Record::Checkpoint(_) | Record::Sample(_) => None,
             })
-            .last()
+            .next_back()
             .unwrap_or_else(|| panic!("{name}: pre-cutoff full-sample baseline is required"));
         assert_eq!(
             baseline.state,
@@ -2514,7 +2519,9 @@ mod tests {
 
     #[test]
     fn compaction_recovery_safety_defers_intersecting_evidence_and_discards_only_outside_gaps() {
-        let cases: [(&str, u64, u64, String, bool, bool, Option<String>); 3] = [
+        type RecoveryCase = (&'static str, u64, u64, String, bool, bool, Option<String>);
+
+        let cases: [RecoveryCase; 3] = [
             (
                 "damage-intersects-retained-horizon",
                 13,

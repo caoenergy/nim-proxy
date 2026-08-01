@@ -561,6 +561,9 @@ enum CompactionTestPoint {
     BeforeCanonicalPendingClear,
 }
 
+#[cfg(test)]
+type CompactionTestHook = Arc<dyn Fn(CompactionTestPoint) + Send + Sync>;
+
 pub struct History {
     inner: Mutex<HistoryInner>,
     file: Option<PathBuf>,
@@ -579,7 +582,7 @@ pub struct History {
     initial_capacity: CapacitySnapshot,
     canonical: Option<Mutex<store::HistoryStore>>,
     #[cfg(test)]
-    compaction_test_hook: Mutex<Option<Arc<dyn Fn(CompactionTestPoint) + Send + Sync>>>,
+    compaction_test_hook: Mutex<Option<CompactionTestHook>>,
 }
 
 impl History {
@@ -973,9 +976,9 @@ impl History {
 
         if days > 0 && self.canonical.is_some() {
             let cutoff = t.saturating_sub(days.saturating_mul(86_400));
-            if self.compaction_pending.load(Ordering::SeqCst) {
-                self.request_compaction(cutoff);
-            } else if *self.dropped_since_compact.lock().unwrap() > COMPACT_AFTER_EXPIRED_SAMPLES {
+            if self.compaction_pending.load(Ordering::SeqCst)
+                || *self.dropped_since_compact.lock().unwrap() > COMPACT_AFTER_EXPIRED_SAMPLES
+            {
                 self.request_compaction(cutoff);
             }
         }
@@ -1191,10 +1194,10 @@ impl History {
         let cutoff = history.compaction_cutoff.load(Ordering::SeqCst);
         let claimed_drops = *history.dropped_since_compact.lock().unwrap();
         tokio::task::spawn_blocking(move || {
-            if history.canonical.is_some() {
+            if let Some(canonical) = &history.canonical {
                 let inner_revision = history.inner.lock().unwrap().revision;
                 let (result, replay) = {
-                    let mut store = history.canonical.as_ref().unwrap().lock().unwrap();
+                    let mut store = canonical.lock().unwrap();
                     let result = store.compact_if_authorized(cutoff, || {
                         let control = history.compaction_control.lock().unwrap();
                         (control.generation == generation
