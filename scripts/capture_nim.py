@@ -121,6 +121,7 @@ def candidate_url(base_url: str) -> CandidateDecision:
         rejected = not (
             transport_allowed
             and parsed.hostname
+            and parsed.path.rstrip("/") == "/v1"
             and "@" not in parsed.netloc
             and "?" not in base_url
             and "#" not in base_url
