@@ -2120,8 +2120,8 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         *history.compaction_test_hook.lock().unwrap() = Some(Arc::new(move |point| {
             if point == CompactionTestPoint::BeforeCanonicalPendingClear {
                 let pass = hook_passes.fetch_add(1, Ordering::SeqCst) + 1;
+                entered_tx.send(pass).unwrap();
                 if pass == 1 {
-                    entered_tx.send(()).unwrap();
                     hook_release.lock().unwrap().recv().unwrap();
                 }
             }
@@ -2136,18 +2136,28 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
              nimproxy_active_requests{client=\"equivalence\"} 4\n",
             initial,
         );
-        entered_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("first canonical durable pass reaches the generation-clear hook");
+        assert_eq!(
+            entered_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("first canonical durable pass reaches the generation-clear hook"),
+            1
+        );
         assert!(history.compaction_running.load(Ordering::SeqCst));
         let superseding_cutoff = runtime.saturating_sub(day.saturating_sub(1));
         history.request_compaction(superseding_cutoff);
         let superseding_generation = history.compaction_generation.load(Ordering::SeqCst);
         release_tx.send(()).unwrap();
+        assert_eq!(
+            entered_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("the superseding generation reaches the generation-clear hook"),
+            2
+        );
         wait_for_canonical_compaction_idle(&history, "superseding generation").await;
 
-        assert!(
-            passes.load(Ordering::SeqCst) >= 2,
+        assert_eq!(
+            passes.load(Ordering::SeqCst),
+            2,
             "a superseding generation starts a second canonical compaction pass"
         );
         assert!(!history.status().compaction_pending);
@@ -2301,8 +2311,8 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         *history.compaction_test_hook.lock().unwrap() = Some(Arc::new(move |point| {
             if point == CompactionTestPoint::CanonicalReplayCaptured {
                 let pass = hook_passes.fetch_add(1, Ordering::SeqCst) + 1;
+                entered_tx.send(pass).unwrap();
                 if pass <= 2 {
-                    entered_tx.send(pass).unwrap();
                     hook_release.lock().unwrap().recv().unwrap();
                 }
             }
@@ -2365,6 +2375,12 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         history.request_compaction(superseding_cutoff);
         let superseding_generation = history.compaction_generation.load(Ordering::SeqCst);
         release_tx.send(()).unwrap();
+        assert_eq!(
+            entered_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("the superseding generation reaches replay capture"),
+            3
+        );
         wait_for_canonical_compaction_idle(&history, "sync-failure superseding generation").await;
 
         assert_eq!(
