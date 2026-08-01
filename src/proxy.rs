@@ -20,6 +20,10 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::dispatch::Slot;
 use crate::governor::{self, ModelPermit};
+use crate::observation::{
+    observe_buffered, FinishReason, FinishResult, Observation, ResponseObservations, SseObserver,
+    StreamOutcome,
+};
 use crate::{AppState, Config};
 
 /// Per-request metric labels, resolved once up front.
@@ -260,15 +264,6 @@ fn record_tokens(ctx: &Ctx, prompt: Option<u64>, completion: Option<u64>, source
     }
 }
 
-/// Bound `finish_reason` to the known OpenAI set so an unexpected upstream
-/// value can't grow label cardinality. `length` is the truncation signal.
-fn finish_label(raw: &str) -> String {
-    match raw {
-        "stop" | "length" | "tool_calls" | "content_filter" | "function_call" => raw.to_owned(),
-        _ => "other".to_owned(),
-    }
-}
-
 /// The request's tool-selection mode, bounded to a small enum. Called only
 /// when the request offers tools, so a missing `tool_choice` means the
 /// provider default (auto).
@@ -345,113 +340,53 @@ fn record_shape(ctx: &Ctx, parsed: Option<&serde_json::Value>, wants_stream: boo
     }
 }
 
-/// Record response-quality signals available once a generation completes:
-/// how it ended (truncation), reasoning-token burn, and tool-call volume.
-fn record_quality(
+/// Record only finalized typed observations. Invalid and unavailable upstream
+/// values are deliberately absent from the existing metrics.
+fn record_observations(
     ctx: &Ctx,
-    finish: Option<&str>,
-    reasoning: Option<u64>,
-    tool_calls: Option<u64>,
-) {
-    if let Some(fr) = finish {
+    observations: &ResponseObservations,
+) -> Option<(u64, &'static str)> {
+    let prompt = match observations.usage.prompt_tokens {
+        Observation::Measured(value) => Some(value),
+        _ => None,
+    };
+    let (completion, source) = match observations.usage.completion_tokens {
+        Observation::Measured(value) => (Some(value), "usage"),
+        Observation::Estimated(value) => (Some(value), "estimate"),
+        Observation::Unavailable | Observation::Invalid => (None, "usage"),
+    };
+    record_tokens(ctx, prompt, completion, source);
+    for finish in &observations.finish_reasons {
+        let FinishResult::Measured(reason) = &finish.result else {
+            continue;
+        };
         counter!(
             "nimproxy_finish_reason_total",
             "model" => ctx.model.clone(),
-            "reason" => finish_label(fr),
+            "reason" => match reason {
+                FinishReason::ContentFilter => "content_filter",
+                FinishReason::FunctionCall => "function_call",
+                FinishReason::Length => "length",
+                FinishReason::Other => "other",
+                FinishReason::Stop => "stop",
+                FinishReason::ToolCalls => "tool_calls",
+            },
         )
         .increment(1);
     }
-    if let Some(r) = reasoning {
-        if r > 0 {
-            counter!("nimproxy_reasoning_tokens_total", "model" => ctx.model.clone()).increment(r);
+    if let Observation::Measured(reasoning) = observations.usage.reasoning_tokens {
+        if reasoning > 0 {
+            counter!("nimproxy_reasoning_tokens_total", "model" => ctx.model.clone())
+                .increment(reasoning);
         }
     }
-    if let Some(n) = tool_calls {
-        if n > 0 {
-            counter!("nimproxy_tool_calls_total", "model" => ctx.model.clone()).increment(n);
+    if let Observation::Measured(tool_calls) = observations.tool_calls {
+        if tool_calls > 0 {
+            counter!("nimproxy_tool_calls_total", "model" => ctx.model.clone())
+                .increment(tool_calls);
         }
     }
-}
-
-/// Watches an SSE byte stream for the `usage` object and counts data events
-/// (a rough one-token-per-event estimate when the upstream omits usage).
-/// Purely observational — bytes reach the client untouched.
-#[derive(Default)]
-struct SseScan {
-    buf: String,
-    events: u64,
-    prompt: Option<u64>,
-    completion: Option<u64>,
-    reasoning: Option<u64>,
-    finish_reason: Option<String>,
-    /// Highest `tool_calls[].index` seen; +1 is the tool-call count.
-    tool_call_max: Option<u64>,
-}
-
-impl SseScan {
-    fn feed(&mut self, bytes: &[u8]) {
-        self.buf.push_str(&String::from_utf8_lossy(bytes));
-        while let Some(pos) = self.buf.find('\n') {
-            let line: String = self.buf.drain(..=pos).collect();
-            let line = line.trim();
-            if let Some(data) = line.strip_prefix("data:").map(str::trim_start) {
-                if data == "[DONE]" {
-                    continue;
-                }
-                self.events += 1;
-                // Only the events that carry usage, a concrete finish_reason
-                // (a string, not the per-chunk `null`), or tool_calls are worth
-                // a full JSON parse; plain content deltas are skipped.
-                let interesting = data.contains("\"usage\"")
-                    || data.contains("\"finish_reason\":\"")
-                    || data.contains("\"tool_calls\"");
-                if interesting {
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
-                        if let Some(u) = v.get("usage").filter(|u| !u.is_null()) {
-                            self.prompt = u
-                                .get("prompt_tokens")
-                                .and_then(|x| x.as_u64())
-                                .or(self.prompt);
-                            self.completion = u
-                                .get("completion_tokens")
-                                .and_then(|x| x.as_u64())
-                                .or(self.completion);
-                            self.reasoning = u
-                                .get("completion_tokens_details")
-                                .and_then(|d| d.get("reasoning_tokens"))
-                                .and_then(|x| x.as_u64())
-                                .or(self.reasoning);
-                        }
-                        if let Some(choices) = v.get("choices").and_then(|c| c.as_array()) {
-                            for ch in choices {
-                                if let Some(fr) = ch.get("finish_reason").and_then(|f| f.as_str()) {
-                                    self.finish_reason = Some(fr.to_owned());
-                                }
-                                if let Some(tcs) = ch
-                                    .get("delta")
-                                    .and_then(|d| d.get("tool_calls"))
-                                    .and_then(|t| t.as_array())
-                                {
-                                    for tc in tcs {
-                                        if let Some(idx) = tc.get("index").and_then(|i| i.as_u64())
-                                        {
-                                            self.tool_call_max = Some(
-                                                self.tool_call_max.map_or(idx, |m| m.max(idx)),
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // Guard against a pathological never-terminated line.
-        if self.buf.len() > 1_048_576 {
-            self.buf.clear();
-        }
-    }
+    completion.map(|value| (value, source))
 }
 
 fn upstream_request(
@@ -910,7 +845,7 @@ fn streaming(
                     return;
                 }
 
-                let mut scan = SseScan::default();
+                let mut observer = SseObserver::default();
                 let mut first_chunk: Option<Instant> = None;
                 let mut chunks = resp.bytes_stream();
                 loop {
@@ -929,12 +864,14 @@ fn streaming(
                     };
                     let next = tokio::select! {
                         _ = tx.closed() => {
+                            let _ = observer.finish(StreamOutcome::Disconnected);
                             record_request(&ctx, "disconnect");
                             return;
                         }
                         read = upstream_read => match read {
                             Ok(n) => n,
                             Err(_) => {
+                                let _ = observer.finish(StreamOutcome::Truncated);
                                 tracing::warn!(model = %ctx.model, idle = ?cfg.stream_idle, "upstream stream stalled");
                                 record_request(&ctx, "stall");
                                 let _ = tx.send(Ok(sse_error("upstream stream stalled"))).await;
@@ -950,13 +887,15 @@ fn streaming(
                                 histogram!("nimproxy_ttft_seconds", "model" => ctx.model.clone())
                                     .record(sent_at.elapsed().as_secs_f64());
                             }
-                            scan.feed(&b);
+                            observer.push(&b);
                             if tx.send(Ok(b)).await.is_err() {
+                                let _ = observer.finish(StreamOutcome::Disconnected);
                                 record_request(&ctx, "disconnect");
                                 return; // client hung up
                             }
                         }
                         Err(e) => {
+                            let _ = observer.finish(StreamOutcome::Truncated);
                             tracing::warn!(error = %e, "upstream stream broke mid-response");
                             record_request(&ctx, "stream_error");
                             let _ = tx.send(Ok(sse_error("upstream stream interrupted"))).await;
@@ -965,25 +904,12 @@ fn streaming(
                     }
                 }
 
-                // Token accounting: exact when the upstream reported usage,
-                // otherwise estimate ~1 token per SSE event.
-                let source = if scan.completion.is_some() {
-                    "usage"
-                } else {
-                    "estimate"
-                };
-                let completion = scan.completion.or(Some(scan.events));
-                record_tokens(&ctx, scan.prompt, completion, source);
-                record_quality(
-                    &ctx,
-                    scan.finish_reason.as_deref(),
-                    scan.reasoning,
-                    scan.tool_call_max.map(|m| m + 1),
-                );
-                if let (Some(first), Some(c)) = (first_chunk, completion) {
+                let completion =
+                    record_observations(&ctx, &observer.finish(StreamOutcome::Completed));
+                if let (Some(first), Some((c, source))) = (first_chunk, completion) {
                     let gen_secs = first.elapsed().as_secs_f64();
                     if gen_secs > 0.1 && c > 0 {
-                        histogram!("nimproxy_tokens_per_second", "model" => ctx.model.clone(), "source" => source.to_owned())
+                        histogram!("nimproxy_tokens_per_second", "model" => ctx.model.clone(), "source" => source)
                         .record(c as f64 / gen_secs);
                         // Mean inter-token latency (time-per-output-token).
                         histogram!("nimproxy_tpot_seconds", "model" => ctx.model.clone())
@@ -1094,37 +1020,7 @@ async fn relay(resp: reqwest::Response, ctx: &Ctx) -> Response {
         }
     };
     if status.is_success() {
-        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&body) {
-            if let Some(u) = v.get("usage").filter(|u| !u.is_null()) {
-                record_tokens(
-                    ctx,
-                    u.get("prompt_tokens").and_then(|x| x.as_u64()),
-                    u.get("completion_tokens").and_then(|x| x.as_u64()),
-                    "usage",
-                );
-            }
-            let reasoning = v
-                .get("usage")
-                .and_then(|u| u.get("completion_tokens_details"))
-                .and_then(|d| d.get("reasoning_tokens"))
-                .and_then(|x| x.as_u64());
-            let choices = v.get("choices").and_then(|c| c.as_array());
-            let finish = choices
-                .and_then(|c| c.first())
-                .and_then(|c| c.get("finish_reason"))
-                .and_then(|f| f.as_str());
-            let tool_calls = choices.map(|cs| {
-                cs.iter()
-                    .filter_map(|c| {
-                        c.get("message")
-                            .and_then(|m| m.get("tool_calls"))
-                            .and_then(|t| t.as_array())
-                    })
-                    .map(|a| a.len() as u64)
-                    .sum::<u64>()
-            });
-            record_quality(ctx, finish, reasoning, tool_calls);
-        }
+        record_observations(ctx, &observe_buffered(&body));
     }
     Response::builder()
         .status(status)
@@ -1216,8 +1112,7 @@ fn gateway_timeout(cfg: &Config, pool_len: usize) -> Response {
 #[cfg(test)]
 mod tests {
     use super::{
-        bounded_label, count_tools, finish_label, is_json_mode, label_path, sanitize_label,
-        tool_choice_mode, SseScan,
+        bounded_label, count_tools, is_json_mode, label_path, sanitize_label, tool_choice_mode,
     };
     use std::collections::HashSet;
 
@@ -1272,67 +1167,6 @@ mod tests {
     }
 
     #[test]
-    fn sse_scan_clears_a_pathological_unterminated_line() {
-        let mut scan = SseScan::default();
-        // >1 MiB with no newline: the guard clears the buffer instead of letting
-        // an abusive upstream grow it without bound.
-        scan.feed(&vec![b'x'; 1_048_577]);
-        assert!(scan.buf.is_empty(), "oversized line buffer must be dropped");
-        assert_eq!(scan.events, 0);
-        // The guard drops the runaway buffer without wedging the scanner: a
-        // normal event still parses immediately afterward.
-        scan.feed(b"data: {\"choices\":[],\"usage\":{\"completion_tokens\":3}}\n\n");
-        assert_eq!(scan.events, 1);
-        assert_eq!(scan.completion, Some(3));
-    }
-
-    #[test]
-    fn scan_counts_events_and_finds_usage() {
-        let mut scan = SseScan::default();
-        // Feed in awkwardly split chunks to exercise line reassembly.
-        scan.feed(b": heartbeat\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: {\"cho");
-        scan.feed(b"ices\":[],\"usage\":{\"prompt_tokens\":120,\"completion_tokens\":45}}\n\ndata: [DONE]\n\n");
-        assert_eq!(scan.events, 2);
-        assert_eq!(scan.prompt, Some(120));
-        assert_eq!(scan.completion, Some(45));
-    }
-
-    #[test]
-    fn scan_without_usage_estimates_by_events() {
-        let mut scan = SseScan::default();
-        scan.feed(b"data: {\"a\":1}\n\ndata: {\"b\":2}\n\ndata: {\"c\":3}\n\ndata: [DONE]\n\n");
-        assert_eq!(scan.events, 3);
-        assert_eq!(scan.completion, None);
-    }
-
-    #[test]
-    fn scan_captures_finish_reason_tool_calls_and_reasoning() {
-        let mut scan = SseScan::default();
-        // A content delta (finish_reason:null — skipped), two tool-call deltas
-        // (indices 0 and 1), then a final chunk with finish_reason + usage that
-        // carries reasoning-token details.
-        scan.feed(
-            b"data: {\"choices\":[{\"delta\":{\"content\":\"x\"},\"finish_reason\":null}]}\n\n",
-        );
-        scan.feed(b"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"a\"}}]}}]}\n\n");
-        scan.feed(b"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"function\":{\"name\":\"b\"}}]}}]}\n\n");
-        scan.feed(b"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n");
-        scan.feed(b"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":8,\"completion_tokens_details\":{\"reasoning_tokens\":5}}}\n\ndata: [DONE]\n\n");
-        assert_eq!(scan.finish_reason.as_deref(), Some("tool_calls"));
-        assert_eq!(scan.tool_call_max, Some(1)); // +1 => 2 tool calls
-        assert_eq!(scan.reasoning, Some(5));
-        assert_eq!(scan.completion, Some(8));
-    }
-
-    #[test]
-    fn finish_label_bounds_unknown_values() {
-        assert_eq!(finish_label("stop"), "stop");
-        assert_eq!(finish_label("length"), "length");
-        assert_eq!(finish_label("tool_calls"), "tool_calls");
-        assert_eq!(finish_label("weird\"injection"), "other");
-    }
-
-    #[test]
     fn tool_choice_and_shape_readers() {
         let auto = serde_json::json!({"tools": [{}], "tool_choice": "auto"});
         assert_eq!(tool_choice_mode(&auto), "auto");
@@ -1370,23 +1204,20 @@ mod tests {
 #[cfg(fuzzing)]
 #[doc(hidden)]
 pub mod fuzz {
-    /// Drive the SSE scanner with arbitrary bytes, twice: once as a single
-    /// chunk and once re-fragmented at a size derived from the input (the
-    /// network delivers these bytes arbitrarily split). Must never panic,
-    /// and the pathological-line guard must keep the buffer bounded.
+    /// Drive the private SSE observer with arbitrary bytes, twice: once as a
+    /// single chunk and once re-fragmented at an input-derived boundary. Must
+    /// never panic; the observer bounds its one unfinished event internally.
     pub fn sse_scan(data: &[u8]) {
-        let mut whole = super::SseScan::default();
-        whole.feed(data);
+        let mut whole = crate::observation::SseObserver::default();
+        whole.push(data);
+        let _ = whole.finish(crate::observation::StreamOutcome::Completed);
 
         let step = data.first().map_or(3, |b| (*b as usize % 17) + 1);
-        let mut frag = super::SseScan::default();
+        let mut frag = crate::observation::SseObserver::default();
         for chunk in data.chunks(step) {
-            frag.feed(chunk);
-            assert!(
-                frag.buf.len() <= 1_048_576 + chunk.len(),
-                "SSE buffer must stay bounded by the guard"
-            );
+            frag.push(chunk);
         }
+        let _ = frag.finish(crate::observation::StreamOutcome::Completed);
     }
 
     /// The sanitizer's output invariants ARE the security property: bounded

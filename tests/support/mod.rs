@@ -16,7 +16,7 @@ use futures_util::StreamExt;
 
 /// One scripted response for the next chat-completions request. The queue is
 /// consumed front-to-back; when empty, `Ok` is the default.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Behavior {
     /// Respond normally (stream or JSON per the request's `stream` flag).
     Ok,
@@ -45,6 +45,8 @@ pub enum Behavior {
     /// Buffered response with an unknown `finish_reason` — exercises the
     /// server-side clamp that collapses odd values to `other`.
     OddFinish,
+    /// A fixed upstream response for an exact proxy-boundary assertion.
+    ExactResponse { content_type: String, body: String },
 }
 
 pub struct Hit {
@@ -164,6 +166,11 @@ async fn mock_chat(
             "usage": {"prompt_tokens": 11, "completion_tokens": 2}
         }))
         .into_response(),
+        Behavior::ExactResponse { content_type, body } => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, content_type)
+            .body(Body::from(body))
+            .unwrap(),
         Behavior::Hang => {
             let stream = futures_util::stream::once(async {
                 Ok::<_, std::io::Error>(Bytes::from("data: {\"choices\":[]}\n\n"))
@@ -204,7 +211,7 @@ async fn mock_chat(
             // a request that offers tools gets a tool_calls response, otherwise
             // a normal stop. Usage always carries reasoning-token details.
             let offers_tools = parsed.get("tools").is_some();
-            let usage = "\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":2,\"completion_tokens_details\":{\"reasoning_tokens\":3}}";
+            let usage = "\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":2,\"completion_tokens_details\":{\"reasoning_tokens\":2}}";
             if wants_stream {
                 let mut chunks: Vec<Result<Bytes, std::io::Error>> = Vec::new();
                 if offers_tools {
@@ -233,14 +240,14 @@ async fn mock_chat(
                     "choices": [{"index": 0, "message": {"role": "assistant", "tool_calls": [
                         {"index": 0, "id": "c1", "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}
                     ]}, "finish_reason": "tool_calls"}],
-                    "usage": {"prompt_tokens": 11, "completion_tokens": 2, "completion_tokens_details": {"reasoning_tokens": 3}}
+                    "usage": {"prompt_tokens": 11, "completion_tokens": 2, "completion_tokens_details": {"reasoning_tokens": 2}}
                 }))
                 .into_response()
             } else {
                 axum::Json(serde_json::json!({
                     "id": "mock-1", "object": "chat.completion",
                     "choices": [{"index": 0, "message": {"role": "assistant", "content": "hello world"}, "finish_reason": "stop"}],
-                    "usage": {"prompt_tokens": 11, "completion_tokens": 2, "completion_tokens_details": {"reasoning_tokens": 3}}
+                    "usage": {"prompt_tokens": 11, "completion_tokens": 2, "completion_tokens_details": {"reasoning_tokens": 2}}
                 }))
                 .into_response()
             }

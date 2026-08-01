@@ -156,7 +156,12 @@ that proof.
 - **Pacing, pool, dispatch, and affinity:** use the enforcing mock and load
   harness; one upstream violation is failure. Follow the setup prerequisites
   in the [load section](#3-load--scriptsloadtestpy-vs-scriptsmock_nimpy---enforce).
-- **NIM response evidence:** `python3 scripts/capture_nim.py --selftest`
+- **NIM response evidence:** `cargo test observation::tests --lib` exercises
+  literal sanitized buffered/SSE fixtures plus field, relationship, framing,
+  bounded-memory, truncation, finish, tool, and estimator boundaries. `cargo
+  test --test e2e observation_preserves_upstream_bytes -- --exact` proves the
+  real proxy preserves fixture body/status/content-type behavior while invalid
+  reasoning is omitted from existing metrics. `python3 scripts/capture_nim.py --selftest`
   exercises environment/URL/profile policy, exact request caps, HTTP/1.0 and
   TLS lifecycles, secret-free diagnostics, owner-only descriptor-contained
   publication, and failure cleanup without a service. `python3
@@ -204,7 +209,7 @@ repository-local guide link.
 ## 1. Unit — `cargo test` (in `src/`)
 
 Pool semantics (window spread, least-loaded, sticky/spill flags, penalize,
-release), dispatcher ordering and deadline fail-fast, SSE scanning, history
+release), dispatcher ordering and deadline fail-fast, bounded SSE observation, history
 retention/downsampling. Fast, deterministic, no I/O.
 
 ## 2. End-to-end — `tests/e2e.rs` + `tests/support/mod.rs`
@@ -332,7 +337,7 @@ rebuilds.
 libFuzzer/cargo-fuzz harnesses over the three surfaces that parse bytes we
 don't control, asserting *never panics* plus each surface's invariant:
 `sse_scan` (upstream SSE arrives arbitrarily fragmented — fed whole and
-re-fragmented, asserting the 1 MiB pathological-line guard), `sanitize_label`
+re-fragmented through the bounded private observer), `sanitize_label`
 (the metric-injection defense: output is non-empty, ≤64 chars, safe charset),
 and `config_roundtrip` (operator-edited `config.json`: parse never panics,
 serialize→parse→serialize is a fixpoint). `fuzz.yml` smoke-fuzzes each target

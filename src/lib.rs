@@ -4,6 +4,7 @@ mod config;
 mod dispatch;
 mod governor;
 mod history;
+mod observation;
 mod pool;
 mod presentation;
 mod proxy;

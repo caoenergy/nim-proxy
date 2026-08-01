@@ -64,7 +64,8 @@ page describes a conclusion, a plan describes the live state.
 | [key-pool](architecture/key-pool.md) | Per-key sliding-window lanes; least-loaded selection; cooldown on upstream backoff |
 | [dispatcher](architecture/dispatcher.md) | Global FIFO slot queue; abandoned-waiter slot return; affinity accounting |
 | [governor](architecture/governor.md) | Per-model concurrency gate; classifies worker exhaustion apart from 429s and backs off the model, adaptively |
-| [streaming-pipeline](architecture/streaming-pipeline.md) | Heartbeats, retry/failover, absolute deadlines, idle timeout, SSE usage scanning |
+| [streaming-pipeline](architecture/streaming-pipeline.md) | Heartbeats, retry/failover, absolute deadlines, idle timeout, and bounded SSE observation |
+| [nim-observations](architecture/nim-observations.md) | Private typed response observations validated from sanitized wire evidence without relay interference |
 | [metrics-history](architecture/metrics-history.md) | Prometheus registry + recoverable canonical JSONL, query-scoped completeness, exact rollups, and atomic retention |
 | [dashboard](architecture/dashboard.md) | Split embedded operator console; one honest complete/partial/unavailable window across 5 tabs plus clearly scoped Now values |
 | [presentation-layer](architecture/presentation-layer.md) | Compile-time public/operator pages and assets with strict same-origin CSP, explicit gates, and served-byte browser proof |
