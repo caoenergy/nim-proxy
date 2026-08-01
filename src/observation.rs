@@ -27,6 +27,46 @@ pub(crate) struct ResponseObservations {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct UsageObservationMetric {
+    pub(crate) field: &'static str,
+    pub(crate) result: &'static str,
+}
+
+/// Map the finalized fixed usage fields to the only bounded observation metric
+/// labels. This is the sole classification-to-metric boundary: callers must
+/// not inspect response values or recreate these field/result pairs.
+pub(crate) fn usage_observation_metrics(usage: &UsageObservations) -> Vec<UsageObservationMetric> {
+    let result = |observation: &Observation| match observation {
+        Observation::Measured(_) => "measured",
+        Observation::Estimated(_) => "estimated",
+        Observation::Unavailable => "unavailable",
+        Observation::Invalid => "invalid",
+    };
+    vec![
+        UsageObservationMetric {
+            field: "prompt_tokens",
+            result: result(&usage.prompt_tokens),
+        },
+        UsageObservationMetric {
+            field: "completion_tokens",
+            result: result(&usage.completion_tokens),
+        },
+        UsageObservationMetric {
+            field: "total_tokens",
+            result: result(&usage.total_tokens),
+        },
+        UsageObservationMetric {
+            field: "cached_tokens",
+            result: result(&usage.cached_tokens),
+        },
+        UsageObservationMetric {
+            field: "reasoning_tokens",
+            result: result(&usage.reasoning_tokens),
+        },
+    ]
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FinishObservation {
     pub(crate) choice_index: u64,
     pub(crate) result: FinishResult,
@@ -528,9 +568,165 @@ fn unavailable_usage() -> UsageObservations {
 #[cfg(test)]
 mod tests {
     use super::{
-        observe_buffered, FinishObservation, FinishReason, FinishResult, Observation,
-        ResponseObservations, SseObserver, StreamOutcome,
+        observe_buffered, usage_observation_metrics, FinishObservation, FinishReason, FinishResult,
+        Observation, ResponseObservations, SseObserver, StreamOutcome, UsageObservationMetric,
+        UsageObservations,
     };
+
+    #[test]
+    fn observation_metric_records_each_final_usage_result_with_closed_labels() {
+        // Mutation caught: omitting the Task 16 counter, or emitting a raw
+        // response/request value instead of one final bounded field/result pair.
+        let usage = UsageObservations {
+            prompt_tokens: Observation::Measured(0),
+            completion_tokens: Observation::Estimated(3),
+            total_tokens: Observation::Invalid,
+            cached_tokens: Observation::Unavailable,
+            reasoning_tokens: Observation::Measured(2),
+        };
+
+        assert_eq!(
+            usage_observation_metrics(&usage),
+            vec![
+                UsageObservationMetric {
+                    field: "prompt_tokens",
+                    result: "measured"
+                },
+                UsageObservationMetric {
+                    field: "completion_tokens",
+                    result: "estimated"
+                },
+                UsageObservationMetric {
+                    field: "total_tokens",
+                    result: "invalid"
+                },
+                UsageObservationMetric {
+                    field: "cached_tokens",
+                    result: "unavailable"
+                },
+                UsageObservationMetric {
+                    field: "reasoning_tokens",
+                    result: "measured"
+                },
+            ],
+            "nimproxy_usage_observations_total must have only literal field/result labels"
+        );
+    }
+
+    #[test]
+    fn observation_metric_finalizes_disconnected_stream_as_unavailable() {
+        // Mutation caught: discarding the finalized observer result on a
+        // client disconnect instead of counting all five unavailable fields.
+        let mut observer = SseObserver::default();
+        observer.push(b"data: {\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":2}}\n\n");
+        let usage = observer.finish(StreamOutcome::Disconnected).usage;
+
+        assert_eq!(
+            usage_observation_metrics(&usage),
+            vec![
+                UsageObservationMetric {
+                    field: "prompt_tokens",
+                    result: "unavailable"
+                },
+                UsageObservationMetric {
+                    field: "completion_tokens",
+                    result: "unavailable"
+                },
+                UsageObservationMetric {
+                    field: "total_tokens",
+                    result: "unavailable"
+                },
+                UsageObservationMetric {
+                    field: "cached_tokens",
+                    result: "unavailable"
+                },
+                UsageObservationMetric {
+                    field: "reasoning_tokens",
+                    result: "unavailable"
+                },
+            ],
+            "a disconnected stream has five final unavailable observations"
+        );
+    }
+
+    #[test]
+    fn observation_metric_records_successful_buffered_usage_as_measured() {
+        // Mutation caught: bypassing final counter accounting for a successful
+        // buffered response, including the zero-valued measured observation.
+        let usage = observe_buffered(
+            br#"{"usage":{"prompt_tokens":0,"completion_tokens":2,"total_tokens":2,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":1}}}"#,
+        )
+        .usage;
+
+        assert_eq!(
+            usage_observation_metrics(&usage),
+            vec![
+                UsageObservationMetric {
+                    field: "prompt_tokens",
+                    result: "measured"
+                },
+                UsageObservationMetric {
+                    field: "completion_tokens",
+                    result: "measured"
+                },
+                UsageObservationMetric {
+                    field: "total_tokens",
+                    result: "measured"
+                },
+                UsageObservationMetric {
+                    field: "cached_tokens",
+                    result: "measured"
+                },
+                UsageObservationMetric {
+                    field: "reasoning_tokens",
+                    result: "measured"
+                },
+            ],
+            "a successful buffered response finalizes all five usage fields"
+        );
+    }
+
+    #[test]
+    fn observation_metric_finalizes_truncated_or_unterminated_stream_as_unavailable() {
+        // Mutation caught: treating an upstream truncation or nominal EOF with
+        // an unterminated SSE event as a completed measured observation.
+        for outcome in [StreamOutcome::Truncated, StreamOutcome::Completed] {
+            let mut observer = SseObserver::default();
+            let event = if outcome == StreamOutcome::Truncated {
+                b"data: {\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":2}}\n\n".as_slice()
+            } else {
+                b"data: {\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":2}}".as_slice()
+            };
+            observer.push(event);
+
+            assert_eq!(
+                usage_observation_metrics(&observer.finish(outcome).usage),
+                vec![
+                    UsageObservationMetric {
+                        field: "prompt_tokens",
+                        result: "unavailable"
+                    },
+                    UsageObservationMetric {
+                        field: "completion_tokens",
+                        result: "unavailable"
+                    },
+                    UsageObservationMetric {
+                        field: "total_tokens",
+                        result: "unavailable"
+                    },
+                    UsageObservationMetric {
+                        field: "cached_tokens",
+                        result: "unavailable"
+                    },
+                    UsageObservationMetric {
+                        field: "reasoning_tokens",
+                        result: "unavailable"
+                    },
+                ],
+                "{outcome:?} has five final unavailable observations"
+            );
+        }
+    }
 
     fn fixture_body(name: &str) -> Vec<u8> {
         let fixture = match name {

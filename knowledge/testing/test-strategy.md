@@ -161,7 +161,12 @@ that proof.
   bounded-memory, truncation, finish, tool, and estimator boundaries. `cargo
   test --test e2e observation_preserves_upstream_bytes -- --exact` proves the
   real proxy preserves fixture body/status/content-type behavior while invalid
-  reasoning is omitted from existing metrics. `python3 scripts/capture_nim.py --selftest`
+  reasoning is omitted from existing metrics. `cargo test --test e2e
+  dashboard_observation_quality_is_honest -- --exact` additionally locks the
+  exact bounded usage-observation exposition, successful and abort finalizers,
+  and excluded retry/non-success paths; `node scripts/render_check.js
+  --all-states` locks the catalog-backed absent/zero/dominance/tie/live-tail
+  quality row independently from history completeness. `python3 scripts/capture_nim.py --selftest`
   exercises environment/URL/profile policy, exact request caps, HTTP/1.0 and
   TLS lifecycles, secret-free diagnostics, owner-only descriptor-contained
   publication, and failure cleanup without a service. `python3

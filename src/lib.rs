@@ -536,6 +536,10 @@ pub async fn run() {
             .unwrap();
     }
     let prometheus = builder.install_recorder().expect("prometheus recorder");
+    metrics::describe_counter!(
+        "nimproxy_usage_observations_total",
+        "Final classified upstream usage observations by field and result."
+    );
 
     let pool: PoolHandle = Arc::new(RwLock::new(Arc::new(Pool::new(pool_specs))));
 

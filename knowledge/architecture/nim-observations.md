@@ -47,8 +47,22 @@ raw event body is retained after classification.
 
 The proxy records only finalized measured prompt/reasoning/tool/finish values
 and measured or estimated completion using its existing metric names and
-labels. Invalid/unavailable values are omitted. Total and cached have no
-existing metric. See the [streaming pipeline](streaming-pipeline.md),
-[usage injection decision](../decisions/usage-injection-auto-fallback.md),
+labels. Invalid/unavailable values are omitted there. Total and cached have no
+existing token metric.
+
+Every finalized response also emits exactly five
+`nimproxy_usage_observations_total` counter outcomes, one for each fixed field
+(`prompt_tokens`, `completion_tokens`, `total_tokens`, `cached_tokens`, and
+`reasoning_tokens`) with one closed result label (`measured`, `estimated`,
+`unavailable`, or `invalid`). The canonical observation-owned mapping is the
+only classification-to-counter boundary, so it neither reparses response bytes
+nor repeats an SSE event. Its maximum cardinality is 20 series and it carries
+no request, model, client, provider, or upstream-content label. Successful
+buffered and completed streams use their final typed values; disconnect,
+truncation, idle cutoff, and unterminated completed SSE all finalize five
+unavailable outcomes before the proxy preserves their existing request/error
+behavior. Rejected/retried responses and failed buffered body reads have no
+final observed body and emit none. See the [streaming pipeline](streaming-pipeline.md),
+[metrics history](metrics-history.md), [usage injection decision](../decisions/usage-injection-auto-fallback.md),
 [capture runbook](../ops/nim-response-capture.md), and
 [test strategy](../testing/test-strategy.md).

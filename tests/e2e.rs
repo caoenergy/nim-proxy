@@ -32,6 +32,58 @@ fn no_redirect_client() -> reqwest::Client {
         .unwrap()
 }
 
+fn usage_observation_counter_lines(exposition: &str) -> BTreeSet<String> {
+    let rows: Vec<_> = exposition
+        .lines()
+        .filter(|line| line.starts_with("nimproxy_usage_observations_total{"))
+        .collect();
+    let unique_rows: BTreeSet<_> = rows.iter().copied().collect();
+    assert_eq!(
+        unique_rows.len(),
+        rows.len(),
+        "usage observation exposition must not duplicate a series: {rows:?}"
+    );
+    for row in &rows {
+        let (labels, value) = row
+            .strip_prefix("nimproxy_usage_observations_total{")
+            .and_then(|row| row.split_once("} "))
+            .expect("usage observation counter has labels and an integer value");
+        let labels: Vec<_> = labels.split(',').collect();
+        assert_eq!(
+            labels.len(),
+            2,
+            "usage observation label count is closed: {row}"
+        );
+        let field = labels[0]
+            .strip_prefix("field=\"")
+            .and_then(|field| field.strip_suffix('"'))
+            .expect("field is the first, quoted label");
+        let result = labels[1]
+            .strip_prefix("result=\"")
+            .and_then(|result| result.strip_suffix('"'))
+            .expect("result is the second, quoted label");
+        assert!(
+            matches!(
+                field,
+                "prompt_tokens"
+                    | "completion_tokens"
+                    | "total_tokens"
+                    | "cached_tokens"
+                    | "reasoning_tokens"
+            ),
+            "usage observation field is closed: {row}"
+        );
+        assert!(
+            matches!(result, "measured" | "estimated" | "unavailable" | "invalid"),
+            "usage observation result is closed: {row}"
+        );
+        value
+            .parse::<u64>()
+            .expect("usage observation counter value is an unsigned integer");
+    }
+    unique_rows.into_iter().map(str::to_owned).collect()
+}
+
 async fn assert_exact_api_error(
     response: reqwest::Response,
     status: reqwest::StatusCode,
@@ -2743,6 +2795,278 @@ async fn metrics_report_traffic_tokens_and_affinity() {
         "exact usage counted: {metrics}"
     );
     assert!(metrics.contains("nimproxy_affinity_total"));
+}
+
+#[tokio::test]
+async fn dashboard_observation_quality_is_honest() {
+    // Mutation caught: the proxy omits `nimproxy_usage_observations_total`,
+    // does not record the terminal disconnected-stream result, or exposes a
+    // request/model/client/error label instead of the closed field/result pair.
+    let mock = start_mock().await;
+    let proxy = start_proxy_with(
+        &mock.url,
+        StoreOpts {
+            stream_idle_secs: 1,
+            strict_passthrough: true,
+            ..Default::default()
+        },
+        &[],
+    )
+    .await;
+    let cookie = login(&proxy).await;
+
+    // A successful buffered response makes all five usage fields measured,
+    // including a measured zero. This is a distinct finalization path from
+    // the ordinary streamed response below.
+    mock.state.push(Behavior::ExactResponse {
+        content_type: "application/json".into(),
+        body: r#"{"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":2,"total_tokens":2,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":1}}}"#.into(),
+    });
+    client()
+        .post(proxy.url("/v1/chat/completions"))
+        .json(&chat_body("buffered-measured", false))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+
+    // Measured: prompt, completion, and reasoning arrive in the ordinary
+    // completed stream. Total and cached are absent.
+    read_sse(
+        client()
+            .post(proxy.url("/v1/chat/completions"))
+            .json(&chat_body("measured", true))
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+
+    // Unavailable: a valid buffered response carries no usage object.
+    mock.state.push(Behavior::ExactResponse {
+        content_type: "application/json".into(),
+        body: r#"{"choices":[]}"#.into(),
+    });
+    client()
+        .post(proxy.url("/v1/chat/completions"))
+        .json(&chat_body("unavailable", false))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+
+    // Estimated: one successful nonterminal SSE event has no measured usage.
+    mock.state.push(Behavior::ExactResponse {
+        content_type: "text/event-stream".into(),
+        body:
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: [DONE]\n\n"
+                .into(),
+    });
+    read_sse(
+        client()
+            .post(proxy.url("/v1/chat/completions"))
+            .json(&chat_body("estimated", true))
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+
+    // Invalid: a present non-object usage value invalidates exactly the five
+    // bounded usage fields without turning any of them into zero.
+    mock.state.push(Behavior::ExactResponse {
+        content_type: "application/json".into(),
+        body: r#"{"choices":[],"usage":[]}"#.into(),
+    });
+    client()
+        .post(proxy.url("/v1/chat/completions"))
+        .json(&chat_body("invalid", false))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+
+    // Final accounting must also happen when the downstream disconnects after
+    // its first streamed chunk, not only on the completed-stream path.
+    mock.state.push(Behavior::Hang);
+    let mut disconnected = client()
+        .post(proxy.url("/v1/chat/completions"))
+        .json(&chat_body("disconnect", true))
+        .send()
+        .await
+        .unwrap();
+    assert!(disconnected.chunk().await.unwrap().is_some());
+    drop(disconnected);
+    let disconnect_deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let request_rows = metrics(&proxy).await;
+        if request_rows.lines().any(|line| {
+            line == r#"nimproxy_requests_total{client="local",model="mock/model-a",path="/v1/chat/completions",status="disconnect"} 1"#
+        }) {
+            break;
+        }
+        assert!(
+            Instant::now() < disconnect_deadline,
+            "disconnect never finalized in request metrics: {request_rows}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    // The idle timeout finalizes a successfully opened but stalled upstream
+    // stream as unavailable rather than leaving its observations unrecorded.
+    mock.state.push(Behavior::Hang);
+    let stalled = client()
+        .post(proxy.url("/v1/chat/completions"))
+        .json(&chat_body("idle-stall", true))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        read_sse(stalled).await.contains("stalled"),
+        "idle-stalled upstream stream must return a terminal proxy error"
+    );
+
+    // A nominal completed response with an unterminated final SSE event is
+    // still a truncated observation, not measured or estimated usage.
+    mock.state.push(Behavior::ExactResponse {
+        content_type: "text/event-stream".into(),
+        body: "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2}}"
+            .into(),
+    });
+    read_sse(
+        client()
+            .post(proxy.url("/v1/chat/completions"))
+            .json(&chat_body("unterminated", true))
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+
+    let exposition = metrics(&proxy).await;
+    assert_eq!(
+        exposition
+            .lines()
+            .filter(|line| line.starts_with("# HELP nimproxy_usage_observations_total"))
+            .collect::<Vec<_>>(),
+        vec!["# HELP nimproxy_usage_observations_total Final classified upstream usage observations by field and result."],
+        "usage observation HELP contract is exact"
+    );
+    assert_eq!(
+        exposition
+            .lines()
+            .filter(|line| line.starts_with("# TYPE nimproxy_usage_observations_total"))
+            .collect::<Vec<_>>(),
+        vec!["# TYPE nimproxy_usage_observations_total counter"],
+        "usage observation TYPE contract is exact"
+    );
+    assert_eq!(
+        usage_observation_counter_lines(&exposition),
+        BTreeSet::from([
+            r#"nimproxy_usage_observations_total{field="prompt_tokens",result="measured"} 2"#.to_owned(),
+            r#"nimproxy_usage_observations_total{field="prompt_tokens",result="unavailable"} 5"#.to_owned(),
+            r#"nimproxy_usage_observations_total{field="prompt_tokens",result="invalid"} 1"#.to_owned(),
+            r#"nimproxy_usage_observations_total{field="completion_tokens",result="measured"} 2"#.to_owned(),
+            r#"nimproxy_usage_observations_total{field="completion_tokens",result="estimated"} 1"#.to_owned(),
+            r#"nimproxy_usage_observations_total{field="completion_tokens",result="unavailable"} 4"#.to_owned(),
+            r#"nimproxy_usage_observations_total{field="completion_tokens",result="invalid"} 1"#.to_owned(),
+            r#"nimproxy_usage_observations_total{field="total_tokens",result="measured"} 1"#.to_owned(),
+            r#"nimproxy_usage_observations_total{field="total_tokens",result="unavailable"} 6"#.to_owned(),
+            r#"nimproxy_usage_observations_total{field="total_tokens",result="invalid"} 1"#.to_owned(),
+            r#"nimproxy_usage_observations_total{field="cached_tokens",result="measured"} 1"#.to_owned(),
+            r#"nimproxy_usage_observations_total{field="cached_tokens",result="unavailable"} 6"#.to_owned(),
+            r#"nimproxy_usage_observations_total{field="cached_tokens",result="invalid"} 1"#.to_owned(),
+            r#"nimproxy_usage_observations_total{field="reasoning_tokens",result="measured"} 2"#.to_owned(),
+            r#"nimproxy_usage_observations_total{field="reasoning_tokens",result="unavailable"} 5"#.to_owned(),
+            r#"nimproxy_usage_observations_total{field="reasoning_tokens",result="invalid"} 1"#.to_owned(),
+        ]),
+        "every finalized success/disconnect/stall/unterminated path has exactly one of the closed five-field results"
+    );
+
+    // The existing typed dashboard payload carries registry series directly;
+    // no observation-availability API field is added for this UI state.
+    let now: serde_json::Value = client()
+        .get(proxy.url("/api/dashboard/now"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(now.get("observation_availability").is_none());
+    assert!(
+        now["metrics"].as_array().unwrap().iter().any(|metric| {
+            metric["metric"] == "nimproxy_usage_observations_total"
+                && metric["labels"]
+                    == serde_json::json!({"field":"completion_tokens","result":"estimated"})
+                && metric["value"] == 1.0
+        }),
+        "dashboard must consume the existing metrics payload, not an invented API field: {now}"
+    );
+
+    // A failed final response is excluded entirely: it must not synthesize an
+    // observation result merely because the request reached the proxy.
+    let no_success_mock = start_mock().await;
+    let no_success_proxy = start_proxy_with(
+        &no_success_mock.url,
+        StoreOpts {
+            strict_passthrough: true,
+            ..Default::default()
+        },
+        &[],
+    )
+    .await;
+    no_success_mock.state.push(Behavior::BadRequest);
+    assert_eq!(
+        client()
+            .post(no_success_proxy.url("/v1/chat/completions"))
+            .json(&chat_body("failed", false))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    assert!(
+        usage_observation_counter_lines(&metrics(&no_success_proxy).await).is_empty(),
+        "non-successful responses are excluded from finalized observations"
+    );
+
+    // The pre-observation retry response is likewise excluded; only its final
+    // successful attempt leaves the five literal final results.
+    let retry_mock = start_mock().await;
+    let retry_proxy = start_proxy(&retry_mock.url, &[]).await;
+    retry_mock.state.push(Behavior::RateLimited(0));
+    retry_mock.state.push(Behavior::Ok);
+    read_sse(
+        client()
+            .post(retry_proxy.url("/v1/chat/completions"))
+            .json(&chat_body("retry", true))
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        usage_observation_counter_lines(&metrics(&retry_proxy).await),
+        BTreeSet::from([
+            r#"nimproxy_usage_observations_total{field="prompt_tokens",result="measured"} 1"#
+                .to_owned(),
+            r#"nimproxy_usage_observations_total{field="completion_tokens",result="measured"} 1"#
+                .to_owned(),
+            r#"nimproxy_usage_observations_total{field="total_tokens",result="unavailable"} 1"#
+                .to_owned(),
+            r#"nimproxy_usage_observations_total{field="cached_tokens",result="unavailable"} 1"#
+                .to_owned(),
+            r#"nimproxy_usage_observations_total{field="reasoning_tokens",result="measured"} 1"#
+                .to_owned(),
+        ]),
+        "pre-observation retry responses do not add observation counters"
+    );
 }
 
 #[tokio::test]

@@ -6,6 +6,21 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-08-01] component — bounded finalized usage-observation quality
+
+Task 16 adds the private, fixed-cardinality
+`nimproxy_usage_observations_total{field,result}` counter at the Task 15
+finalization boundary. Each successful observed response or finalized stream
+exit contributes exactly five closed outcomes; retries, rejected responses,
+and failed body reads contribute none. The Overview derives one catalog-backed
+quality row from recognized finite nonnegative selected-range/tail rows without
+inventing presence from a synthetic zero baseline: absent is Unavailable,
+observed zero is No observations, and positive ties favor invalid,
+unavailable, estimated, then measured. History completeness remains separate.
+See [NIM observations](architecture/nim-observations.md),
+[Dashboard](architecture/dashboard.md), [metrics history](architecture/metrics-history.md),
+and [test strategy](testing/test-strategy.md).
+
 ## [2026-08-01] component — bounded typed NIM response observations
 
 Task 15 replaces the separate buffered shortcuts and `SseScan` with one private

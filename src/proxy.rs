@@ -21,8 +21,8 @@ use tokio_stream::wrappers::ReceiverStream;
 use crate::dispatch::Slot;
 use crate::governor::{self, ModelPermit};
 use crate::observation::{
-    observe_buffered, FinishReason, FinishResult, Observation, ResponseObservations, SseObserver,
-    StreamOutcome,
+    observe_buffered, usage_observation_metrics, FinishReason, FinishResult, Observation,
+    ResponseObservations, SseObserver, StreamOutcome,
 };
 use crate::{AppState, Config};
 
@@ -346,6 +346,14 @@ fn record_observations(
     ctx: &Ctx,
     observations: &ResponseObservations,
 ) -> Option<(u64, &'static str)> {
+    for metric in usage_observation_metrics(&observations.usage) {
+        counter!(
+            "nimproxy_usage_observations_total",
+            "field" => metric.field,
+            "result" => metric.result,
+        )
+        .increment(1);
+    }
     let prompt = match observations.usage.prompt_tokens {
         Observation::Measured(value) => Some(value),
         _ => None,
@@ -864,14 +872,14 @@ fn streaming(
                     };
                     let next = tokio::select! {
                         _ = tx.closed() => {
-                            let _ = observer.finish(StreamOutcome::Disconnected);
+                            record_observations(&ctx, &observer.finish(StreamOutcome::Disconnected));
                             record_request(&ctx, "disconnect");
                             return;
                         }
                         read = upstream_read => match read {
                             Ok(n) => n,
                             Err(_) => {
-                                let _ = observer.finish(StreamOutcome::Truncated);
+                                record_observations(&ctx, &observer.finish(StreamOutcome::Truncated));
                                 tracing::warn!(model = %ctx.model, idle = ?cfg.stream_idle, "upstream stream stalled");
                                 record_request(&ctx, "stall");
                                 let _ = tx.send(Ok(sse_error("upstream stream stalled"))).await;
@@ -889,13 +897,16 @@ fn streaming(
                             }
                             observer.push(&b);
                             if tx.send(Ok(b)).await.is_err() {
-                                let _ = observer.finish(StreamOutcome::Disconnected);
+                                record_observations(
+                                    &ctx,
+                                    &observer.finish(StreamOutcome::Disconnected),
+                                );
                                 record_request(&ctx, "disconnect");
                                 return; // client hung up
                             }
                         }
                         Err(e) => {
-                            let _ = observer.finish(StreamOutcome::Truncated);
+                            record_observations(&ctx, &observer.finish(StreamOutcome::Truncated));
                             tracing::warn!(error = %e, "upstream stream broke mid-response");
                             record_request(&ctx, "stream_error");
                             let _ = tx.send(Ok(sse_error("upstream stream interrupted"))).await;

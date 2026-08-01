@@ -43,6 +43,10 @@ const PRESENTATION_CSP = "default-src 'none'; img-src 'self' data:; style-src 's
  * reports each missing row by stable id.
  */
 const INTERACTION_ROWS = [
+  /* Mutation caught by the observation-quality state rows below: rendering
+     absent/invalid observations as zero, omitting a closed result state, or
+     coupling that state to history-window completeness. The expected health
+     row text is literal catalog English, not a dashboard helper result. */
   {
     id: 'startup-dashboard-healthy',
     category: 'startup',
@@ -803,6 +807,83 @@ const INTERACTION_ROWS = [
     visual: [{ case: 'dashboard-partial-incomplete', locales: ['en-US', 'en-XA'], roles: ['superuser'], surfaces: ['dashboard-tabs'] }],
   },
   {
+    id: 'state-observation-measured',
+    category: 'state',
+    state: 'observation-measured',
+    action: 'fulfill the dashboard range from the measured-observation Rust fixture',
+    visible: 'the health row says Measured without a numeric quality zero',
+  },
+  {
+    id: 'state-observation-estimated',
+    category: 'state',
+    state: 'observation-estimated',
+    action: 'fulfill the dashboard range from the estimated-observation Rust fixture',
+    visible: 'the health row says Estimated without a numeric quality zero',
+  },
+  {
+    id: 'state-observation-unavailable',
+    category: 'state',
+    state: 'observation-unavailable',
+    action: 'fulfill the dashboard range from the unavailable-observation Rust fixture',
+    visible: 'the health row says Unavailable rather than zero',
+  },
+  {
+    id: 'state-observation-invalid',
+    category: 'state',
+    state: 'observation-invalid',
+    action: 'fulfill the dashboard range from the invalid-observation Rust fixture',
+    visible: 'the health row says Invalid rather than zero',
+  },
+  {
+    id: 'state-observation-incomplete-history',
+    category: 'state',
+    state: 'observation-measured-history-incomplete',
+    action: 'fulfill the dashboard range from measured observations with incomplete history',
+    visible: 'Measured observation quality and Partial history remain independently visible',
+  },
+  {
+    id: 'state-observation-zero',
+    category: 'state',
+    state: 'observation-zero',
+    action: 'fulfill the dashboard range from the zero-observation Rust fixture',
+    visible: 'recognized zero observations say No observations rather than an unavailable quality',
+  },
+  {
+    id: 'state-observation-absent',
+    category: 'state',
+    state: 'observation-absent',
+    action: 'fulfill the dashboard range with no recognized observation rows',
+    visible: 'absent observation rows say Unavailable rather than zero',
+  },
+  {
+    id: 'state-observation-tie-invalid',
+    category: 'state',
+    state: 'observation-tie-invalid',
+    action: 'fulfill tied observation results including invalid from the Rust fixture',
+    visible: 'Invalid wins a positive result tie',
+  },
+  {
+    id: 'state-observation-tie-unavailable',
+    category: 'state',
+    state: 'observation-tie-unavailable',
+    action: 'fulfill tied observation results including unavailable from the Rust fixture',
+    visible: 'Unavailable wins a positive result tie without invalid',
+  },
+  {
+    id: 'state-observation-tie-estimated',
+    category: 'state',
+    state: 'observation-tie-estimated',
+    action: 'fulfill tied estimated and measured observations from the Rust fixture',
+    visible: 'Estimated wins a positive result tie without invalid or unavailable',
+  },
+  {
+    id: 'state-observation-live-tail',
+    category: 'state',
+    state: 'observation-live-tail',
+    action: 'append a valid observation row and an ignored negative row through the live dashboard tail',
+    visible: 'the valid live-tail result renders while the negative row does not become Invalid',
+  },
+  {
     id: 'state-history-unavailable',
     category: 'state',
     state: 'history-unavailable',
@@ -1488,6 +1569,64 @@ const DOM_CONTRACTS = {
       })()`,
       true),
   ],
+  'state-observation-measured': [
+    domContract('measured-observation-quality',
+      `(() => { const rows = Array.from(document.querySelectorAll('#o-health .kv')); const row = rows.filter(row => row.textContent.trim() === 'Observation qualityMeasured'); const queued = rows.findIndex(row => row.textContent.trim() === 'Queued1'); return queued >= 0 && row.length === 1 && rows[queued + 1] === row[0] && row[0].className === 'kv'; })()`,
+      true),
+  ],
+  'state-observation-estimated': [
+    domContract('estimated-observation-quality',
+      `(() => { const rows = Array.from(document.querySelectorAll('#o-health .kv')); const row = rows.filter(row => row.textContent.trim() === 'Observation qualityEstimated'); const queued = rows.findIndex(row => row.textContent.trim() === 'Queued1'); return queued >= 0 && row.length === 1 && rows[queued + 1] === row[0] && row[0].className === 'kv warn'; })()`,
+      true),
+  ],
+  'state-observation-unavailable': [
+    domContract('unavailable-observation-quality-is-not-zero',
+      `(() => { const rows = Array.from(document.querySelectorAll('#o-health .kv')); const row = rows.filter(row => row.textContent.trim() === 'Observation qualityUnavailable'); const queued = rows.findIndex(row => row.textContent.trim() === 'Queued1'); return queued >= 0 && row.length === 1 && rows[queued + 1] === row[0] && row[0].className === 'kv warn'; })()`,
+      true),
+  ],
+  'state-observation-invalid': [
+    domContract('invalid-observation-quality-is-not-zero',
+      `(() => { const rows = Array.from(document.querySelectorAll('#o-health .kv')); const row = rows.filter(row => row.textContent.trim() === 'Observation qualityInvalid'); const queued = rows.findIndex(row => row.textContent.trim() === 'Queued1'); return queued >= 0 && row.length === 1 && rows[queued + 1] === row[0] && row[0].className === 'kv crit'; })()`,
+      true),
+  ],
+  'state-observation-incomplete-history': [
+    domContract('measured-quality-survives-incomplete-history',
+      `(() => { const rows = Array.from(document.querySelectorAll('#o-health .kv')); const row = rows.filter(row => row.textContent.trim() === 'Observation qualityMeasured'); const queued = rows.findIndex(row => row.textContent.trim() === 'Queued1'); return queued >= 0 && row.length === 1 && rows[queued + 1] === row[0] && row[0].className === 'kv'; })()`,
+      true),
+    domContract('incomplete-history-remains-separate',
+      `document.querySelector('#rangeinfo')?.textContent.includes('Partial history ·') ?? false`,
+      true),
+  ],
+  'state-observation-zero': [
+    domContract('zero-observation-quality-is-no-observations',
+      `(() => { const rows = Array.from(document.querySelectorAll('#o-health .kv')); const row = rows.filter(row => row.textContent.trim() === 'Observation qualityNo observations'); const queued = rows.findIndex(row => row.textContent.trim() === 'Queued1'); return queued >= 0 && row.length === 1 && rows[queued + 1] === row[0] && row[0].className === 'kv zero'; })()`,
+      true),
+  ],
+  'state-observation-absent': [
+    domContract('absent-observation-quality-is-unavailable',
+      `(() => { const rows = Array.from(document.querySelectorAll('#o-health .kv')); const row = rows.filter(row => row.textContent.trim() === 'Observation qualityUnavailable'); const queued = rows.findIndex(row => row.textContent.trim() === 'Queued1'); return queued >= 0 && row.length === 1 && rows[queued + 1] === row[0] && row[0].className === 'kv warn'; })()`,
+      true),
+  ],
+  'state-observation-tie-invalid': [
+    domContract('invalid-wins-observation-quality-tie',
+      `(() => { const rows = Array.from(document.querySelectorAll('#o-health .kv')); const row = rows.filter(row => row.textContent.trim() === 'Observation qualityInvalid'); const queued = rows.findIndex(row => row.textContent.trim() === 'Queued1'); return queued >= 0 && row.length === 1 && rows[queued + 1] === row[0] && row[0].className === 'kv crit'; })()`,
+      true),
+  ],
+  'state-observation-tie-unavailable': [
+    domContract('unavailable-wins-observation-quality-tie',
+      `(() => { const rows = Array.from(document.querySelectorAll('#o-health .kv')); const row = rows.filter(row => row.textContent.trim() === 'Observation qualityUnavailable'); const queued = rows.findIndex(row => row.textContent.trim() === 'Queued1'); return queued >= 0 && row.length === 1 && rows[queued + 1] === row[0] && row[0].className === 'kv warn'; })()`,
+      true),
+  ],
+  'state-observation-tie-estimated': [
+    domContract('estimated-wins-observation-quality-tie',
+      `(() => { const rows = Array.from(document.querySelectorAll('#o-health .kv')); const row = rows.filter(row => row.textContent.trim() === 'Observation qualityEstimated'); const queued = rows.findIndex(row => row.textContent.trim() === 'Queued1'); return queued >= 0 && row.length === 1 && rows[queued + 1] === row[0] && row[0].className === 'kv warn'; })()`,
+      true),
+  ],
+  'state-observation-live-tail': [
+    domContract('live-tail-observation-quality-ignores-negative-row',
+      `(() => { const rows = Array.from(document.querySelectorAll('#o-health .kv')); const row = rows.filter(row => row.textContent.trim() === 'Observation qualityEstimated'); const queued = rows.findIndex(row => row.textContent.trim() === 'Queued1'); return queued >= 0 && row.length === 1 && rows[queued + 1] === row[0] && row[0].className === 'kv warn'; })()`,
+      true),
+  ],
   'state-history-unavailable': [
     domContract('unavailable-range-message', `document.querySelector('#rangeinfo')?.textContent.trim() ?? null`, 'History unavailable for selected time range'),
   ],
@@ -1639,6 +1778,61 @@ const EXPLICIT_REQUEST_SEQUENCES = {
       from: '1697411600',
       points: '288',
       to: '1700003600',
+    }),
+  ],
+  'state-observation-measured': [
+    getRequest('/api/dashboard', {
+      from: '1697411600', points: '288', to: '1700003600',
+    }),
+  ],
+  'state-observation-estimated': [
+    getRequest('/api/dashboard', {
+      from: '1697411600', points: '288', to: '1700003600',
+    }),
+  ],
+  'state-observation-unavailable': [
+    getRequest('/api/dashboard', {
+      from: '1697411600', points: '288', to: '1700003600',
+    }),
+  ],
+  'state-observation-invalid': [
+    getRequest('/api/dashboard', {
+      from: '1697411600', points: '288', to: '1700003600',
+    }),
+  ],
+  'state-observation-incomplete-history': [
+    getRequest('/api/dashboard', {
+      from: '1697411600', points: '288', to: '1700003600',
+    }),
+  ],
+  'state-observation-zero': [
+    getRequest('/api/dashboard', {
+      from: '1697411600', points: '288', to: '1700003600',
+    }),
+  ],
+  'state-observation-absent': [
+    getRequest('/api/dashboard', {
+      from: '1697411600', points: '288', to: '1700003600',
+    }),
+  ],
+  'state-observation-tie-invalid': [
+    getRequest('/api/dashboard', {
+      from: '1697411600', points: '288', to: '1700003600',
+    }),
+  ],
+  'state-observation-tie-unavailable': [
+    getRequest('/api/dashboard', {
+      from: '1697411600', points: '288', to: '1700003600',
+    }),
+  ],
+  'state-observation-tie-estimated': [
+    getRequest('/api/dashboard', {
+      from: '1697411600', points: '288', to: '1700003600',
+    }),
+  ],
+  'state-observation-live-tail': [
+    getRequest('/api/dashboard', {
+      from: '1697411600', points: '288', to: '1700003600',
     }),
   ],
   'state-history-unavailable': [
@@ -1969,6 +2163,52 @@ const FIXTURE_SCENARIOS = {
   'state-partial-incomplete': dashboardRecipe({
     now: 'scenarios.json#dashboard-now-partial',
     range: 'dashboard-partial.json',
+    boundary: 'startup-dashboard-range',
+  }),
+  'state-observation-measured': dashboardRecipe({
+    range: 'dashboard-observation-measured.json',
+    boundary: 'startup-dashboard-range',
+  }),
+  'state-observation-estimated': dashboardRecipe({
+    range: 'dashboard-observation-estimated.json',
+    boundary: 'startup-dashboard-range',
+  }),
+  'state-observation-unavailable': dashboardRecipe({
+    range: 'dashboard-observation-unavailable.json',
+    boundary: 'startup-dashboard-range',
+  }),
+  'state-observation-invalid': dashboardRecipe({
+    range: 'dashboard-observation-invalid.json',
+    boundary: 'startup-dashboard-range',
+  }),
+  'state-observation-incomplete-history': dashboardRecipe({
+    now: 'scenarios.json#dashboard-now-partial',
+    range: 'dashboard-observation-incomplete.json',
+    boundary: 'startup-dashboard-range',
+  }),
+  'state-observation-zero': dashboardRecipe({
+    range: 'dashboard-observation-zero.json',
+    boundary: 'startup-dashboard-range',
+  }),
+  'state-observation-absent': dashboardRecipe({
+    range: 'dashboard-observation-absent.json',
+    boundary: 'startup-dashboard-range',
+  }),
+  'state-observation-tie-invalid': dashboardRecipe({
+    range: 'dashboard-observation-tie-invalid.json',
+    boundary: 'startup-dashboard-range',
+  }),
+  'state-observation-tie-unavailable': dashboardRecipe({
+    range: 'dashboard-observation-tie-unavailable.json',
+    boundary: 'startup-dashboard-range',
+  }),
+  'state-observation-tie-estimated': dashboardRecipe({
+    range: 'dashboard-observation-tie-estimated.json',
+    boundary: 'startup-dashboard-range',
+  }),
+  'state-observation-live-tail': dashboardRecipe({
+    now: 'dashboard-now-observation-tail.json',
+    range: 'dashboard-observation-absent.json',
     boundary: 'startup-dashboard-range',
   }),
   'state-history-unavailable': dashboardRecipe({

@@ -180,6 +180,21 @@ available history but with no usable points says **History unavailable for
 selected time range**. No global history remains **No data yet**. These states
 are catalog-owned; absent observations never become zeros.
 
+Overview's **Observation quality** health row reads the existing generic
+`nimproxy_usage_observations_total` rows from the selected range's final
+cumulative sample, including only a revision-matching live tail already
+accepted by `rangeSamples()`. It recognizes only the five fixed field labels
+and four fixed result labels, ignores non-finite or negative values, and keeps
+recognized-row presence separate from totals so the synthetic zero baseline
+cannot invent telemetry. No recognized row is **Unavailable**; recognized rows
+whose aggregate is zero are **No observations**. Otherwise the greatest result
+total wins, with conservative ties `invalid`, `unavailable`, `estimated`, then
+`measured`. Invalid is critical, unavailable/estimated warn, measured is
+normal, and no-observations uses the zero tone. This response-quality signal is
+independent from `window.complete`: **Partial history** and **Measured** may
+appear together. Its counter semantics live in
+[NIM observations](nim-observations.md).
+
 **Notable derivations, worth recording so they aren't rediscovered:**
 
 - **Delta chips** (the `+8.2%`-style pill on every KPI card) compare the
