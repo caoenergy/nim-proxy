@@ -358,6 +358,83 @@ def cleanup_raw_directory(directory: RawDirectory, names: tuple[str, ...]) -> No
         os.close(directory.parent_descriptor)
 
 
+def cleanup_capture_directory(output_dir: pathlib.Path, repository: pathlib.Path) -> None:
+    """Clear one exact reviewed raw set through retained no-follow descriptors."""
+    parent_descriptor = -1
+    directory_descriptor = -1
+    directory: RawDirectory | None = None
+    marker = ".nim-capture-raw-v1"
+    raw_names = tuple(f"{case}.raw.json" for case in CASES)
+    expected_names = {marker, *raw_names}
+    try:
+        parent_descriptor, leaf = secure_parent_descriptor(output_dir)
+        directory_descriptor = os.open(
+            leaf,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+            dir_fd=parent_descriptor,
+        )
+        directory_stat = os.fstat(directory_descriptor)
+        directory = RawDirectory(
+            directory_descriptor,
+            parent_descriptor,
+            leaf,
+            directory_stat.st_dev,
+            directory_stat.st_ino,
+        )
+        directory_descriptor = -1
+        parent_descriptor = -1
+        if (
+            not stat.S_ISDIR(directory_stat.st_mode)
+            or directory_stat.st_uid != os.getuid()
+            or stat.S_IMODE(directory_stat.st_mode) != OWNER_DIRECTORY_MODE
+        ):
+            raise CaptureError("capture-cleanup")
+        if not public_output_matches(output_dir, repository, directory_stat):
+            raise CaptureError("capture-path-boundary")
+        if set(os.listdir(directory.directory_descriptor)) != expected_names:
+            raise CaptureError("capture-cleanup")
+        for name in (marker, *raw_names):
+            descriptor = -1
+            try:
+                descriptor = os.open(
+                    name,
+                    os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW,
+                    dir_fd=directory.directory_descriptor,
+                )
+                file_stat = os.fstat(descriptor)
+                if (
+                    not stat.S_ISREG(file_stat.st_mode)
+                    or file_stat.st_uid != os.getuid()
+                    or stat.S_IMODE(file_stat.st_mode) != OWNER_FILE_MODE
+                ):
+                    raise CaptureError("capture-cleanup")
+                if name == marker and os.read(descriptor, 64) != b"nim-capture-raw-v1\n":
+                    raise CaptureError("capture-cleanup")
+            finally:
+                if descriptor != -1:
+                    os.close(descriptor)
+        for name in raw_names:
+            os.unlink(name, dir_fd=directory.directory_descriptor)
+        os.unlink(marker, dir_fd=directory.directory_descriptor)
+        os.fsync(directory.directory_descriptor)
+        if os.listdir(directory.directory_descriptor):
+            raise CaptureError("capture-cleanup")
+        if not public_output_matches(output_dir, repository, directory_stat):
+            raise CaptureError("capture-path-boundary")
+    except CaptureError:
+        raise
+    except OSError as error:
+        raise CaptureError("capture-cleanup") from error
+    finally:
+        if directory is not None:
+            close_raw_directory(directory)
+        else:
+            if directory_descriptor != -1:
+                os.close(directory_descriptor)
+            if parent_descriptor != -1:
+                os.close(parent_descriptor)
+
+
 def create_raw_directory(
     output_dir: pathlib.Path, repository: pathlib.Path
 ) -> RawDirectory:
@@ -1436,6 +1513,265 @@ def operational_competing_leaf(root: pathlib.Path) -> bool:
     return competed and output.is_dir() and stat.S_IMODE(output.stat().st_mode) == 0o755
 
 
+def cleanup_fixture(directory: pathlib.Path) -> None:
+    """Create one complete private raw set for cleanup-only operational controls."""
+    directory.mkdir(mode=OWNER_DIRECTORY_MODE)
+    os.chmod(directory, OWNER_DIRECTORY_MODE)
+    (directory / ".nim-capture-raw-v1").write_bytes(b"nim-capture-raw-v1\n")
+    os.chmod(directory / ".nim-capture-raw-v1", OWNER_FILE_MODE)
+    for case in CASES:
+        path = directory / f"{case}.raw.json"
+        path.write_bytes(b"{}")
+        os.chmod(path, OWNER_FILE_MODE)
+
+
+def operational_cleanup_exact_set(root: pathlib.Path) -> bool:
+    """The cleanup CLI clears one exact raw set but retains its raw directory."""
+    parent = root / "cleanup-exact-parent"
+    parent.mkdir()
+    output = parent / "raw"
+    cleanup_fixture(output)
+    output_stat = output.stat()
+    original_fsync = os.fsync
+    original_environment = capture_environment
+    synced_raw = False
+
+    def trace_fsync(file_descriptor: int) -> None:
+        nonlocal synced_raw
+        metadata = os.fstat(file_descriptor)
+        if (metadata.st_dev, metadata.st_ino) == (output_stat.st_dev, output_stat.st_ino):
+            synced_raw = True
+        original_fsync(file_descriptor)
+
+    try:
+        os.fsync = trace_fsync
+        globals()["capture_environment"] = lambda: (_ for _ in ()).throw(
+            AssertionError("cleanup read credential environment")
+        )
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
+            io.StringIO()
+        ):
+            try:
+                status = main(["--cleanup", "--output-dir", str(output)])
+            except SystemExit:
+                return False
+    finally:
+        os.fsync = original_fsync
+        globals()["capture_environment"] = original_environment
+    return (
+        status == 0
+        and parent.is_dir()
+        and output.is_dir()
+        and not os.listdir(output)
+        and synced_raw
+    )
+
+
+def operational_cleanup_rejects_hostile_sets(root: pathlib.Path) -> bool:
+    """Malformed raw sets fail closed without deleting targets or local evidence."""
+    repository = pathlib.Path(__file__).resolve().parent.parent
+    names = (".nim-capture-raw-v1", *(f"{case}.raw.json" for case in CASES))
+
+    def rejected(name: str, mutate) -> bool:
+        directory = root / name
+        cleanup_fixture(directory)
+        target = root / f"{name}-target"
+        target.write_bytes(b"target")
+        mutate(directory, target)
+        before = set(os.listdir(directory))
+        try:
+            cleanup_capture_directory(directory, repository)
+        except CaptureError as error:
+            return (
+                error.check == "capture-cleanup"
+                and directory.is_dir()
+                and set(os.listdir(directory)) == before
+                and target.read_bytes() == b"target"
+            )
+        except Exception:
+            return False
+        return False
+
+    checks = []
+    for index, file_name in enumerate(names):
+        checks.append(
+            rejected(
+                f"cleanup-symlink-{index}",
+                lambda directory, target, file_name=file_name: (
+                    os.unlink(directory / file_name),
+                    os.symlink(target, directory / file_name),
+                ),
+            )
+        )
+        checks.append(
+            rejected(
+                f"cleanup-mode-{index}",
+                lambda directory, target, file_name=file_name: os.chmod(
+                    directory / file_name, 0o644
+                ),
+            )
+        )
+    checks.append(
+        rejected(
+            "cleanup-extra",
+            lambda directory, target: (directory / "extra").write_bytes(b"extra"),
+        )
+    )
+    checks.append(
+        rejected(
+            "cleanup-missing",
+            lambda directory, target: os.unlink(directory / f"{CASES[0]}.raw.json"),
+        )
+    )
+    checks.append(
+        rejected(
+            "cleanup-marker-bytes",
+            lambda directory, target: (directory / ".nim-capture-raw-v1").write_bytes(
+                b"wrong-marker\n"
+            ),
+        )
+    )
+    checks.append(
+        rejected(
+            "cleanup-directory-mode",
+            lambda directory, target: os.chmod(directory, 0o755),
+        )
+    )
+    return all(checks)
+
+
+def operational_cleanup_public_swap(root: pathlib.Path) -> bool:
+    """A public parent or leaf swap cannot redirect cleanup or return success."""
+    repository = pathlib.Path(__file__).resolve().parent.parent
+
+    def swapped(kind: str) -> bool:
+        parent = root / f"cleanup-{kind}-parent"
+        parent.mkdir()
+        output = parent / "raw"
+        cleanup_fixture(output)
+        attacker_parent = root / f"cleanup-{kind}-attacker"
+        attacker_parent.mkdir()
+        attacker = attacker_parent / "raw"
+        cleanup_fixture(attacker)
+        parked = root / f"cleanup-{kind}-parked"
+        original_unlink = os.unlink
+        did_swap = False
+        attacker_before = {
+            name: (attacker / name).read_bytes()
+            for name in os.listdir(attacker)
+        }
+
+        def swap_then_unlink(path, *, dir_fd=None):
+            nonlocal did_swap
+            if not did_swap and dir_fd is not None and path == f"{CASES[0]}.raw.json":
+                if kind == "parent":
+                    parent.rename(parked)
+                    parent.symlink_to(attacker_parent, target_is_directory=True)
+                else:
+                    output.rename(parked)
+                    output.symlink_to(attacker, target_is_directory=True)
+                did_swap = True
+            return original_unlink(path, dir_fd=dir_fd)
+
+        try:
+            os.unlink = swap_then_unlink
+            try:
+                cleanup_capture_directory(output, repository)
+            except CaptureError as error:
+                failed = error.check == "capture-path-boundary"
+            else:
+                failed = False
+        except Exception:
+            return False
+        finally:
+            os.unlink = original_unlink
+        return (
+            did_swap
+            and failed
+            and attacker.is_dir()
+            and {
+                name: (attacker / name).read_bytes()
+                for name in os.listdir(attacker)
+            }
+            == attacker_before
+        )
+
+    return swapped("parent") and swapped("leaf")
+
+
+def operational_cleanup_replacement_leaf(root: pathlib.Path) -> bool:
+    """A reviewed raw directory is never replaced by a pathname-based removal."""
+    repository = pathlib.Path(__file__).resolve().parent.parent
+    parent = root / "cleanup-replacement-parent"
+    parent.mkdir()
+    output = parent / "raw"
+    cleanup_fixture(output)
+    parked = root / "cleanup-replacement-parked"
+    original_rmdir = os.rmdir
+    attempted_removal = False
+
+    def replace_before_rmdir(path, *, dir_fd=None):
+        nonlocal attempted_removal
+        if not attempted_removal and dir_fd is not None and path == output.name:
+            attempted_removal = True
+            output.rename(parked)
+            output.mkdir(mode=OWNER_DIRECTORY_MODE)
+            os.chmod(output, OWNER_DIRECTORY_MODE)
+        return original_rmdir(path, dir_fd=dir_fd)
+
+    try:
+        os.rmdir = replace_before_rmdir
+        try:
+            cleanup_capture_directory(output, repository)
+        except CaptureError:
+            return False
+    except Exception:
+        return False
+    finally:
+        os.rmdir = original_rmdir
+    return (
+        not attempted_removal
+        and output.is_dir()
+        and not os.listdir(output)
+        and not parked.exists()
+    )
+
+
+def operational_cleanup_fifo(root: pathlib.Path) -> bool:
+    """A fixed-name FIFO rejects promptly and remains untouched."""
+    repository = pathlib.Path(__file__).resolve().parent.parent
+    directory = root / "cleanup-fifo"
+    cleanup_fixture(directory)
+    fifo = directory / f"{CASES[0]}.raw.json"
+    os.unlink(fifo)
+    os.mkfifo(fifo, OWNER_FILE_MODE)
+    os.chmod(fifo, OWNER_FILE_MODE)
+    before = set(os.listdir(directory))
+    result: list[str] = []
+    complete = threading.Event()
+
+    def attempt_cleanup() -> None:
+        try:
+            cleanup_capture_directory(directory, repository)
+        except CaptureError as error:
+            result.append(error.check)
+        except Exception:
+            result.append("unexpected")
+        finally:
+            complete.set()
+
+    thread = threading.Thread(target=attempt_cleanup, daemon=True)
+    thread.start()
+    if not complete.wait(0.2):
+        return False
+    return (
+        result == ["capture-cleanup"]
+        and stat.S_ISFIFO(os.stat(fifo, follow_symlinks=False).st_mode)
+        and stat.S_IMODE(os.stat(fifo, follow_symlinks=False).st_mode) == OWNER_FILE_MODE
+        and set(os.listdir(directory)) == before
+    )
+
+
 def operational_four_case_orchestration(root: pathlib.Path) -> bool:
     """The production CLI publishes one complete canonical raw set."""
     original_environment = {
@@ -1900,6 +2236,25 @@ def selftest() -> int:
             operational_midset_failure_cleanup(root),
             failures,
         )
+        expect_operational_control(
+            "capture-cleanup-exact-set", operational_cleanup_exact_set(root), failures
+        )
+        expect_operational_control(
+            "capture-cleanup-hostile-set",
+            operational_cleanup_rejects_hostile_sets(root),
+            failures,
+        )
+        expect_operational_control(
+            "capture-cleanup-public-swap", operational_cleanup_public_swap(root), failures
+        )
+        expect_operational_control(
+            "capture-cleanup-replacement-leaf",
+            operational_cleanup_replacement_leaf(root),
+            failures,
+        )
+        expect_operational_control(
+            "capture-cleanup-fifo", operational_cleanup_fifo(root), failures
+        )
 
     if failures:
         print("capture selftest RED — named contract failures remain:")
@@ -1912,19 +2267,36 @@ def selftest() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--case",
         action="append",
         choices=CASES,
         help="repeat each fixed request profile once, in canonical order",
     )
-    parser.add_argument("--output-dir", type=pathlib.Path, help="new raw capture directory")
-    parser.add_argument(
+    mode.add_argument("--cleanup", action="store_true", help="clear one reviewed raw capture")
+    parser.add_argument("--output-dir", type=pathlib.Path, help="raw capture directory")
+    mode.add_argument(
         "--selftest", action="store_true", help="exercise capture contract regressions"
     )
     args = parser.parse_args(argv)
     if args.selftest:
         return selftest()
+    if args.cleanup:
+        if args.output_dir is None:
+            parser.error("--output-dir is required with --cleanup")
+        try:
+            cleanup_capture_directory(
+                args.output_dir, pathlib.Path(__file__).resolve().parent.parent
+            )
+        except CaptureError as error:
+            print(f"[{error.check}] capture cleanup failed", file=sys.stderr)
+            return 1
+        except Exception:
+            print("[capture-failed] capture cleanup failed", file=sys.stderr)
+            return 1
+        print("evidence cleanup complete")
+        return 0
     if args.case is None or args.output_dir is None:
         parser.error("--case and --output-dir are required unless --selftest is used")
     if tuple(args.case) != CASES:
