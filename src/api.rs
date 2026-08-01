@@ -974,9 +974,11 @@ mod tests {
         let empty = kind == "empty";
         let partial = kind == "partial";
         let unavailable = kind == "unavailable";
+        let outside_before = kind == "outside-before";
+        let outside_after = kind == "outside-after";
         let extreme = kind == "extreme";
         let long = kind == "long";
-        let values = if empty || unavailable {
+        let values = if empty || unavailable || outside_before || outside_after {
             Vec::new()
         } else if long {
             let client = format!("client-fixture-{}", "c".repeat(49));
@@ -1014,11 +1016,19 @@ mod tests {
         let effective_to = 1_700_003_600;
         let requested_from = if unavailable {
             1_699_000_000
+        } else if outside_before {
+            1_697_000_000
+        } else if outside_after {
+            1_700_100_000
         } else {
             1_697_411_600
         };
         let requested_to = if unavailable {
             1_699_003_600
+        } else if outside_before {
+            1_697_003_600
+        } else if outside_after {
+            1_700_103_600
         } else {
             effective_to
         };
@@ -1032,7 +1042,7 @@ mod tests {
             to,
             values: point_values,
         };
-        let points = if empty || unavailable {
+        let points = if empty || unavailable || outside_before || outside_after {
             Vec::new()
         } else if extreme || long {
             vec![point(effective_from, effective_to, values.clone())]
@@ -1073,7 +1083,7 @@ mod tests {
                 }
             },
             history_revision: 11,
-            latest: if empty || unavailable {
+            latest: if empty || unavailable || outside_before || outside_after {
                 Vec::new()
             } else if extreme {
                 vec![active_requests(f64::MAX / 4.0)]
@@ -1085,10 +1095,12 @@ mod tests {
             window: DashboardWindow {
                 available_from: (!empty).then_some(available_from),
                 available_to: (!empty).then_some(effective_to),
-                complete: !empty && !partial && !unavailable,
+                complete: !empty && !partial && !unavailable && !outside_before && !outside_after,
                 default_window_days: 30,
-                effective_from: (!empty && !unavailable).then_some(effective_from),
-                effective_to: (!empty && !unavailable).then_some(effective_to),
+                effective_from: (!empty && !unavailable && !outside_before && !outside_after)
+                    .then_some(effective_from),
+                effective_to: (!empty && !unavailable && !outside_before && !outside_after)
+                    .then_some(effective_to),
                 following_now: false,
                 requested_from,
                 requested_to,
@@ -1590,6 +1602,16 @@ mod tests {
                 dashboard_ui_fixture("unavailable"),
                 &initial_now,
             ),
+            (
+                "outside-before",
+                dashboard_ui_fixture("outside-before"),
+                &initial_now,
+            ),
+            (
+                "outside-after",
+                dashboard_ui_fixture("outside-after"),
+                &initial_now,
+            ),
             ("extreme", dashboard_ui_fixture("extreme"), &initial_now),
             ("long", dashboard_ui_fixture("long"), &initial_now),
             (
@@ -1640,6 +1662,38 @@ mod tests {
         assert!(unavailable_range.diagnostics.excluded_records > 0);
         assert!(unavailable_range.diagnostics.normalized_series > 0);
         assert!(unavailable_range.diagnostics.valid_samples > 0);
+        for (label, range, before) in [
+            (
+                "outside-before",
+                dashboard_ui_fixture("outside-before"),
+                true,
+            ),
+            (
+                "outside-after",
+                dashboard_ui_fixture("outside-after"),
+                false,
+            ),
+        ] {
+            assert!(
+                !range.window.complete,
+                "ui-fixture:{label}: range is incomplete"
+            );
+            assert_eq!(range.window.effective_from, None);
+            assert_eq!(range.window.effective_to, None);
+            assert!(range.points.is_empty());
+            assert!(range.totals.is_empty());
+            assert!(range.latest.is_empty());
+            let available_from = range
+                .window
+                .available_from
+                .expect("ui-fixture: global start");
+            let available_to = range.window.available_to.expect("ui-fixture: global end");
+            if before {
+                assert!(range.window.requested_to < available_from);
+            } else {
+                assert!(available_to < range.window.requested_from);
+            }
+        }
         assert!(
             partial_range.window.requested_from
                 < partial_range
@@ -1894,6 +1948,14 @@ mod tests {
             (
                 "dashboard-partial.json",
                 serde_json::to_value(dashboard_ui_fixture("partial")).unwrap(),
+            ),
+            (
+                "dashboard-outside-after.json",
+                serde_json::to_value(dashboard_ui_fixture("outside-after")).unwrap(),
+            ),
+            (
+                "dashboard-outside-before.json",
+                serde_json::to_value(dashboard_ui_fixture("outside-before")).unwrap(),
             ),
             (
                 "dashboard-unavailable.json",

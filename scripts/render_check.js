@@ -812,6 +812,22 @@ const INTERACTION_ROWS = [
     visual: [{ case: 'dashboard-history-unavailable', locales: ['en-US', 'en-XA'], roles: ['superuser'], surfaces: ['dashboard-tabs'] }],
   },
   {
+    id: 'state-history-outside-before',
+    category: 'state',
+    state: 'history-outside-before',
+    action: 'select a range wholly before globally available history',
+    visible: 'an ordinary range before retained history remains a no-data range',
+    dom: [{ selector: '#rangeinfo', property: 'textContent', equals: 'No data in selected range' }],
+  },
+  {
+    id: 'state-history-outside-after',
+    category: 'state',
+    state: 'history-outside-after',
+    action: 'select a range wholly after globally available history',
+    visible: 'an ordinary range after retained history remains a no-data range',
+    dom: [{ selector: '#rangeinfo', property: 'textContent', equals: 'No data in selected range' }],
+  },
+  {
     id: 'state-extreme-numeric',
     category: 'state',
     state: 'extreme-numeric',
@@ -1475,6 +1491,12 @@ const DOM_CONTRACTS = {
   'state-history-unavailable': [
     domContract('unavailable-range-message', `document.querySelector('#rangeinfo')?.textContent.trim() ?? null`, 'History unavailable for selected time range'),
   ],
+  'state-history-outside-before': [
+    domContract('outside-before-range-message', `document.querySelector('#rangeinfo')?.textContent.trim() ?? null`, 'No data in selected range'),
+  ],
+  'state-history-outside-after': [
+    domContract('outside-after-range-message', `document.querySelector('#rangeinfo')?.textContent.trim() ?? null`, 'No data in selected range'),
+  ],
   'state-extreme-numeric': [
     domContract('finite-layout',
       `Number.isFinite(document.documentElement.scrollWidth) && !/(?:NaN|Infinity)/.test(document.body.textContent)`,
@@ -1624,6 +1646,20 @@ const EXPLICIT_REQUEST_SEQUENCES = {
       from: '1699000000',
       points: '288',
       to: '1699003600',
+    }),
+  ],
+  'state-history-outside-before': [
+    getRequest('/api/dashboard', {
+      from: '1697000000',
+      points: '288',
+      to: '1697003600',
+    }),
+  ],
+  'state-history-outside-after': [
+    getRequest('/api/dashboard', {
+      from: '1700100000',
+      points: '288',
+      to: '1700103600',
     }),
   ],
   'state-extreme-numeric': [
@@ -1937,6 +1973,14 @@ const FIXTURE_SCENARIOS = {
   }),
   'state-history-unavailable': dashboardRecipe({
     range: 'dashboard-unavailable.json',
+    boundary: 'after-ready',
+  }),
+  'state-history-outside-before': dashboardRecipe({
+    range: 'dashboard-outside-before.json',
+    boundary: 'after-ready',
+  }),
+  'state-history-outside-after': dashboardRecipe({
+    range: 'dashboard-outside-after.json',
     boundary: 'after-ready',
   }),
   'state-extreme-numeric': dashboardRecipe({
@@ -4060,6 +4104,26 @@ function matrixActionExpression(id) {
       ${click('#ranges [data-range="custom"]')};
       document.querySelector('#from').value=local(1699000000);
       document.querySelector('#to').value=local(1699003600);
+      ${click('#applyRange')};
+    })()`,
+    'state-history-outside-before': `(() => {
+      const local = seconds => {
+        const d = new Date(seconds * 1000), p = n => String(n).padStart(2, '0');
+        return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+      };
+      ${click('#ranges [data-range="custom"]')};
+      document.querySelector('#from').value=local(1697000000);
+      document.querySelector('#to').value=local(1697003600);
+      ${click('#applyRange')};
+    })()`,
+    'state-history-outside-after': `(() => {
+      const local = seconds => {
+        const d = new Date(seconds * 1000), p = n => String(n).padStart(2, '0');
+        return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+      };
+      ${click('#ranges [data-range="custom"]')};
+      document.querySelector('#from').value=local(1700100000);
+      document.querySelector('#to').value=local(1700103600);
       ${click('#applyRange')};
     })()`,
     'history-window-freeze': click('#live'),
