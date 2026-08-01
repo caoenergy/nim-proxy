@@ -816,6 +816,23 @@ mod tests {
                 10_240.0,
             ),
         ];
+        values.extend(
+            [
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+                "cached_tokens",
+                "reasoning_tokens",
+            ]
+            .into_iter()
+            .map(|field| {
+                labeled_metric(
+                    "nimproxy_usage_observations_total",
+                    &[("field", field), ("result", "measured")],
+                    10.0,
+                )
+            }),
+        );
         for metric in &mut values {
             metric.value = fixture_delta(metric.value, segment, metric.metric.ends_with("_sum"));
         }
@@ -845,6 +862,29 @@ mod tests {
             histogram_samples("nimproxy_queue_wait_seconds", segment),
         ));
         values
+    }
+
+    fn observation_quality_fixture_metrics(results: &[(&str, f64)]) -> Vec<MetricValue> {
+        results
+            .iter()
+            .flat_map(|(result, value)| {
+                [
+                    "prompt_tokens",
+                    "completion_tokens",
+                    "total_tokens",
+                    "cached_tokens",
+                    "reasoning_tokens",
+                ]
+                .into_iter()
+                .map(move |field| {
+                    labeled_metric(
+                        "nimproxy_usage_observations_total",
+                        &[("field", field), ("result", result)],
+                        *value,
+                    )
+                })
+            })
+            .collect()
     }
 
     fn assert_representative_metrics_are_production_faithful(range: &DashboardResponse) {
@@ -972,13 +1012,32 @@ mod tests {
 
     fn dashboard_ui_fixture(kind: &str) -> DashboardResponse {
         let empty = kind == "empty";
-        let partial = kind == "partial";
+        let partial = kind == "partial" || kind == "observation-incomplete";
         let unavailable = kind == "unavailable";
         let outside_before = kind == "outside-before";
         let outside_after = kind == "outside-after";
         let extreme = kind == "extreme";
         let long = kind == "long";
-        let values = if empty || unavailable || outside_before || outside_after {
+        let observation_results: Option<&[(&str, f64)]> = match kind {
+            "observation-estimated" => Some(&[("estimated", 9.0)]),
+            "observation-unavailable" => Some(&[("unavailable", 9.0)]),
+            "observation-invalid" => Some(&[("invalid", 9.0)]),
+            "observation-incomplete" | "observation-measured" => Some(&[("measured", 9.0)]),
+            "observation-zero" => Some(&[("measured", 0.0)]),
+            "observation-tie-invalid" => Some(&[
+                ("invalid", 9.0),
+                ("unavailable", 9.0),
+                ("estimated", 9.0),
+                ("measured", 9.0),
+            ]),
+            "observation-tie-unavailable" => {
+                Some(&[("unavailable", 9.0), ("estimated", 9.0), ("measured", 9.0)])
+            }
+            "observation-tie-estimated" => Some(&[("estimated", 9.0), ("measured", 9.0)]),
+            _ => None,
+        };
+        let observation_absent = kind == "observation-absent";
+        let mut values = if empty || unavailable || outside_before || outside_after {
             Vec::new()
         } else if long {
             let client = format!("client-fixture-{}", "c".repeat(49));
@@ -1007,6 +1066,12 @@ mod tests {
                 representative_dashboard_metrics(FixtureSegment::All)
             }
         };
+        if observation_absent || observation_results.is_some() {
+            values.retain(|metric| metric.metric != "nimproxy_usage_observations_total");
+            if let Some(results) = observation_results {
+                values.extend(observation_quality_fixture_metrics(results));
+            }
+        }
         let available_from = if partial {
             1_699_913_600
         } else {
@@ -1044,7 +1109,7 @@ mod tests {
         };
         let points = if empty || unavailable || outside_before || outside_after {
             Vec::new()
-        } else if extreme || long {
+        } else if extreme || long || observation_absent || observation_results.is_some() {
             vec![point(effective_from, effective_to, values.clone())]
         } else {
             let midpoint = effective_from + (effective_to - effective_from) / 2;
@@ -1480,6 +1545,28 @@ mod tests {
         response
     }
 
+    fn dashboard_now_observation_tail_ui_fixture() -> DashboardNowResponse {
+        let mut response = dashboard_now_ui_fixture(false);
+        response
+            .metrics
+            .retain(|metric| metric.metric != "nimproxy_usage_observations_total");
+        response.tail.from = Some(1_700_003_600);
+        response.tail.to = 1_700_007_200;
+        response.tail.totals = vec![
+            labeled_metric(
+                "nimproxy_usage_observations_total",
+                &[("field", "completion_tokens"), ("result", "estimated")],
+                7.0,
+            ),
+            labeled_metric(
+                "nimproxy_usage_observations_total",
+                &[("field", "prompt_tokens"), ("result", "invalid")],
+                -1.0,
+            ),
+        ];
+        response
+    }
+
     fn assert_dashboard_pair(label: &str, range: &DashboardResponse, now: &DashboardNowResponse) {
         assert_eq!(
             range.history_revision, now.history_revision,
@@ -1530,6 +1617,7 @@ mod tests {
         let changed_now = dashboard_now_ui_fixture(true);
         let empty_now = dashboard_now_empty_ui_fixture();
         let partial_now = dashboard_now_partial_ui_fixture();
+        let observation_tail_now = dashboard_now_observation_tail_ui_fixture();
         let healthy_range = dashboard_ui_fixture("healthy");
         assert_representative_metrics_are_production_faithful(&healthy_range);
         let metric_inventory: std::collections::BTreeSet<_> = healthy_range
@@ -1582,6 +1670,7 @@ mod tests {
             "nimproxy_upstream_seconds_bucket",
             "nimproxy_upstream_seconds_count",
             "nimproxy_upstream_seconds_sum",
+            "nimproxy_usage_observations_total",
             "nimproxy_worker_exhausted_total",
         ]);
         assert_eq!(
@@ -1615,6 +1704,61 @@ mod tests {
             ("extreme", dashboard_ui_fixture("extreme"), &initial_now),
             ("long", dashboard_ui_fixture("long"), &initial_now),
             (
+                "observation-measured",
+                dashboard_ui_fixture("observation-measured"),
+                &initial_now,
+            ),
+            (
+                "observation-estimated",
+                dashboard_ui_fixture("observation-estimated"),
+                &initial_now,
+            ),
+            (
+                "observation-unavailable",
+                dashboard_ui_fixture("observation-unavailable"),
+                &initial_now,
+            ),
+            (
+                "observation-invalid",
+                dashboard_ui_fixture("observation-invalid"),
+                &initial_now,
+            ),
+            (
+                "observation-incomplete",
+                dashboard_ui_fixture("observation-incomplete"),
+                &partial_now,
+            ),
+            (
+                "observation-zero",
+                dashboard_ui_fixture("observation-zero"),
+                &initial_now,
+            ),
+            (
+                "observation-absent",
+                dashboard_ui_fixture("observation-absent"),
+                &initial_now,
+            ),
+            (
+                "observation-tie-invalid",
+                dashboard_ui_fixture("observation-tie-invalid"),
+                &initial_now,
+            ),
+            (
+                "observation-tie-unavailable",
+                dashboard_ui_fixture("observation-tie-unavailable"),
+                &initial_now,
+            ),
+            (
+                "observation-tie-estimated",
+                dashboard_ui_fixture("observation-tie-estimated"),
+                &initial_now,
+            ),
+            (
+                "observation-live-tail",
+                dashboard_ui_fixture("observation-absent"),
+                &observation_tail_now,
+            ),
+            (
                 "one-hour",
                 dashboard_window_ui_fixture(1_700_000_000, 1_700_003_600),
                 &initial_now,
@@ -1627,6 +1771,22 @@ mod tests {
         ] {
             assert_dashboard_pair(label, &range, now);
         }
+        assert_eq!(
+            observation_tail_now.tail.totals,
+            vec![
+                labeled_metric(
+                    "nimproxy_usage_observations_total",
+                    &[("field", "completion_tokens"), ("result", "estimated")],
+                    7.0,
+                ),
+                labeled_metric(
+                    "nimproxy_usage_observations_total",
+                    &[("field", "prompt_tokens"), ("result", "invalid")],
+                    -1.0,
+                ),
+            ],
+            "ui-fixture: live tail contains one valid quality row and one ignored negative row"
+        );
         let partial_range = dashboard_ui_fixture("partial");
         let unavailable_range = dashboard_ui_fixture("unavailable");
         let unavailable_from = unavailable_range
@@ -1946,6 +2106,10 @@ mod tests {
                 serde_json::to_value(dashboard_now_ui_fixture(false)).unwrap(),
             ),
             (
+                "dashboard-now-observation-tail.json",
+                serde_json::to_value(dashboard_now_observation_tail_ui_fixture()).unwrap(),
+            ),
+            (
                 "dashboard-partial.json",
                 serde_json::to_value(dashboard_ui_fixture("partial")).unwrap(),
             ),
@@ -1960,6 +2124,46 @@ mod tests {
             (
                 "dashboard-unavailable.json",
                 serde_json::to_value(dashboard_ui_fixture("unavailable")).unwrap(),
+            ),
+            (
+                "dashboard-observation-estimated.json",
+                serde_json::to_value(dashboard_ui_fixture("observation-estimated")).unwrap(),
+            ),
+            (
+                "dashboard-observation-incomplete.json",
+                serde_json::to_value(dashboard_ui_fixture("observation-incomplete")).unwrap(),
+            ),
+            (
+                "dashboard-observation-invalid.json",
+                serde_json::to_value(dashboard_ui_fixture("observation-invalid")).unwrap(),
+            ),
+            (
+                "dashboard-observation-measured.json",
+                serde_json::to_value(dashboard_ui_fixture("observation-measured")).unwrap(),
+            ),
+            (
+                "dashboard-observation-unavailable.json",
+                serde_json::to_value(dashboard_ui_fixture("observation-unavailable")).unwrap(),
+            ),
+            (
+                "dashboard-observation-zero.json",
+                serde_json::to_value(dashboard_ui_fixture("observation-zero")).unwrap(),
+            ),
+            (
+                "dashboard-observation-absent.json",
+                serde_json::to_value(dashboard_ui_fixture("observation-absent")).unwrap(),
+            ),
+            (
+                "dashboard-observation-tie-invalid.json",
+                serde_json::to_value(dashboard_ui_fixture("observation-tie-invalid")).unwrap(),
+            ),
+            (
+                "dashboard-observation-tie-unavailable.json",
+                serde_json::to_value(dashboard_ui_fixture("observation-tie-unavailable")).unwrap(),
+            ),
+            (
+                "dashboard-observation-tie-estimated.json",
+                serde_json::to_value(dashboard_ui_fixture("observation-tie-estimated")).unwrap(),
             ),
             (
                 "locale-bootstrap.json",

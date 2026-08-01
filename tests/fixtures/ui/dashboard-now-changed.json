@@ -198,6 +198,46 @@
     },
     {
       "labels": {
+        "field": "prompt_tokens",
+        "result": "measured"
+      },
+      "metric": "nimproxy_usage_observations_total",
+      "value": 10.0
+    },
+    {
+      "labels": {
+        "field": "completion_tokens",
+        "result": "measured"
+      },
+      "metric": "nimproxy_usage_observations_total",
+      "value": 10.0
+    },
+    {
+      "labels": {
+        "field": "total_tokens",
+        "result": "measured"
+      },
+      "metric": "nimproxy_usage_observations_total",
+      "value": 10.0
+    },
+    {
+      "labels": {
+        "field": "cached_tokens",
+        "result": "measured"
+      },
+      "metric": "nimproxy_usage_observations_total",
+      "value": 10.0
+    },
+    {
+      "labels": {
+        "field": "reasoning_tokens",
+        "result": "measured"
+      },
+      "metric": "nimproxy_usage_observations_total",
+      "value": 10.0
+    },
+    {
+      "labels": {
         "le": "0.05",
         "model": "fixture/alpha"
       },
@@ -889,6 +929,46 @@
         },
         "metric": "nimproxy_request_max_tokens_sum",
         "value": 5120.0
+      },
+      {
+        "labels": {
+          "field": "prompt_tokens",
+          "result": "measured"
+        },
+        "metric": "nimproxy_usage_observations_total",
+        "value": 5.0
+      },
+      {
+        "labels": {
+          "field": "completion_tokens",
+          "result": "measured"
+        },
+        "metric": "nimproxy_usage_observations_total",
+        "value": 5.0
+      },
+      {
+        "labels": {
+          "field": "total_tokens",
+          "result": "measured"
+        },
+        "metric": "nimproxy_usage_observations_total",
+        "value": 5.0
+      },
+      {
+        "labels": {
+          "field": "cached_tokens",
+          "result": "measured"
+        },
+        "metric": "nimproxy_usage_observations_total",
+        "value": 5.0
+      },
+      {
+        "labels": {
+          "field": "reasoning_tokens",
+          "result": "measured"
+        },
+        "metric": "nimproxy_usage_observations_total",
+        "value": 5.0
       },
       {
         "labels": {
