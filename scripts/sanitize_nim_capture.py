@@ -547,7 +547,18 @@ def _open_destination(destination, create=False):
         raise SanitizeError("fixture-boundary") from error
 
 
-def _validate_destination_fd(descriptor, allow_stale_evidence=False):
+def _is_public_destination_leaf(metadata):
+    mode = stat.S_IMODE(metadata.st_mode)
+    return bool(
+        stat.S_ISREG(metadata.st_mode)
+        and metadata.st_uid == os.getuid()
+        and mode & stat.S_IRUSR
+        and mode & stat.S_IWUSR
+        and not mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH | stat.S_IWOTH)
+    )
+
+
+def _validate_destination_fd(descriptor, allow_stale_evidence=False, allow_checkout_modes=False):
     try:
         names = set(os.listdir(descriptor))
     except OSError as error:
@@ -562,8 +573,11 @@ def _validate_destination_fd(descriptor, allow_stale_evidence=False):
         try:
             file_descriptor = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=descriptor)
             metadata = os.fstat(file_descriptor)
-            if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid()
-                    or stat.S_IMODE(metadata.st_mode) not in {0o600, 0o644}):
+            valid_leaf = (_is_public_destination_leaf(metadata) if allow_checkout_modes else (
+                stat.S_ISREG(metadata.st_mode) and metadata.st_uid == os.getuid()
+                and stat.S_IMODE(metadata.st_mode) in {0o600, 0o644}
+            ))
+            if not valid_leaf:
                 raise SanitizeError("fixture-set-invalid")
             content_parts = []
             while True:
@@ -580,8 +594,11 @@ def _validate_destination_fd(descriptor, allow_stale_evidence=False):
     try:
         manifest_descriptor = os.open("manifest.json", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=descriptor)
         manifest_metadata = os.fstat(manifest_descriptor)
-        if (not stat.S_ISREG(manifest_metadata.st_mode) or manifest_metadata.st_uid != os.getuid()
-                or stat.S_IMODE(manifest_metadata.st_mode) not in {0o600, 0o644}):
+        valid_manifest = (_is_public_destination_leaf(manifest_metadata) if allow_checkout_modes else (
+            stat.S_ISREG(manifest_metadata.st_mode) and manifest_metadata.st_uid == os.getuid()
+            and stat.S_IMODE(manifest_metadata.st_mode) in {0o600, 0o644}
+        ))
+        if not valid_manifest:
             raise SanitizeError("manifest-invalid")
         manifest_content = b"".join(iter(lambda: os.read(manifest_descriptor, 64 * 1024), b""))
         os.close(manifest_descriptor)
@@ -612,7 +629,7 @@ def validate_destination(destination):
     try:
         if descriptor is None:
             raise SanitizeError("fixture-set-invalid")
-        _validate_destination_fd(descriptor)
+        _validate_destination_fd(descriptor, allow_checkout_modes=True)
     finally:
         if descriptor is not None:
             os.close(descriptor)
@@ -625,7 +642,9 @@ def refresh_manifest(destination):
     try:
         if descriptor is None:
             raise SanitizeError("fixture-set-invalid")
-        fixtures, contents = _validate_destination_fd(descriptor, allow_stale_evidence=True)
+        fixtures, contents = _validate_destination_fd(
+            descriptor, allow_stale_evidence=True, allow_checkout_modes=True
+        )
         manifest = manifest_for(fixtures, contents)
         manifest_content = (json.dumps(
             manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")
@@ -749,7 +768,9 @@ def write_output(input_dir, destination):
     staging_name = None
     try:
         if existing is not None:
-            _validate_destination_fd(existing, allow_stale_evidence=True)
+            _validate_destination_fd(
+                existing, allow_stale_evidence=True, allow_checkout_modes=True
+            )
         staging_name, staging_descriptor = _create_staging_at(parent)
         for filename in sorted(contents):
             _write_private_at(staging_descriptor, filename, contents[filename])
@@ -1318,6 +1339,89 @@ def operational_cases(sentinel):
         os.chmod(mode_manifest, 0o600)
         if not fixture_rejected or not manifest_rejected:
             checks.append("sanitize-refresh-destination-mode")
+
+        # A public fixture checkout may retain group write from a normal Git
+        # umask. It stays safe when every leaf is current-owner, regular,
+        # non-executable, and not world-writable; refresh validates that same
+        # existing public set before replacing only its private temporary.
+        checkout_destination = root / "destination-checkout-mode"
+        write_output(input_dir, checkout_destination)
+        checkout_leaves = [checkout_destination / (case + ".json") for case in CASES]
+        checkout_leaves.append(checkout_destination / "manifest.json")
+        for path in checkout_leaves:
+            os.chmod(path, 0o664)
+        checkout_parent, checkout_descriptor = _open_destination(checkout_destination)
+        try:
+            try:
+                _validate_destination_fd(checkout_descriptor)
+            except SanitizeError as error:
+                checkout_default_error = str(error)
+            else:
+                checkout_default_error = None
+        finally:
+            os.close(checkout_descriptor)
+            os.close(checkout_parent)
+        try:
+            validate_destination(checkout_destination)
+        except SanitizeError as error:
+            checkout_check_error = str(error)
+        else:
+            checkout_check_error = None
+        checkout_refresh_result = main(["--refresh-manifest", str(checkout_destination)])
+        try:
+            validate_destination(checkout_destination)
+        except SanitizeError as error:
+            checkout_refresh_error = str(error)
+        else:
+            checkout_refresh_error = None
+
+        world_writable_destination = root / "destination-world-writable"
+        write_output(input_dir, world_writable_destination)
+        world_writable_fixture = world_writable_destination / "buffered-basic.json"
+        world_writable_manifest = world_writable_destination / "manifest.json"
+        os.chmod(world_writable_fixture, 0o666)
+        try:
+            validate_destination(world_writable_destination)
+        except SanitizeError as error:
+            world_writable_fixture_error = str(error)
+        else:
+            world_writable_fixture_error = None
+        os.chmod(world_writable_fixture, 0o600)
+        os.chmod(world_writable_manifest, 0o666)
+        try:
+            validate_destination(world_writable_destination)
+        except SanitizeError as error:
+            world_writable_manifest_error = str(error)
+        else:
+            world_writable_manifest_error = None
+
+        executable_destination = root / "destination-executable"
+        write_output(input_dir, executable_destination)
+        executable_fixture = executable_destination / "buffered-basic.json"
+        executable_manifest = executable_destination / "manifest.json"
+        os.chmod(executable_fixture, 0o744)
+        try:
+            validate_destination(executable_destination)
+        except SanitizeError as error:
+            executable_fixture_error = str(error)
+        else:
+            executable_fixture_error = None
+        os.chmod(executable_fixture, 0o600)
+        os.chmod(executable_manifest, 0o744)
+        try:
+            validate_destination(executable_destination)
+        except SanitizeError as error:
+            executable_manifest_error = str(error)
+        else:
+            executable_manifest_error = None
+        if (checkout_default_error != "fixture-set-invalid" or checkout_check_error is not None
+                or checkout_refresh_result != 0
+                or checkout_refresh_error is not None
+                or world_writable_fixture_error != "fixture-set-invalid"
+                or executable_fixture_error != "fixture-set-invalid"
+                or world_writable_manifest_error != "manifest-invalid"
+                or executable_manifest_error != "manifest-invalid"):
+            checks.append("sanitize-checkout-mode")
 
         # The destination must be a real directory, both for update and check.
         input_dir = root / "raw-destination"
