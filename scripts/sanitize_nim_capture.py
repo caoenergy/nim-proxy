@@ -1175,8 +1175,12 @@ def operational_cases(sentinel):
         repeated = operational_fixture(
             "streamed-basic", 'data: {"choices":[{"index":0,"finish_reason":"stop"}]}\n\ndata: {"choices":[{"index":0,"finish_reason":"length"}]}\n\n'
         )
+        null_then_terminal = operational_fixture(
+            "streamed-basic", 'data: {"choices":[{"index":0,"finish_reason":null}]}\n\ndata: {"choices":[{"index":0,"finish_reason":"stop"}]}\n\n'
+        )
         if (evidence_status(evidence_rows({streamed: distinct}), "conflicting_terminal_reasons") != "unavailable"
-                or evidence_status(evidence_rows({streamed: repeated}), "conflicting_terminal_reasons") != "captured"):
+                or evidence_status(evidence_rows({streamed: repeated}), "conflicting_terminal_reasons") != "captured"
+                or evidence_status(evidence_rows({streamed: null_then_terminal}), "conflicting_terminal_reasons") != "unavailable"):
             checks.append("sanitize-evidence-conflict")
 
         same_fragment = operational_fixture(
