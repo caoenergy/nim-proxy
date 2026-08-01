@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Capture one bounded private NIM response (implementation follows this RED contract)."""
+"""Capture one bounded private NIM response per fixed case as raw evidence."""
 
 import argparse
 import base64
+import contextlib
 import copy
 import datetime
 import http.client
+import io
 import json
 import os
 import pathlib
@@ -63,7 +65,7 @@ class Problem:
 
 @dataclass(frozen=True)
 class CandidateDecision:
-    """Current deliberately incomplete production-boundary output."""
+    """One boundary decision exposed to the independent self-test oracles."""
 
     rejected: bool = False
     truncated: bool = False
@@ -559,73 +561,87 @@ def raw_envelope(
     return json.dumps(envelope, separators=(",", ":"), ensure_ascii=True).encode("utf-8") + b"\n"
 
 
-def candidate_capture(case: str, output_dir: pathlib.Path) -> None:
-    """Perform exactly one bounded capture and persist only its raw evidence."""
-    deadline = time.monotonic() + MAX_CAPTURE_SECONDS
+def candidate_capture(cases: tuple[str, ...] | list[str], output_dir: pathlib.Path) -> None:
+    """Capture one canonical case set into one all-or-nothing raw directory."""
+    if (
+        not isinstance(cases, (tuple, list))
+        or not cases
+        or any(case not in CASES for case in cases)
+        or (len(cases) > 1 and tuple(cases) != CASES)
+    ):
+        raise CaptureError("capture-case-list")
     raw_directory: RawDirectory | None = None
-    connection: http.client.HTTPConnection | None = None
-    response: http.client.HTTPResponse | None = None
-    transport: object | None = None
     completed = False
-    with CaptureDeadline(MAX_CAPTURE_SECONDS):
-        try:
-            base_url, bearer_token, model = capture_environment()
-            scheme, host, port, endpoint = capture_endpoint(base_url)
-            plan = candidate_request_profile(case, model)
-            repository = pathlib.Path(__file__).resolve().parent.parent
-            raw_directory = create_raw_directory(output_dir, repository)
-            connection = open_connection(scheme, host, port, remaining_seconds(deadline))
-            remaining_seconds(deadline)
-            connection.connect()
-            connection_transport = connection.sock
-            if connection_transport is None:
-                raise CaptureError("capture-transport")
-            transport = retained_transport(connection_transport)
-            body = json.dumps(
-                plan.body, separators=(",", ":"), ensure_ascii=False
-            ).encode("utf-8")
-            connection_transport.settimeout(remaining_seconds(deadline))
-            connection.request(
-                "POST",
-                endpoint,
-                body=body,
-                headers={
-                    "Authorization": f"Bearer {bearer_token}",
-                    "Content-Type": "application/json",
-                    "Content-Length": str(len(body)),
-                },
-            )
-            connection_transport.settimeout(remaining_seconds(deadline))
-            response = connection.getresponse()
-            raw_body, truncated = read_bounded_response(
-                response, plan.body["stream"], deadline
-            )
-            write_private_at(
-                raw_directory.directory_descriptor,
-                f"{case}.raw.json",
-                raw_envelope(case, plan.body["stream"], response, raw_body, truncated),
-            )
-            if not public_output_matches(
-                output_dir, repository, os.fstat(raw_directory.directory_descriptor)
-            ):
-                raise CaptureError("capture-path-boundary")
-            completed = True
-        except CaptureError:
-            raise
-        except (OSError, ValueError, http.client.HTTPException) as error:
-            raise CaptureError("capture-transport") from error
-        finally:
-            close_quietly(response)
-            close_quietly(transport)
-            close_quietly(connection)
-            if raw_directory is not None:
-                if completed:
-                    close_raw_directory(raw_directory)
-                else:
-                    cleanup_raw_directory(
-                        raw_directory,
-                        (".nim-capture-raw-v1", f"{case}.raw.json"),
+    try:
+        base_url, bearer_token, model = capture_environment()
+        scheme, host, port, endpoint = capture_endpoint(base_url)
+        repository = pathlib.Path(__file__).resolve().parent.parent
+        raw_directory = create_raw_directory(output_dir, repository)
+        for case in cases:
+            deadline = time.monotonic() + MAX_CAPTURE_SECONDS
+            connection: http.client.HTTPConnection | None = None
+            response: http.client.HTTPResponse | None = None
+            transport: object | None = None
+            with CaptureDeadline(MAX_CAPTURE_SECONDS):
+                try:
+                    plan = candidate_request_profile(case, model)
+                    connection = open_connection(
+                        scheme, host, port, remaining_seconds(deadline)
                     )
+                    remaining_seconds(deadline)
+                    connection.connect()
+                    connection_transport = connection.sock
+                    if connection_transport is None:
+                        raise CaptureError("capture-transport")
+                    transport = retained_transport(connection_transport)
+                    body = json.dumps(
+                        plan.body, separators=(",", ":"), ensure_ascii=False
+                    ).encode("utf-8")
+                    connection_transport.settimeout(remaining_seconds(deadline))
+                    connection.request(
+                        "POST",
+                        endpoint,
+                        body=body,
+                        headers={
+                            "Authorization": f"Bearer {bearer_token}",
+                            "Content-Type": "application/json",
+                            "Content-Length": str(len(body)),
+                        },
+                    )
+                    connection_transport.settimeout(remaining_seconds(deadline))
+                    response = connection.getresponse()
+                    raw_body, truncated = read_bounded_response(
+                        response, plan.body["stream"], deadline
+                    )
+                    write_private_at(
+                        raw_directory.directory_descriptor,
+                        f"{case}.raw.json",
+                        raw_envelope(
+                            case, plan.body["stream"], response, raw_body, truncated
+                        ),
+                    )
+                finally:
+                    close_quietly(response)
+                    close_quietly(transport)
+                    close_quietly(connection)
+        if not public_output_matches(
+            output_dir, repository, os.fstat(raw_directory.directory_descriptor)
+        ):
+            raise CaptureError("capture-path-boundary")
+        completed = True
+    except CaptureError:
+        raise
+    except (OSError, ValueError, http.client.HTTPException) as error:
+        raise CaptureError("capture-transport") from error
+    finally:
+        if raw_directory is not None:
+            if completed:
+                close_raw_directory(raw_directory)
+            else:
+                cleanup_raw_directory(
+                    raw_directory,
+                    (".nim-capture-raw-v1", *(f"{case}.raw.json" for case in cases)),
+                )
 
 
 def exact_boundary_sets(
@@ -878,7 +894,7 @@ def operational_total_deadline(root: pathlib.Path) -> bool:
         globals()["open_connection"] = fake_open_connection
         globals()["remaining_seconds"] = traced_remaining_seconds
         time.monotonic = clock
-        candidate_capture("buffered-basic", root / "deadline-output")
+        candidate_capture(("buffered-basic",), root / "deadline-output")
         observed = [stages[name] for name in ("connect", "request", "headers", "body")]
         return all(
             later[0] > earlier[0] and later[1] < earlier[1]
@@ -1023,7 +1039,7 @@ def operational_closing_response_socket() -> bool:
         globals()["capture_endpoint"] = lambda base_url: ("https", "fixture.invalid", None, "/v1/chat/completions")
         globals()["open_connection"] = lambda scheme, host, port, timeout: Connection(socket)
         with tempfile.TemporaryDirectory(prefix="nim-capture-closing-") as temporary:
-            candidate_capture("buffered-basic", pathlib.Path(temporary) / "output")
+            candidate_capture(("buffered-basic",), pathlib.Path(temporary) / "output")
     except Exception:
         return False
     finally:
@@ -1062,7 +1078,7 @@ def operational_http10_buffered_capture(root: pathlib.Path) -> bool:
         globals()["capture_environment"] = lambda: (
             f"http://127.0.0.1:{server.server_port}/v1", "token", "model"
         )
-        candidate_capture("buffered-basic", output)
+        candidate_capture(("buffered-basic",), output)
     except Exception:
         return False
     finally:
@@ -1149,7 +1165,7 @@ def operational_publication_path_swap(root: pathlib.Path) -> bool:
         )
         globals()["write_private_at"] = swap_after_marker
         try:
-            candidate_capture("buffered-basic", output)
+            candidate_capture(("buffered-basic",), output)
         except CaptureError as error:
             failed = error.check == "capture-path-boundary"
     except Exception:
@@ -1375,7 +1391,7 @@ def operational_partial_cleanup(root: pathlib.Path) -> bool:
         globals()["open_connection"] = lambda scheme, host, port, timeout: Connection()
         globals()["write_all"] = fail_response
         try:
-            candidate_capture("buffered-basic", response_output)
+            candidate_capture(("buffered-basic",), response_output)
         except CaptureError:
             pass
         else:
@@ -1418,6 +1434,209 @@ def operational_competing_leaf(root: pathlib.Path) -> bool:
     finally:
         os.mkdir = original_mkdir
     return competed and output.is_dir() and stat.S_IMODE(output.stat().st_mode) == 0o755
+
+
+def operational_four_case_orchestration(root: pathlib.Path) -> bool:
+    """The production CLI publishes one complete canonical raw set."""
+    original_environment = {
+        name: os.environ.get(name) for name in REQUIRED_ENVIRONMENT
+    }
+    requests: list[dict] = []
+    response_body = b'{"choices":[]}'
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.0"
+
+        def do_POST(self) -> None:
+            content_length = int(self.headers["Content-Length"])
+            request = json.loads(self.rfile.read(content_length))
+            requests.append(request)
+            body = b"data: [DONE]\n\n" if request["stream"] else response_body
+            self.send_response(200)
+            self.send_header(
+                "Content-Type", "text/event-stream" if request["stream"] else "application/json"
+            )
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            del format, args
+
+    def rejects_before_capture(cases: tuple[str, ...], name: str) -> bool:
+        original_capture_environment = capture_environment
+        original_create_raw_directory = create_raw_directory
+        original_open_connection = open_connection
+        created = 0
+        opened = 0
+        output = root / name
+
+        def record_create(*args, **kwargs):
+            nonlocal created
+            del args, kwargs
+            created += 1
+            raise AssertionError("invalid case list reached raw-directory creation")
+
+        def record_open(*args, **kwargs):
+            nonlocal opened
+            del args, kwargs
+            opened += 1
+            raise AssertionError("invalid case list reached transport creation")
+
+        try:
+            globals()["capture_environment"] = lambda: (
+                "https://fixture.invalid", "token", "model"
+            )
+            globals()["create_raw_directory"] = record_create
+            globals()["open_connection"] = record_open
+            arguments = ["--output-dir", str(output)]
+            for case in cases:
+                arguments.extend(("--case", case))
+            with contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    status = main(arguments)
+                except SystemExit as error:
+                    status = int(error.code)
+        finally:
+            globals()["capture_environment"] = original_capture_environment
+            globals()["create_raw_directory"] = original_create_raw_directory
+            globals()["open_connection"] = original_open_connection
+        return status != 0 and created == 0 and opened == 0 and not output.exists()
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    output = root / "four-case-output"
+    try:
+        thread.start()
+        os.environ.update(
+            {
+                "NIM_CAPTURE_BASE_URL": f"http://127.0.0.1:{server.server_port}/v1",
+                "NIM_CAPTURE_BEARER_TOKEN": "token",
+                "NIM_CAPTURE_MODEL": "model",
+            }
+        )
+        arguments = ["--output-dir", str(output)]
+        for case in CASES:
+            arguments.extend(("--case", case))
+        with contextlib.redirect_stdout(io.StringIO()):
+            status = main(arguments)
+    except Exception:
+        return False
+    finally:
+        for name, value in original_environment.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        server.shutdown()
+        server.server_close()
+        thread.join()
+    try:
+        published = [
+            json.loads((output / f"{case}.raw.json").read_bytes())["case"]
+            for case in CASES
+        ]
+        valid = (
+            status == 0
+            and [(request["stream"], "tools" in request) for request in requests]
+            == [(False, False), (True, False), (False, True), (True, True)]
+            and {entry.name for entry in output.iterdir()}
+            == {".nim-capture-raw-v1", *(f"{case}.raw.json" for case in CASES)}
+            and published == list(CASES)
+            and all(
+                stat.S_ISREG((output / name).stat().st_mode)
+                and stat.S_IMODE((output / name).stat().st_mode) == OWNER_FILE_MODE
+                for name in (".nim-capture-raw-v1", *(f"{case}.raw.json" for case in CASES))
+            )
+        )
+    except (OSError, KeyError, ValueError, json.JSONDecodeError):
+        valid = False
+    invalid = all(
+        rejects_before_capture(cases, name)
+        for cases, name in (
+            (CASES[:-1], "incomplete-case-list"),
+            (CASES[:-1] + (CASES[-2],), "duplicate-case-list"),
+            ((CASES[1], CASES[0], *CASES[2:]), "out-of-order-case-list"),
+        )
+    )
+    return valid and invalid
+
+
+def operational_midset_failure_cleanup(root: pathlib.Path) -> bool:
+    """A third-case transport failure leaves no partial run or attacker write."""
+    original_environment = {
+        name: os.environ.get(name) for name in REQUIRED_ENVIRONMENT
+    }
+    requests: list[dict] = []
+    attacker = root / "midset-attacker"
+    competing = root / "midset-competing"
+    attacker.mkdir()
+    competing.mkdir()
+    (attacker / "sentinel").write_bytes(b"attacker")
+    (competing / "sentinel").write_bytes(b"competing")
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.0"
+
+        def do_POST(self) -> None:
+            content_length = int(self.headers["Content-Length"])
+            request = json.loads(self.rfile.read(content_length))
+            requests.append(request)
+            if len(requests) == 3:
+                self.close_connection = True
+                return
+            body = b"data: [DONE]\n\n" if request["stream"] else b'{"choices":[]}'
+            self.send_response(200)
+            self.send_header(
+                "Content-Type", "text/event-stream" if request["stream"] else "application/json"
+            )
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            del format, args
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    output = root / "midset-output"
+    try:
+        thread.start()
+        os.environ.update(
+            {
+                "NIM_CAPTURE_BASE_URL": f"http://127.0.0.1:{server.server_port}/v1",
+                "NIM_CAPTURE_BEARER_TOKEN": "token",
+                "NIM_CAPTURE_MODEL": "model",
+            }
+        )
+        arguments = ["--output-dir", str(output)]
+        for case in CASES:
+            arguments.extend(("--case", case))
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(
+            io.StringIO()
+        ):
+            status = main(arguments)
+    except Exception:
+        return False
+    finally:
+        for name, value in original_environment.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        server.shutdown()
+        server.server_close()
+        thread.join()
+    return (
+        status == 1
+        and [(request["stream"], "tools" in request) for request in requests]
+        == [(False, False), (True, False), (False, True)]
+        and not output.exists()
+        and {entry.name for entry in attacker.iterdir()} == {"sentinel"}
+        and (attacker / "sentinel").read_bytes() == b"attacker"
+        and {entry.name for entry in competing.iterdir()} == {"sentinel"}
+        and (competing / "sentinel").read_bytes() == b"competing"
+    )
 
 
 def selftest() -> int:
@@ -1671,6 +1890,16 @@ def selftest() -> int:
         expect_operational_control(
             "capture-competing-leaf", operational_competing_leaf(root), failures
         )
+        expect_operational_control(
+            "capture-four-case-orchestration",
+            operational_four_case_orchestration(root),
+            failures,
+        )
+        expect_operational_control(
+            "capture-midset-failure-cleanup",
+            operational_midset_failure_cleanup(root),
+            failures,
+        )
 
     if failures:
         print("capture selftest RED — named contract failures remain:")
@@ -1683,14 +1912,23 @@ def selftest() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--case", choices=CASES, help="one fixed request profile")
+    parser.add_argument(
+        "--case",
+        action="append",
+        choices=CASES,
+        help="repeat each fixed request profile once, in canonical order",
+    )
     parser.add_argument("--output-dir", type=pathlib.Path, help="new raw capture directory")
-    parser.add_argument("--selftest", action="store_true", help="exercise RED contract fixtures")
+    parser.add_argument(
+        "--selftest", action="store_true", help="exercise capture contract regressions"
+    )
     args = parser.parse_args(argv)
     if args.selftest:
         return selftest()
     if args.case is None or args.output_dir is None:
         parser.error("--case and --output-dir are required unless --selftest is used")
+    if tuple(args.case) != CASES:
+        parser.error("--case must name every fixed request profile once in canonical order")
     try:
         candidate_capture(args.case, args.output_dir)
     except CaptureError as error:

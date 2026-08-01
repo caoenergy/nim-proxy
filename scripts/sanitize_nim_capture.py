@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""RED contract harness for deterministic, secret-free NIM evidence fixtures.
-
-The candidate API intentionally returns an identity-shaped result.  The
-selftest's independent privacy and fidelity oracles therefore fail until Task
-14 replaces only that candidate implementation with a real sanitizer.
-"""
+"""Sanitize bounded raw NIM captures into deterministic secret-free fixtures."""
 
 import argparse
 import base64
@@ -1412,7 +1407,9 @@ def selftest():
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--selftest", action="store_true", help="run deliberate Task 14 RED cases")
+    parser.add_argument(
+        "--selftest", action="store_true", help="exercise sanitizer contract regressions"
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--input-dir", type=Path, help="directory holding raw NIM envelopes")
     mode.add_argument("--check", type=Path, help="validate an existing fixture directory")
