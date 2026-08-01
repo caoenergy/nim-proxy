@@ -197,7 +197,7 @@ Environment variables cover container-level concerns only:
 | Variable | Default | Purpose |
 |---|---|---|
 | `HOST` / `PORT` | `0.0.0.0` / `8000` | Bind address and port |
-| `DATA_DIR` | `data` (`/data` in Docker) | Where the config store and `history.jsonl` live; must be writable (an unwritable dir is a hard boot error) |
+| `DATA_DIR` | `data` (`/data` in Docker) | Where the config store and canonical `history-v1.jsonl` live; must be writable (an unwritable dir is a hard boot error) |
 | `TRUST_PROXY` | `false` | Trust `X-Forwarded-Proto` and mark the session cookie `Secure` (set behind a TLS-terminating reverse proxy) |
 | `RUST_LOG` | `nim_proxy=info` | Log filter |
 
