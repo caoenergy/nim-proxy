@@ -836,13 +836,33 @@ function updateScope() {
   if (!rangeData) return;
   const tail = mode.kind === 'following' && !mode.paused &&
     nowData?.tail?.base_history_revision === rangeData.history_revision ? nowData.tail : null;
+  const window = rangeData.window;
+  const hasEffectiveHistory = window.effective_from != null && window.effective_to != null
+    && rangeData.points.length > 0;
+  if (!window.complete) {
+    if (hasEffectiveHistory) {
+      setMessageText($('rangeinfo'), 'dashboard.topbar.scope.partial_history', {
+        from: scopeDate(window.effective_from), to: scopeDate(window.effective_to),
+      });
+      return;
+    }
+    if (window.available_from != null && window.available_to != null
+      && window.requested_from >= window.available_from && window.requested_to <= window.available_to) {
+      setMessageText($('rangeinfo'), 'dashboard.common.empty.history_unavailable');
+      return;
+    }
+  }
+  if (window.available_from == null) {
+    setMessageText($('rangeinfo'), 'dashboard.common.empty.no_data_yet');
+    return;
+  }
   const hasTraffic = mode.paused ? frozenHasTraffic : hasSelectedRequestTraffic(samples);
   if (!hasTraffic) {
     setMessageText($('rangeinfo'), 'dashboard.common.empty.no_data_in_range');
     return;
   }
-  const from = mode.paused ? mode.from : rangeData.window.effective_from ?? mode.from;
-  const to = mode.paused ? mode.to : tail?.to ?? rangeData.window.effective_to ?? mode.to;
+  const from = mode.paused ? mode.from : window.effective_from ?? mode.from;
+  const to = mode.paused ? mode.to : tail?.to ?? window.effective_to ?? mode.to;
   if (mode.kind === 'following' && !mode.paused) {
     setMessageText($('rangeinfo'), 'dashboard.topbar.scope.following', {
       preset: presetLabel(), from: scopeDate(from), to: scopeDate(to),

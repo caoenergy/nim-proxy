@@ -578,10 +578,11 @@
   "dashboard-custom-window": {
     "config_revision": 7,
     "diagnostics": {
-      "legacy_resets_inferred": 0,
+      "excluded_epochs": 0,
+      "excluded_records": 0,
       "normalized_series": 1,
       "skipped_metric_lines": 0,
-      "skipped_records": 0,
+      "valid_checkpoints": 0,
       "valid_samples": 1
     },
     "history_revision": 11,
@@ -2614,6 +2615,7 @@
     "window": {
       "available_from": 1697411600,
       "available_to": 1700003600,
+      "complete": true,
       "default_window_days": 30,
       "effective_from": 1700000100,
       "effective_to": 1700000200,
@@ -4778,10 +4780,11 @@
   "dashboard-one-hour-window": {
     "config_revision": 7,
     "diagnostics": {
-      "legacy_resets_inferred": 0,
+      "excluded_epochs": 0,
+      "excluded_records": 0,
       "normalized_series": 1,
       "skipped_metric_lines": 0,
-      "skipped_records": 0,
+      "valid_checkpoints": 0,
       "valid_samples": 1
     },
     "history_revision": 11,
@@ -6814,6 +6817,7 @@
     "window": {
       "available_from": 1697411600,
       "available_to": 1700003600,
+      "complete": true,
       "default_window_days": 30,
       "effective_from": 1700000000,
       "effective_to": 1700003600,

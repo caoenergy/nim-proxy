@@ -777,7 +777,10 @@ const INTERACTION_ROWS = [
     state: 'empty',
     action: 'fulfill dashboard Now and range requests from empty Rust-owned fixtures',
     visible: 'empty-state labels render without invented metric zeros',
-    dom: [{ selector: '#tab-overview .empty', property: 'exists', equals: true }],
+    dom: [
+      { selector: '#tab-overview .empty', property: 'exists', equals: true },
+      { selector: '#rangeinfo', property: 'textContent', equals: 'No data yet' },
+    ],
   },
   {
     id: 'state-loading',
@@ -793,8 +796,36 @@ const INTERACTION_ROWS = [
     state: 'partial-incomplete',
     action: 'fulfill dashboard requests from the partial/incomplete Rust-owned fixture',
     visible: 'partial data is distinguishable from complete data',
-    dom: [{ selector: '#rangeinfo', property: 'effective-bound-summary', equals: true }],
-    visual: [{ case: 'dashboard-partial-incomplete', locales: ['en-US'], roles: ['superuser'], surfaces: ['dashboard-tabs'] }],
+    dom: [
+      { selector: '#rangeinfo', property: 'textContent-includes', equals: 'Partial history ·' },
+      { selector: '#rangeinfo', property: 'effective-bound-summary', equals: true },
+    ],
+    visual: [{ case: 'dashboard-partial-incomplete', locales: ['en-US', 'en-XA'], roles: ['superuser'], surfaces: ['dashboard-tabs'] }],
+  },
+  {
+    id: 'state-history-unavailable',
+    category: 'state',
+    state: 'history-unavailable',
+    action: 'select the unavailable fixture’s recovered-gap range',
+    visible: 'the selected range is unavailable without inventing history values',
+    dom: [{ selector: '#rangeinfo', property: 'textContent', equals: 'History unavailable for selected time range' }],
+    visual: [{ case: 'dashboard-history-unavailable', locales: ['en-US', 'en-XA'], roles: ['superuser'], surfaces: ['dashboard-tabs'] }],
+  },
+  {
+    id: 'state-history-outside-before',
+    category: 'state',
+    state: 'history-outside-before',
+    action: 'select a range wholly before globally available history',
+    visible: 'an ordinary range before retained history remains a no-data range',
+    dom: [{ selector: '#rangeinfo', property: 'textContent', equals: 'No data in selected time range' }],
+  },
+  {
+    id: 'state-history-outside-after',
+    category: 'state',
+    state: 'history-outside-after',
+    action: 'select a range wholly after globally available history',
+    visible: 'an ordinary range after retained history remains a no-data range',
+    dom: [{ selector: '#rangeinfo', property: 'textContent', equals: 'No data in selected time range' }],
   },
   {
     id: 'state-extreme-numeric',
@@ -1441,11 +1472,13 @@ const DOM_CONTRACTS = {
   ],
   'state-empty': [
     domContract('empty-state-present', `!!document.querySelector('#tab-overview .empty')`, true),
+    domContract('empty-range-message', `document.querySelector('#rangeinfo')?.textContent.trim() ?? null`, 'No data yet'),
   ],
   'state-loading': [
     domContract('catalog-gate-held', `document.body.hidden`, true),
   ],
   'state-partial-incomplete': [
+    domContract('partial-window-marker', `document.querySelector('#rangeinfo')?.textContent.includes('Partial history ·') ?? false`, true),
     domContract('partial-window-uses-effective-bounds',
       `(() => {
         const text = document.querySelector('#rangeinfo')?.textContent ?? '';
@@ -1454,6 +1487,15 @@ const DOM_CONTRACTS = {
           && text.includes(format.format(1700003600 * 1000));
       })()`,
       true),
+  ],
+  'state-history-unavailable': [
+    domContract('unavailable-range-message', `document.querySelector('#rangeinfo')?.textContent.trim() ?? null`, 'History unavailable for selected time range'),
+  ],
+  'state-history-outside-before': [
+    domContract('outside-before-range-message', `document.querySelector('#rangeinfo')?.textContent.trim() ?? null`, 'No data in selected time range'),
+  ],
+  'state-history-outside-after': [
+    domContract('outside-after-range-message', `document.querySelector('#rangeinfo')?.textContent.trim() ?? null`, 'No data in selected time range'),
   ],
   'state-extreme-numeric': [
     domContract('finite-layout',
@@ -1597,6 +1639,27 @@ const EXPLICIT_REQUEST_SEQUENCES = {
       from: '1697411600',
       points: '288',
       to: '1700003600',
+    }),
+  ],
+  'state-history-unavailable': [
+    getRequest('/api/dashboard', {
+      from: '1699000000',
+      points: '288',
+      to: '1699003600',
+    }),
+  ],
+  'state-history-outside-before': [
+    getRequest('/api/dashboard', {
+      from: '1697000000',
+      points: '288',
+      to: '1697003600',
+    }),
+  ],
+  'state-history-outside-after': [
+    getRequest('/api/dashboard', {
+      from: '1700100000',
+      points: '288',
+      to: '1700103600',
     }),
   ],
   'state-extreme-numeric': [
@@ -1907,6 +1970,18 @@ const FIXTURE_SCENARIOS = {
     now: 'scenarios.json#dashboard-now-partial',
     range: 'dashboard-partial.json',
     boundary: 'startup-dashboard-range',
+  }),
+  'state-history-unavailable': dashboardRecipe({
+    range: 'dashboard-unavailable.json',
+    boundary: 'after-ready',
+  }),
+  'state-history-outside-before': dashboardRecipe({
+    range: 'dashboard-outside-before.json',
+    boundary: 'after-ready',
+  }),
+  'state-history-outside-after': dashboardRecipe({
+    range: 'dashboard-outside-after.json',
+    boundary: 'after-ready',
   }),
   'state-extreme-numeric': dashboardRecipe({
     range: 'dashboard-extreme.json',
@@ -4019,6 +4094,36 @@ function matrixActionExpression(id) {
       ${click('#ranges [data-range="custom"]')};
       document.querySelector('#from').value=local(1700000100);
       document.querySelector('#to').value=local(1700000200);
+      ${click('#applyRange')};
+    })()`,
+    'state-history-unavailable': `(() => {
+      const local = seconds => {
+        const d = new Date(seconds * 1000), p = n => String(n).padStart(2, '0');
+        return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+      };
+      ${click('#ranges [data-range="custom"]')};
+      document.querySelector('#from').value=local(1699000000);
+      document.querySelector('#to').value=local(1699003600);
+      ${click('#applyRange')};
+    })()`,
+    'state-history-outside-before': `(() => {
+      const local = seconds => {
+        const d = new Date(seconds * 1000), p = n => String(n).padStart(2, '0');
+        return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+      };
+      ${click('#ranges [data-range="custom"]')};
+      document.querySelector('#from').value=local(1697000000);
+      document.querySelector('#to').value=local(1697003600);
+      ${click('#applyRange')};
+    })()`,
+    'state-history-outside-after': `(() => {
+      const local = seconds => {
+        const d = new Date(seconds * 1000), p = n => String(n).padStart(2, '0');
+        return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+      };
+      ${click('#ranges [data-range="custom"]')};
+      document.querySelector('#from').value=local(1700100000);
+      document.querySelector('#to').value=local(1700103600);
       ${click('#applyRange')};
     })()`,
     'history-window-freeze': click('#live'),

@@ -398,16 +398,45 @@ struct HistoryInner {
     diagnostics: HistoryDiagnostics,
     last_parsed: Option<ParsedSnapshot>,
     last_sample_boot: Option<String>,
+    recovery_gaps: Vec<store::RecoveryGap>,
+    recovery_events: Vec<store::DiagnosticEvent>,
+    recovery_events_complete: bool,
 }
 
 /// ASCII-ordered: served inside `/api/dashboard` (see `src/api.rs`).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, ToSchema)]
 pub struct HistoryDiagnostics {
-    pub legacy_resets_inferred: usize,
+    pub excluded_epochs: usize,
+    pub excluded_records: usize,
     pub normalized_series: usize,
     pub skipped_metric_lines: usize,
-    pub skipped_records: usize,
+    pub valid_checkpoints: usize,
     pub valid_samples: usize,
+}
+
+pub struct HistoryWindow<T> {
+    pub complete: bool,
+    pub data: T,
+    pub diagnostics: HistoryDiagnostics,
+}
+
+fn diagnostics_at(inner: &HistoryInner, to: u64) -> HistoryDiagnostics {
+    if !inner.recovery_events_complete {
+        return inner.diagnostics.clone();
+    }
+    inner
+        .recovery_events
+        .iter()
+        .filter(|event| event.at <= to)
+        .fold(HistoryDiagnostics::default(), |mut total, event| {
+            total.excluded_epochs += event.diagnostics.excluded_epochs;
+            total.excluded_records += event.diagnostics.excluded_records;
+            total.normalized_series += event.diagnostics.normalized_series;
+            total.skipped_metric_lines += event.diagnostics.skipped_metric_lines;
+            total.valid_checkpoints += event.diagnostics.valid_checkpoints;
+            total.valid_samples += event.diagnostics.valid_samples;
+            total
+        })
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -565,8 +594,15 @@ impl History {
             );
         }
         let mut history = Self::load(None, days, initial_capacity);
-        let records = canonical.take_replay_records();
-        history.load_canonical(&records, days);
+        let replay = canonical.take_replay();
+        history.load_canonical(&replay.records, days);
+        {
+            let mut inner = history.inner.lock().unwrap();
+            inner.diagnostics = replay.diagnostics;
+            inner.recovery_gaps = replay.gaps;
+            inner.recovery_events = replay.diagnostic_events;
+            inner.recovery_events_complete = true;
+        }
         history.boot_id = canonical.boot_id().to_owned();
         history.boot_t = timestamp;
         history.canonical = Some(Mutex::new(canonical));
@@ -638,16 +674,16 @@ impl History {
                 source_bytes = f.metadata().map_or(0, |metadata| metadata.len());
                 for line in std::io::BufReader::new(f).lines() {
                     let Ok(line) = line else {
-                        diagnostics.skipped_records += 1;
+                        diagnostics.excluded_records += 1;
                         break;
                     };
                     let Ok(record) = serde_json::from_str::<StoredRecord>(&line) else {
-                        diagnostics.skipped_records += 1;
+                        diagnostics.excluded_records += 1;
                         continue;
                     };
                     match decode_record(record) {
                         Some(record) => records.push(record),
-                        None => diagnostics.skipped_records += 1,
+                        None => diagnostics.excluded_records += 1,
                     }
                 }
             }
@@ -694,9 +730,6 @@ impl History {
             diagnostics.valid_samples += 1;
             diagnostics.skipped_metric_lines += current.skipped_lines;
             diagnostics.normalized_series += normalized.deltas.len() + normalized.gauges.len();
-            if normalized.inferred_reset {
-                diagnostics.legacy_resets_inferred += 1;
-            }
             let retained = cutoff.is_none_or(|cutoff| point.t >= cutoff);
             if retained {
                 indexed_points.push(IndexedPoint {
@@ -726,6 +759,9 @@ impl History {
                 diagnostics,
                 last_parsed,
                 last_sample_boot,
+                recovery_gaps: Vec::new(),
+                recovery_events: Vec::new(),
+                recovery_events_complete: false,
             }),
             file,
             days: AtomicU64::new(days),
@@ -747,10 +783,10 @@ impl History {
              {} normalized series, {} inferred resets, indexed in {:?}; retention {}",
             source_bytes,
             inner.diagnostics.valid_samples,
-            inner.diagnostics.skipped_records,
+            inner.diagnostics.excluded_records,
             inner.diagnostics.skipped_metric_lines,
             inner.diagnostics.normalized_series,
-            inner.diagnostics.legacy_resets_inferred,
+            inner.diagnostics.excluded_epochs,
             started.elapsed(),
             if days == 0 {
                 "infinite".to_owned()
@@ -832,11 +868,19 @@ impl History {
         let explicit_reset = inner.last_parsed.is_some()
             && inner.last_sample_boot.as_deref() != Some(self.boot_id.as_str());
         let normalized = normalize(inner.last_parsed.as_ref(), &current, explicit_reset);
-        inner.diagnostics.valid_samples += 1;
-        inner.diagnostics.skipped_metric_lines += current.skipped_lines;
-        inner.diagnostics.normalized_series += normalized.deltas.len() + normalized.gauges.len();
-        if normalized.inferred_reset {
-            inner.diagnostics.legacy_resets_inferred += 1;
+        let diagnostics = HistoryDiagnostics {
+            normalized_series: normalized.deltas.len() + normalized.gauges.len(),
+            skipped_metric_lines: current.skipped_lines,
+            valid_samples: 1,
+            ..HistoryDiagnostics::default()
+        };
+        inner.diagnostics.valid_samples += diagnostics.valid_samples;
+        inner.diagnostics.skipped_metric_lines += diagnostics.skipped_metric_lines;
+        inner.diagnostics.normalized_series += diagnostics.normalized_series;
+        if inner.recovery_events_complete {
+            inner
+                .recovery_events
+                .push(store::DiagnosticEvent { at: t, diagnostics });
         }
 
         let days = self.days.load(Ordering::Relaxed);
@@ -892,8 +936,9 @@ impl History {
         }
     }
 
-    pub fn rollup(&self, from: u64, to: u64, points: usize) -> Rollup {
+    pub fn rollup(&self, from: u64, to: u64, points: usize) -> HistoryWindow<Rollup> {
         let inner = self.inner.lock().unwrap();
+        let diagnostics = diagnostics_at(&inner, to);
         let empty = || Rollup {
             available_from: inner.available_from,
             available_to: inner.available_to,
@@ -902,17 +947,35 @@ impl History {
             totals: Vec::new(),
             latest: Vec::new(),
             points: Vec::new(),
-            diagnostics: inner.diagnostics.clone(),
+            diagnostics: diagnostics.clone(),
             history_revision: inner.revision,
         };
+        let incomplete = |inner: &HistoryInner| {
+            from >= to
+                || inner.points.is_empty()
+                || inner
+                    .recovery_gaps
+                    .iter()
+                    .any(|gap| gap.from < to && from < gap.to)
+        };
         if from >= to {
-            return empty();
+            let data = empty();
+            return HistoryWindow {
+                complete: false,
+                data,
+                diagnostics,
+            };
         }
 
         let first = inner.points.partition_point(|point| point.t <= from);
         let end = inner.points.partition_point(|point| point.t <= to);
         if first == end {
-            return empty();
+            let data = empty();
+            return HistoryWindow {
+                complete: false,
+                data,
+                diagnostics,
+            };
         }
 
         let point_budget = points.clamp(2, 1000);
@@ -975,7 +1038,7 @@ impl History {
             .filter_map(BucketAccumulator::finish)
             .collect();
 
-        Rollup {
+        let data = Rollup {
             available_from: inner.available_from,
             available_to: inner.available_to,
             effective_from,
@@ -983,8 +1046,13 @@ impl History {
             totals: metric_values(totals),
             latest: metric_values(latest),
             points,
-            diagnostics: inner.diagnostics.clone(),
+            diagnostics: diagnostics.clone(),
             history_revision: inner.revision,
+        };
+        HistoryWindow {
+            complete: !incomplete(&inner),
+            data,
+            diagnostics,
         }
     }
 
@@ -1535,8 +1603,8 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         assert_eq!(h.inner.lock().unwrap().points.len(), 1);
         h.append(200_300, "newer", capacity(40));
         let rollup = h.rollup(199_999, 200_100, 100);
-        assert_eq!(rollup.points.len(), 1);
-        assert_eq!(rollup.points[0].to, 200_000);
+        assert_eq!(rollup.data.points.len(), 1);
+        assert_eq!(rollup.data.points[0].to, 200_000);
     }
 
     #[test]
@@ -1574,9 +1642,9 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         history.clone().reconfigure_retention(1, 200_000);
 
         let rollup = history.rollup(0, u64::MAX, 100);
-        assert_eq!(rollup.available_from, Some(120_000));
+        assert_eq!(rollup.data.available_from, Some(120_000));
         assert_eq!(history.status().available_from, Some(120_000));
-        assert_eq!(value(&rollup.totals, "requests_total"), 7.0);
+        assert_eq!(value(&rollup.data.totals, "requests_total"), 7.0);
         assert!(history.revision() > before_revision);
     }
 
@@ -1606,7 +1674,7 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         assert!(timestamps.windows(2).all(|pair| pair[0] <= pair[1]));
         assert_eq!(history.status().available_to, Some(300));
         let rollup = history.rollup(299, 300, 20);
-        assert_eq!(value(&rollup.totals, "requests_total"), 15.0);
+        assert_eq!(value(&rollup.data.totals, "requests_total"), 15.0);
     }
 
     #[tokio::test]
@@ -1678,7 +1746,7 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
             10.0
         );
         assert_eq!(inner.points[2].capacity.as_ref().unwrap().rpms, [40, 30]);
-        assert_eq!(inner.diagnostics.legacy_resets_inferred, 0);
+        assert_eq!(inner.diagnostics.excluded_epochs, 0);
     }
 
     #[test]
@@ -1706,7 +1774,7 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
             })
             .sum::<f64>();
         assert_eq!(total, 7.0);
-        assert_eq!(inner.diagnostics.legacy_resets_inferred, 1);
+        assert_eq!(inner.diagnostics.excluded_epochs, 0);
     }
 
     fn history_with_points() -> Arc<History> {
@@ -1770,6 +1838,327 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         history
     }
 
+    fn canonical_capacity(rpms: &[usize]) -> codec::Capacity {
+        codec::Capacity {
+            capacity_rpm: rpms.iter().sum(),
+            enabled_keys: rpms.len(),
+            key_rpms: rpms.to_vec(),
+        }
+    }
+
+    fn canonical_snapshot(capacity: &codec::Capacity) -> CapacitySnapshot {
+        CapacitySnapshot {
+            enabled_lanes: capacity.enabled_keys,
+            rpms: capacity.key_rpms.clone(),
+            capacity_rpm: capacity.capacity_rpm,
+        }
+    }
+
+    fn canonical_state(counter: f64, gauge: f64) -> Vec<codec::StateEntry> {
+        let labels: BTreeMap<_, _> = [("client".to_owned(), "equivalence".to_owned())]
+            .into_iter()
+            .collect();
+        vec![
+            codec::StateEntry {
+                kind: codec::StateKind::Counter,
+                metric: "nimproxy_requests_total".to_owned(),
+                labels: labels.clone(),
+                value: counter,
+            },
+            codec::StateEntry {
+                kind: codec::StateKind::Gauge,
+                metric: "nimproxy_active_requests".to_owned(),
+                labels,
+                value: gauge,
+            },
+        ]
+    }
+
+    fn canonical_boot(t: u64, boot_id: &str, capacity: &codec::Capacity) -> codec::Record {
+        codec::Record::Boot(codec::BootRecord {
+            timestamp: t,
+            boot_id: boot_id.to_owned(),
+            capacity: capacity.clone(),
+        })
+    }
+
+    fn canonical_sample(
+        t: u64,
+        boot_id: &str,
+        capacity: &codec::Capacity,
+        counter: f64,
+        gauge: f64,
+    ) -> codec::Record {
+        codec::Record::Sample(codec::SampleRecord {
+            timestamp: t,
+            boot_id: boot_id.to_owned(),
+            capacity: capacity.clone(),
+            state: canonical_state(counter, gauge),
+        })
+    }
+
+    fn canonical_checkpoint(t: u64, boot_id: &str, capacity: &codec::Capacity) -> codec::Record {
+        codec::Record::Checkpoint(codec::CheckpointRecord {
+            timestamp: t,
+            boot_id: boot_id.to_owned(),
+            capacity: capacity.clone(),
+        })
+    }
+
+    fn open_canonical_equivalence_history(
+        records: &[codec::Record],
+        days: u64,
+        initial_capacity: CapacitySnapshot,
+    ) -> (TestDir, Arc<History>) {
+        let dir = TestDir::new();
+        let mut bytes = Vec::new();
+        for record in records {
+            bytes.extend(codec::encode_record(record).unwrap());
+            bytes.push(b'\n');
+        }
+        fs::write(dir.0.join("history-v1.jsonl"), bytes).unwrap();
+        let history = Arc::new(History::open(dir.0.clone(), days, initial_capacity).unwrap());
+        (dir, history)
+    }
+
+    fn rollup_difference(
+        left: &HistoryWindow<Rollup>,
+        right: &HistoryWindow<Rollup>,
+    ) -> Option<&'static str> {
+        if left.complete != right.complete {
+            Some("complete")
+        } else if left.data.available_from != right.data.available_from
+            || left.data.available_to != right.data.available_to
+        {
+            Some("available_bounds")
+        } else if left.data.effective_from != right.data.effective_from
+            || left.data.effective_to != right.data.effective_to
+        {
+            Some("effective_bounds")
+        } else if left.data.totals != right.data.totals {
+            Some("totals")
+        } else if left.data.latest != right.data.latest {
+            Some("latest")
+        } else if left.data.points != right.data.points {
+            Some("points")
+        } else if left.data.history_revision != right.data.history_revision {
+            Some("history_revision")
+        } else {
+            None
+        }
+    }
+
+    fn assert_rollup_equivalent(
+        label: &str,
+        left: &HistoryWindow<Rollup>,
+        right: &HistoryWindow<Rollup>,
+    ) {
+        assert_eq!(
+            rollup_difference(left, right),
+            None,
+            "{label}: paired canonical encodings diverged"
+        );
+    }
+
+    fn assert_tail_equivalent(label: &str, left: &Tail, right: &Tail) {
+        assert_eq!(
+            left.base_history_revision, right.base_history_revision,
+            "{label}: revision"
+        );
+        assert_eq!(left.from, right.from, "{label}: from");
+        assert_eq!(left.to, right.to, "{label}: to");
+        assert_eq!(left.totals, right.totals, "{label}: totals");
+    }
+
+    #[test]
+    fn canonical_checkpoint_encoding_matches_repeated_samples_across_resets_capacities_and_budgets()
+    {
+        let now = unix_now();
+        let start = now - 100;
+        let first_capacity = canonical_capacity(&[40]);
+        let changed_capacity = canonical_capacity(&[30, 30]);
+        let reset_capacity = canonical_capacity(&[20, 30]);
+        let live_checkpoint_capacity = canonical_capacity(&[35, 35]);
+        let repeated = [
+            canonical_boot(start, "boot-a", &first_capacity),
+            canonical_sample(start + 10, "boot-a", &first_capacity, 10.0, 1.0),
+            canonical_sample(start + 20, "boot-a", &changed_capacity, 10.0, 1.0),
+            canonical_sample(start + 30, "boot-a", &changed_capacity, 15.0, 2.0),
+            canonical_boot(start + 40, "boot-b", &reset_capacity),
+            canonical_sample(start + 50, "boot-b", &reset_capacity, 3.0, 3.0),
+            canonical_sample(start + 60, "boot-b", &live_checkpoint_capacity, 3.0, 3.0),
+        ];
+        let checkpointed = [
+            canonical_boot(start, "boot-a", &first_capacity),
+            canonical_sample(start + 10, "boot-a", &first_capacity, 10.0, 1.0),
+            canonical_checkpoint(start + 20, "boot-a", &changed_capacity),
+            canonical_sample(start + 30, "boot-a", &changed_capacity, 15.0, 2.0),
+            canonical_boot(start + 40, "boot-b", &reset_capacity),
+            canonical_sample(start + 50, "boot-b", &reset_capacity, 3.0, 3.0),
+            canonical_checkpoint(start + 60, "boot-b", &live_checkpoint_capacity),
+        ];
+        let initial_capacity = canonical_snapshot(&first_capacity);
+        let (_repeated_dir, repeated_history) =
+            open_canonical_equivalence_history(&repeated, 0, initial_capacity.clone());
+        let (_checkpointed_dir, checkpointed_history) =
+            open_canonical_equivalence_history(&checkpointed, 0, initial_capacity);
+
+        for budget in [2, 1000] {
+            let repeated_rollup = repeated_history.rollup(start, start + 60, budget);
+            let checkpointed_rollup = checkpointed_history.rollup(start, start + 60, budget);
+            assert_rollup_equivalent(
+                "checkpoint equivalence",
+                &repeated_rollup,
+                &checkpointed_rollup,
+            );
+            assert_ne!(
+                repeated_rollup.diagnostics, checkpointed_rollup.diagnostics,
+                "physical record diagnostics distinguish samples from checkpoints"
+            );
+            assert_eq!(
+                value(&repeated_rollup.data.totals, "nimproxy_requests_total"),
+                18.0
+            );
+            assert_eq!(
+                value(&repeated_rollup.data.latest, "nimproxy_active_requests"),
+                3.0
+            );
+        }
+
+        let coarse = repeated_history.rollup(start, start + 60, 2);
+        let fine = repeated_history.rollup(start, start + 60, 1000);
+        assert_eq!(coarse.data.totals, fine.data.totals);
+        assert_eq!(coarse.data.latest, fine.data.latest);
+        assert_eq!(coarse.data.history_revision, fine.data.history_revision);
+        assert!(coarse.data.points.len() <= 2);
+        assert!(fine.data.points.len() > coarse.data.points.len());
+        assert_eq!(
+            fine.data.points.last().unwrap().capacity,
+            Some(CapacityRollup {
+                average_rpm: 70.0,
+                latest_rpms: vec![35, 35],
+            })
+        );
+
+        let runtime = unix_now() + 2;
+        let runtime_snapshot = "# TYPE nimproxy_requests_total counter\n\
+            nimproxy_requests_total{client=\"equivalence\"} 4\n\
+            # TYPE nimproxy_active_requests gauge\n\
+            nimproxy_active_requests{client=\"equivalence\"} 4\n";
+        let before_repeated = repeated_history.current(runtime, || runtime_snapshot.to_owned());
+        let before_checkpointed =
+            checkpointed_history.current(runtime, || runtime_snapshot.to_owned());
+        assert_eq!(
+            before_repeated.tail.base_history_revision,
+            repeated_history.revision()
+        );
+        assert_tail_equivalent(
+            "current tail before append",
+            &before_repeated.tail,
+            &before_checkpointed.tail,
+        );
+        repeated_history.append(
+            runtime,
+            runtime_snapshot,
+            canonical_snapshot(&live_checkpoint_capacity),
+        );
+        checkpointed_history.append(
+            runtime,
+            runtime_snapshot,
+            canonical_snapshot(&live_checkpoint_capacity),
+        );
+        let after_repeated = repeated_history.current(runtime + 1, || runtime_snapshot.to_owned());
+        let after_checkpointed =
+            checkpointed_history.current(runtime + 1, || runtime_snapshot.to_owned());
+        assert_tail_equivalent(
+            "current tail after append",
+            &after_repeated.tail,
+            &after_checkpointed.tail,
+        );
+        assert_eq!(
+            after_repeated.tail.base_history_revision,
+            before_repeated.tail.base_history_revision + 1,
+            "append advances the current-tail baseline revision"
+        );
+    }
+
+    #[test]
+    fn canonical_checkpoint_encoding_preserves_the_retention_boundary_baseline() {
+        let now = unix_now();
+        let cutoff = now - 86_400;
+        let initial_capacity = canonical_capacity(&[40]);
+        let old = cutoff - 100;
+        let retained = cutoff + 10;
+        let repeated = [
+            canonical_boot(old - 10, "boot-a", &initial_capacity),
+            canonical_sample(old, "boot-a", &initial_capacity, 10.0, 1.0),
+            canonical_sample(old + 10, "boot-a", &initial_capacity, 10.0, 1.0),
+            canonical_sample(retained, "boot-a", &initial_capacity, 15.0, 2.0),
+        ];
+        let checkpointed = [
+            canonical_boot(old - 10, "boot-a", &initial_capacity),
+            canonical_sample(old, "boot-a", &initial_capacity, 10.0, 1.0),
+            canonical_checkpoint(old + 10, "boot-a", &initial_capacity),
+            canonical_sample(retained, "boot-a", &initial_capacity, 15.0, 2.0),
+        ];
+        let initial_snapshot = canonical_snapshot(&initial_capacity);
+        let (_repeated_dir, repeated_history) =
+            open_canonical_equivalence_history(&repeated, 1, initial_snapshot.clone());
+        let (_checkpointed_dir, checkpointed_history) =
+            open_canonical_equivalence_history(&checkpointed, 1, initial_snapshot);
+
+        for budget in [2, 1000] {
+            let repeated_rollup = repeated_history.rollup(old - 10, retained, budget);
+            let checkpointed_rollup = checkpointed_history.rollup(old - 10, retained, budget);
+            assert_rollup_equivalent(
+                "retention-boundary equivalence",
+                &repeated_rollup,
+                &checkpointed_rollup,
+            );
+            assert_eq!(repeated_rollup.data.available_from, Some(retained));
+            assert_eq!(repeated_rollup.data.effective_from, Some(retained));
+            assert_eq!(
+                repeated_rollup.data.totals,
+                vec![MetricValue {
+                    labels: [("client".to_owned(), "equivalence".to_owned())]
+                        .into_iter()
+                        .collect(),
+                    metric: "nimproxy_requests_total".to_owned(),
+                    value: 5.0,
+                }]
+            );
+        }
+    }
+
+    #[test]
+    fn rollup_equivalence_checker_rejects_a_semantically_different_stream_by_totals() {
+        let start = unix_now() - 30;
+        let capacity = canonical_capacity(&[40]);
+        let expected = [
+            canonical_boot(start, "boot-a", &capacity),
+            canonical_sample(start + 10, "boot-a", &capacity, 10.0, 1.0),
+            canonical_sample(start + 20, "boot-a", &capacity, 15.0, 1.0),
+        ];
+        let different = [
+            canonical_boot(start, "boot-a", &capacity),
+            canonical_sample(start + 10, "boot-a", &capacity, 10.0, 1.0),
+            canonical_sample(start + 20, "boot-a", &capacity, 16.0, 1.0),
+        ];
+        let initial = canonical_snapshot(&capacity);
+        let (_expected_dir, expected_history) =
+            open_canonical_equivalence_history(&expected, 0, initial.clone());
+        let (_different_dir, different_history) =
+            open_canonical_equivalence_history(&different, 0, initial);
+
+        assert_eq!(
+            rollup_difference(
+                &expected_history.rollup(start, start + 20, 1000),
+                &different_history.rollup(start, start + 20, 1000),
+            ),
+            Some("totals")
+        );
+    }
+
     fn value(values: &[MetricValue], name: &str) -> f64 {
         values
             .iter()
@@ -1793,27 +2182,27 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         let h = history_with_points();
         let coarse = h.rollup(99, 300, 2);
         let fine = h.rollup(99, 300, 1000);
-        assert_eq!(coarse.totals, fine.totals);
-        assert_eq!(value(&coarse.totals, "requests_total"), 40.0);
-        assert!(coarse.points.len() <= 2);
+        assert_eq!(coarse.data.totals, fine.data.totals);
+        assert_eq!(value(&coarse.data.totals, "requests_total"), 40.0);
+        assert!(coarse.data.points.len() <= 2);
     }
 
     #[test]
     fn rollup_uses_open_closed_sample_boundaries() {
         let h = history_with_points();
         let rollup = h.rollup(100, 200, 20);
-        assert_eq!(value(&rollup.totals, "requests_total"), 15.0);
+        assert_eq!(value(&rollup.data.totals, "requests_total"), 15.0);
     }
 
     #[test]
     fn rollup_preserves_grouped_labels() {
         let rollup = history_with_points().rollup(99, 300, 20);
         assert_eq!(
-            labeled_value(&rollup.totals, "prompt_tokens_total", "model", "alpha"),
+            labeled_value(&rollup.data.totals, "prompt_tokens_total", "model", "alpha"),
             240.0
         );
         assert_eq!(
-            labeled_value(&rollup.totals, "prompt_tokens_total", "model", "beta"),
+            labeled_value(&rollup.data.totals, "prompt_tokens_total", "model", "beta"),
             110.0
         );
     }
@@ -1821,13 +2210,13 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
     #[test]
     fn rollup_keeps_latest_gauges_and_histogram_buckets() {
         let rollup = history_with_points().rollup(99, 300, 20);
-        assert_eq!(value(&rollup.latest, "active"), 3.0);
+        assert_eq!(value(&rollup.data.latest, "active"), 3.0);
         assert_eq!(
-            labeled_value(&rollup.totals, "latency_seconds_bucket", "le", "0.5"),
+            labeled_value(&rollup.data.totals, "latency_seconds_bucket", "le", "0.5"),
             12.0
         );
         assert_eq!(
-            labeled_value(&rollup.totals, "latency_seconds_bucket", "le", "+Inf"),
+            labeled_value(&rollup.data.totals, "latency_seconds_bucket", "le", "+Inf"),
             40.0
         );
     }
@@ -1835,41 +2224,42 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
     #[test]
     fn rollup_empty_window_retains_only_available_bounds() {
         let rollup = history_with_points().rollup(300, 400, 20);
-        assert_eq!(rollup.available_from, Some(100));
-        assert_eq!(rollup.available_to, Some(300));
-        assert_eq!(rollup.effective_from, None);
-        assert_eq!(rollup.effective_to, None);
-        assert!(rollup.totals.is_empty());
-        assert!(rollup.latest.is_empty());
-        assert!(rollup.points.is_empty());
+        assert_eq!(rollup.data.available_from, Some(100));
+        assert_eq!(rollup.data.available_to, Some(300));
+        assert_eq!(rollup.data.effective_from, None);
+        assert_eq!(rollup.data.effective_to, None);
+        assert!(rollup.data.totals.is_empty());
+        assert!(rollup.data.latest.is_empty());
+        assert!(rollup.data.points.is_empty());
     }
 
     #[test]
     fn rollup_reports_effective_and_available_bounds() {
         let rollup = history_with_points().rollup(0, 250, 20);
-        assert_eq!(rollup.available_from, Some(100));
-        assert_eq!(rollup.available_to, Some(300));
-        assert_eq!(rollup.effective_from, Some(100));
-        assert_eq!(rollup.effective_to, Some(200));
+        assert_eq!(rollup.data.available_from, Some(100));
+        assert_eq!(rollup.data.available_to, Some(300));
+        assert_eq!(rollup.data.effective_from, Some(100));
+        assert_eq!(rollup.data.effective_to, Some(200));
     }
 
     #[test]
     fn rollup_does_not_invent_capacity_before_the_first_retained_sample() {
         let rollup = history_with_points().rollup(0, 100, 20);
 
-        assert_eq!(value(&rollup.totals, "requests_total"), 10.0);
-        assert_eq!(rollup.effective_from, Some(100));
-        assert_eq!(rollup.points.len(), 1);
-        assert_eq!(rollup.points[0].from, 100);
-        assert_eq!(rollup.points[0].to, 100);
-        assert_eq!(rollup.points[0].duration_seconds, 0);
-        assert_eq!(rollup.points[0].capacity, None);
+        assert_eq!(value(&rollup.data.totals, "requests_total"), 10.0);
+        assert_eq!(rollup.data.effective_from, Some(100));
+        assert_eq!(rollup.data.points.len(), 1);
+        assert_eq!(rollup.data.points[0].from, 100);
+        assert_eq!(rollup.data.points[0].to, 100);
+        assert_eq!(rollup.data.points[0].duration_seconds, 0);
+        assert_eq!(rollup.data.points[0].capacity, None);
     }
 
     #[test]
     fn rollup_time_weights_capacity() {
         let rollup = history_with_points().rollup(99, 300, 2);
         let weighted_rpm = rollup
+            .data
             .points
             .iter()
             .filter_map(|point| {
@@ -1880,6 +2270,7 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
             })
             .sum::<f64>();
         let duration = rollup
+            .data
             .points
             .iter()
             .map(|point| point.duration_seconds)
@@ -1888,6 +2279,7 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         assert!((weighted_rpm / duration as f64 - 80.0).abs() < 1e-12);
         assert_eq!(
             rollup
+                .data
                 .points
                 .last()
                 .unwrap()
@@ -2099,7 +2491,7 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         let temporary = temporary_path(&path);
         fs::write(&temporary, "stale partial rewrite").unwrap();
         history.clone().reconfigure_retention(1, now);
-        let expected = history.rollup(0, u64::MAX, 100).totals;
+        let expected = history.rollup(0, u64::MAX, 100).data.totals;
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while history.status().compaction_pending {
             assert!(
@@ -2136,8 +2528,8 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
 
         let reloaded = History::load(Some(dir.0.clone()), 1, capacity(40));
         let after = reloaded.rollup(0, u64::MAX, 100);
-        assert_eq!(after.available_from, Some(retained_one));
-        assert_eq!(after.totals, expected);
+        assert_eq!(after.data.available_from, Some(retained_one));
+        assert_eq!(after.data.totals, expected);
     }
 
     #[tokio::test]
