@@ -266,7 +266,7 @@ separator rewriting, or localization.
 Responsive layout is content-driven rather than locale-specific. Range
 controls and status text may wrap, fixed-width form controls may shrink, and
 Settings stacks before translated labels or machine values clip. The visual
-gate resolves 224 applicable page/state/viewport/locale surfaces, captures each
+gate resolves 284 applicable page/state/viewport/locale surfaces, captures each
 full document at 390, 768, 900, and 1440 CSS-pixel widths, and records layout
 and PNG geometry for mechanical verification. Human review of those artifacts
 remains required because clean geometry does not prove visual hierarchy.

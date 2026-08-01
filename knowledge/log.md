@@ -6,6 +6,18 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-08-01] maintenance — reconcile current visual applicability
+
+Task 17's fresh visual run exposed a stale Task 9 count in the current gate
+instructions and concept pages. The current source and report agree on 284
+applicable full-document surfaces—188 `en-US` and 96 generated `en-XA`, evenly
+distributed as 71 artifacts at each of four supported widths—with empty
+coverage and integrity problem sets. Task 9's 224-artifact record remains its
+dated evidence rather than current authority. See the
+[test strategy](testing/test-strategy.md), [Dashboard](architecture/dashboard.md),
+[render-gate decision](decisions/render-gate.md), and the
+[Task 17 plan](../docs/plans/v0.6.6-foundation-implementation.md).
+
 ## [2026-08-01] maintenance — reconcile Task 16 browser-gate authority
 
 Task 17's knowledge lint reconciles the current browser authorities after the

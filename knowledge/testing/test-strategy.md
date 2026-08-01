@@ -187,10 +187,10 @@ that proof.
   proves the checker independently catches missing accessible name, invalid
   landmark, non-button action, dialog-focus escape, and data mutation, then
   checks native landmarks/actions and raw model-component text. Run it for
-  Setup and Login when changing public markup. `--visual-matrix` resolves 224
+  Setup and Login when changing public markup. `--visual-matrix` resolves 284
   applicable page/state/viewport/locale items, rather than pretending every
   Cartesian combination can exist, and captures one full-document PNG per
-  item. The current contract is 168 `en-US` and 56 generated `en-XA` artifacts
+  item. The current contract is 188 `en-US` and 96 generated `en-XA` artifacts
   at 390×844, 768×1024, 900×1000, and 1440×1000. Its JSON report records locale
   provenance, layout root/boundary, requested and actual viewport geometry,
   CDP full-document capture geometry, parsed PNG dimensions, allowlisted

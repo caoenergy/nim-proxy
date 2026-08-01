@@ -141,12 +141,13 @@ totals.
 
 ### Supersession — Task 16 observation quality (2026-08-01)
 
-Tasks 15 and 16 extend the typed fixture authority to 35 stable JSON files and
-the served-app interaction authority to 69 named rows. The added fixtures and
-rows cover bounded NIM observation topology and the catalog-backed
-absent/zero/dominance/tie/live-tail quality states without changing the gate's
-Rust-serialization or served-byte boundaries. The Task 8 and Task 12 totals
-above remain dated provenance rather than current counts.
+Tasks 15 and 16 extend the typed fixture authority to 35 stable JSON files,
+the served-app interaction authority to 69 named rows, and the visual
+applicability authority to 284 surfaces: 188 `en-US` and 96 generated `en-XA`.
+The added fixtures and rows cover bounded NIM observation topology and the
+catalog-backed absent/zero/dominance/tie/live-tail quality states without
+changing the gate's Rust-serialization or served-byte boundaries. The Task 8
+and Task 12 totals above remain dated provenance rather than current counts.
 
 - Two CI steps in the existing `check` job, so the required-status-check list
   in [release.md](../ops/release.md) does not change.
