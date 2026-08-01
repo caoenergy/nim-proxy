@@ -740,6 +740,11 @@ enum FailurePoint {
     TempCreate,
     TempWrite,
     TempSync,
+    CompactionTempCreate,
+    CompactionTempWrite,
+    CompactionTempSync,
+    CompactionRename,
+    CompactionDirectorySync,
     HardLink,
     ParentDirectorySync,
     RestartBootAppend,
@@ -822,13 +827,34 @@ fn append_with_test_failure(
 }
 
 #[cfg(test)]
+struct InjectedCompaction {
+    result: io::Result<CompactionOutcome>,
+    fired: Option<FailurePoint>,
+}
+
+#[cfg(test)]
+fn compact_with_test_failure(
+    store: &mut HistoryStore,
+    cutoff: u64,
+    point: FailurePoint,
+) -> InjectedCompaction {
+    let mut failure = FailureSwitch { point, fired: None };
+    let result = store.compact_inner(cutoff, Some(&mut failure));
+    InjectedCompaction {
+        result,
+        fired: failure.fired,
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::fs;
-    use std::sync::Arc;
+    use std::sync::{mpsc, Arc, Mutex, TryLockError};
 
     use super::{
-        add_sample, append_with_test_failure, open_with_test_failure, validate_canonical, Epoch,
-        FailurePoint, HistoryStore, OpenError, ScannerState,
+        add_sample, append_with_test_failure, compact_with_test_failure, open_with_test_failure,
+        validate_canonical, CompactionOutcome, Epoch, FailurePoint, HistoryStore, OpenError,
+        ScannerState,
     };
     use crate::history::{
         codec::{decode_record, Capacity, DecodeError, Record, StateEntry, StateKind},
@@ -2088,6 +2114,514 @@ mod tests {
         assert!(!after_failed_tick.ends_with(b"\n"));
         assert!(store.append_sample(3, capacity(), state(2.0)).is_err());
         assert_eq!(fs::read(path).unwrap(), after_failed_tick);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    fn canonical_records(bytes: &[u8]) -> Vec<Record> {
+        bytes
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| decode_record(line).expect("test canonical fixture must decode"))
+            .collect()
+    }
+
+    fn canonical_bytes(records: &[Record]) -> Vec<u8> {
+        records
+            .iter()
+            .flat_map(|record| {
+                let mut line = super::encode_record(record).expect("test record must encode");
+                line.push(b'\n');
+                line
+            })
+            .collect()
+    }
+
+    fn records_from_fixture(bytes: &str) -> Vec<Record> {
+        canonical_records(bytes.as_bytes())
+    }
+
+    fn assert_complete_canonical_path(path: &std::path::Path, expected: &[Record], name: &str) {
+        let actual_bytes = fs::read(path).unwrap();
+        assert_eq!(
+            canonical_records(&actual_bytes),
+            expected,
+            "{name}: canonical records retain exact kinds, timestamps, values, and physical order"
+        );
+        assert_eq!(
+            actual_bytes,
+            canonical_bytes(expected),
+            "{name}: canonical path contains exactly the complete expected bytes"
+        );
+        validate_canonical(path).unwrap_or_else(|error| {
+            panic!("{name}: observable canonical path must revalidate: {error}")
+        });
+    }
+
+    fn assert_full_sample_baseline_is_not_omitted_or_replaced_by_checkpoint(
+        records: &[Record],
+        cutoff: u64,
+        expected_value: f64,
+        name: &str,
+    ) {
+        let baseline = records
+            .iter()
+            .filter_map(|record| match record {
+                Record::Sample(sample) if sample.timestamp < cutoff => Some(sample),
+                Record::Boot(_) | Record::Checkpoint(_) | Record::Sample(_) => None,
+            })
+            .last()
+            .unwrap_or_else(|| panic!("{name}: pre-cutoff full-sample baseline is required"));
+        assert_eq!(
+            baseline.state,
+            state(expected_value),
+            "{name}: the latest strictly pre-cutoff full sample, not a checkpoint, is retained"
+        );
+    }
+
+    #[test]
+    fn compaction_selection_keeps_boot_full_baseline_and_retained_physical_order() {
+        // This table is intentionally physical: a selected checkpoint may
+        // follow a same-timestamp sample, but it can never replace the latest
+        // full sample that precedes the cutoff.
+        let cases = [
+            (
+                "boundary-equal-timestamp-and-multiple-epochs",
+                13,
+                30,
+                format!(
+                    "{}{}{}{}{}{}{}{}{}{}",
+                    boot(9, "boot-a"),
+                    sample(10, "boot-a", 1.0),
+                    checkpoint(11, "boot-a"),
+                    sample(12, "boot-a", 2.0),
+                    sample(13, "boot-a", 3.0),
+                    checkpoint(13, "boot-a"),
+                    sample(14, "boot-a", 4.0),
+                    boot(15, "boot-b"),
+                    sample(16, "boot-b", 5.0),
+                    checkpoint(16, "boot-b")
+                ),
+                format!(
+                    "{}{}{}{}{}{}{}{}",
+                    boot(9, "boot-a"),
+                    sample(12, "boot-a", 2.0),
+                    sample(13, "boot-a", 3.0),
+                    checkpoint(13, "boot-a"),
+                    sample(14, "boot-a", 4.0),
+                    boot(15, "boot-b"),
+                    sample(16, "boot-b", 5.0),
+                    checkpoint(16, "boot-b")
+                ),
+                2.0,
+            ),
+            (
+                "cutoff-owning-boot-and-latest-precutoff-sample",
+                40,
+                60,
+                format!(
+                    "{}{}{}{}{}{}",
+                    boot(30, "boot-c"),
+                    sample(31, "boot-c", 7.0),
+                    checkpoint(32, "boot-c"),
+                    sample(39, "boot-c", 8.0),
+                    sample(40, "boot-c", 9.0),
+                    sample(41, "boot-c", 10.0)
+                ),
+                format!(
+                    "{}{}{}{}",
+                    boot(30, "boot-c"),
+                    sample(39, "boot-c", 8.0),
+                    sample(40, "boot-c", 9.0),
+                    sample(41, "boot-c", 10.0)
+                ),
+                8.0,
+            ),
+        ];
+
+        for (name, cutoff, opened_at, source, retained, baseline_value) in cases {
+            let dir = test_dir(&format!("compaction-selection-{name}"));
+            let path = dir.join("history-v1.jsonl");
+            fs::write(&path, source).unwrap();
+            let mut store = HistoryStore::open(&dir, opened_at, capacity()).unwrap();
+            let live_boot = canonical_records(&fs::read(&path).unwrap())
+                .last()
+                .cloned()
+                .expect("open appends its fresh boot");
+            assert!(matches!(&live_boot, Record::Boot(boot) if boot.timestamp == opened_at));
+            store
+                .append_sample(opened_at + 1, capacity(), state(99.0))
+                .unwrap();
+            let before = fs::read(&path).unwrap();
+            let live_sample = canonical_records(&before)
+                .last()
+                .cloned()
+                .expect("fresh runtime boot receives a full sample before compaction");
+
+            assert!(matches!(
+                store.compact(cutoff).unwrap(),
+                CompactionOutcome::Durable
+            ));
+
+            let mut expected = records_from_fixture(&retained);
+            expected.push(live_boot);
+            expected.push(live_sample);
+            assert_complete_canonical_path(&path, &expected, name);
+            assert_full_sample_baseline_is_not_omitted_or_replaced_by_checkpoint(
+                &expected,
+                cutoff,
+                baseline_value,
+                name,
+            );
+            assert_ne!(
+                fs::read(&path).unwrap(),
+                before,
+                "{name}: old bytes are bounded away"
+            );
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn compaction_recovery_safety_defers_intersecting_evidence_and_discards_only_outside_gaps() {
+        let cases: [(&str, u64, u64, String, bool, bool, Option<String>); 3] = [
+            (
+                "damage-intersects-retained-horizon",
+                13,
+                20,
+                format!(
+                    "{}{}{{not-json}}\n{}{}",
+                    boot(10, "boot-a"),
+                    sample(11, "boot-a", 1.0),
+                    boot(14, "boot-b"),
+                    sample(15, "boot-b", 2.0)
+                ),
+                false,
+                false,
+                None,
+            ),
+            (
+                "gap-ending-at-cutoff-is-outside-retained-horizon",
+                13,
+                20,
+                format!(
+                    "{}{}{{not-json}}\n{}{}",
+                    boot(10, "boot-a"),
+                    sample(11, "boot-a", 1.0),
+                    boot(13, "boot-b"),
+                    sample(14, "boot-b", 2.0)
+                ),
+                true,
+                true,
+                Some(format!(
+                    "{}{}",
+                    boot(13, "boot-b"),
+                    sample(14, "boot-b", 2.0)
+                )),
+            ),
+            (
+                "fresh-boot-without-full-sample",
+                13,
+                20,
+                format!("{}{}", boot(10, "boot-a"), sample(11, "boot-a", 1.0)),
+                false,
+                false,
+                None,
+            ),
+        ];
+
+        for (name, cutoff, opened_at, source, expect_durable, sample_fresh_boot, retained) in cases
+        {
+            let dir = test_dir(&format!("compaction-recovery-{name}"));
+            let path = dir.join("history-v1.jsonl");
+            fs::write(&path, source).unwrap();
+            let mut store = HistoryStore::open(&dir, opened_at, capacity()).unwrap();
+            let live_boot = canonical_records(&fs::read(&path).unwrap())
+                .last()
+                .cloned()
+                .expect("open appends its fresh boot");
+
+            if sample_fresh_boot {
+                store
+                    .append_sample(opened_at + 1, capacity(), state(9.0))
+                    .unwrap();
+            }
+            if name == "fresh-boot-without-full-sample" {
+                assert!(
+                    store.replay.gaps.iter().all(|gap| gap.to <= cutoff),
+                    "{name}: clean historical evidence has no recovery gap in the retained horizon"
+                );
+            }
+            let before = fs::read(&path).unwrap();
+            let live_sample = expect_durable.then(|| {
+                canonical_records(&before)
+                    .last()
+                    .cloned()
+                    .expect("durable compaction has a full sample for its fresh runtime boot")
+            });
+
+            let outcome = store.compact(cutoff).unwrap();
+            if !expect_durable {
+                assert!(matches!(outcome, CompactionOutcome::Deferred));
+                assert_eq!(
+                    fs::read(&path).unwrap(),
+                    before,
+                    "{name}: deferred compaction preserves incomplete evidence byte-for-byte"
+                );
+                validate_canonical(&path).unwrap();
+            } else {
+                assert!(matches!(outcome, CompactionOutcome::Durable));
+                let mut expected =
+                    records_from_fixture(&retained.expect("durable case retains rows"));
+                expected.push(live_boot);
+                expected.push(live_sample.expect("durable case has a live full sample"));
+                assert_complete_canonical_path(&path, &expected, name);
+                assert_ne!(
+                    fs::read(&path).unwrap(),
+                    before,
+                    "{name}: old gap bytes are removed"
+                );
+            }
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn compaction_crash_points_leave_only_old_or_complete_new_canonical_bytes() {
+        let source = format!(
+            "{}{}{}{}",
+            boot(10, "boot-a"),
+            sample(11, "boot-a", 1.0),
+            checkpoint(12, "boot-a"),
+            sample(13, "boot-a", 2.0)
+        );
+        let retained = format!(
+            "{}{}{}",
+            boot(10, "boot-a"),
+            sample(11, "boot-a", 1.0),
+            sample(13, "boot-a", 2.0)
+        );
+
+        for point in [
+            FailurePoint::CompactionTempCreate,
+            FailurePoint::CompactionTempWrite,
+            FailurePoint::CompactionTempSync,
+            FailurePoint::CompactionRename,
+        ] {
+            let dir = test_dir(&format!("compaction-crash-{point:?}"));
+            let path = dir.join("history-v1.jsonl");
+            fs::write(&path, &source).unwrap();
+            let mut store = HistoryStore::open(&dir, 20, capacity()).unwrap();
+            store.append_sample(21, capacity(), state(9.0)).unwrap();
+            let before = fs::read(&path).unwrap();
+
+            let injected = compact_with_test_failure(&mut store, 13, point);
+            assert!(
+                injected.result.is_err(),
+                "{point:?}: replacement must fail before commit"
+            );
+            assert_eq!(
+                injected.fired,
+                Some(point),
+                "{point:?}: the injected crash point must actually fire"
+            );
+            assert_eq!(
+                fs::read(&path).unwrap(),
+                before,
+                "{point:?}: canonical path remains the complete old bytes"
+            );
+            validate_canonical(&path).unwrap();
+            let _ = fs::remove_dir_all(dir);
+        }
+
+        let dir = test_dir("compaction-crash-directory-sync");
+        let path = dir.join("history-v1.jsonl");
+        fs::write(&path, source).unwrap();
+        let mut store = HistoryStore::open(&dir, 20, capacity()).unwrap();
+        let live_boot = canonical_records(&fs::read(&path).unwrap())
+            .last()
+            .cloned()
+            .expect("open appends its fresh boot");
+        store.append_sample(21, capacity(), state(9.0)).unwrap();
+        let before = fs::read(&path).unwrap();
+        let live_sample = canonical_records(&before)
+            .last()
+            .cloned()
+            .expect("fresh runtime boot receives a full sample before compaction");
+
+        let injected =
+            compact_with_test_failure(&mut store, 13, FailurePoint::CompactionDirectorySync);
+        assert!(matches!(
+            injected.result,
+            Ok(CompactionOutcome::CommittedSyncPending(_))
+        ));
+        assert_eq!(
+            injected.fired,
+            Some(FailurePoint::CompactionDirectorySync),
+            "directory-sync injection must fire after rename"
+        );
+        let mut expected = records_from_fixture(&retained);
+        expected.push(live_boot);
+        expected.push(live_sample);
+        assert_complete_canonical_path(&path, &expected, "directory-sync failure");
+        assert_ne!(
+            fs::read(&path).unwrap(),
+            before,
+            "directory sync follows committed rename"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn compaction_restart_rollup_and_subsequent_append_use_the_replacement_inode() {
+        let dir = test_dir("compaction-restart-replacement");
+        let path = dir.join("history-v1.jsonl");
+        fs::write(
+            &path,
+            format!(
+                "{}{}{}{}",
+                boot(10, "boot-a"),
+                sample(11, "boot-a", 1.0),
+                checkpoint(12, "boot-a"),
+                sample(13, "boot-a", 2.0)
+            ),
+        )
+        .unwrap();
+        let mut store = HistoryStore::open(&dir, 20, capacity()).unwrap();
+        store.append_sample(21, capacity(), state(9.0)).unwrap();
+        #[cfg(unix)]
+        let old_inode = {
+            use std::os::unix::fs::MetadataExt;
+            fs::metadata(&path).unwrap().ino()
+        };
+        let live_boot_id = store.boot_id().to_owned();
+
+        assert!(matches!(
+            store.compact(13).unwrap(),
+            CompactionOutcome::Durable
+        ));
+        #[cfg(unix)]
+        let replacement_inode = {
+            use std::os::unix::fs::MetadataExt;
+            let inode = fs::metadata(&path).unwrap().ino();
+            assert_ne!(
+                inode, old_inode,
+                "compaction atomically replaces the canonical inode"
+            );
+            inode
+        };
+        store.append_sample(22, capacity(), state(10.0)).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().ino(),
+                replacement_inode,
+                "the post-compaction append remains on the replacement inode"
+            );
+        }
+        let records = canonical_records(&fs::read(&path).unwrap());
+        assert!(matches!(
+            records.last(),
+            Some(Record::Sample(sample))
+                if sample.timestamp == 22 && sample.boot_id == live_boot_id && sample.state == state(10.0)
+        ));
+        drop(store);
+
+        let reopened = HistoryStore::open(&dir, 23, capacity()).unwrap();
+        assert!(matches!(
+            canonical_records(&fs::read(&path).unwrap()).last(),
+            Some(Record::Boot(boot)) if boot.timestamp == 23
+        ));
+        drop(reopened);
+        let history = History::open(dir.clone(), 0, history_capacity()).unwrap();
+        assert_eq!(
+            history.rollup(12, 13, 1000).data.totals,
+            vec![metric_value("nimproxy_requests_total", 1.0)],
+            "the pre-window full-sample baseline still normalizes the compacted sample"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn compaction_serializes_an_append_requested_while_it_owns_the_store() {
+        let dir = test_dir("compaction-exclusive-writer");
+        let path = dir.join("history-v1.jsonl");
+        fs::write(
+            &path,
+            format!(
+                "{}{}{}{}",
+                boot(10, "boot-a"),
+                sample(11, "boot-a", 1.0),
+                checkpoint(12, "boot-a"),
+                sample(13, "boot-a", 2.0)
+            ),
+        )
+        .unwrap();
+        let mut store = HistoryStore::open(&dir, 20, capacity()).unwrap();
+        let live_boot_id = store.boot_id().to_owned();
+        store.append_sample(21, capacity(), state(7.0)).unwrap();
+        let shared = Arc::new(Mutex::new(store));
+        let (locked_tx, locked_rx) = mpsc::channel();
+        let (contention_tx, contention_rx) = mpsc::channel();
+        let (start_compaction_tx, start_compaction_rx) = mpsc::sync_channel(0);
+
+        std::thread::scope(|scope| {
+            let compacting = Arc::clone(&shared);
+            let compact = scope.spawn(move || {
+                let mut store = compacting.lock().unwrap();
+                locked_tx.send(()).unwrap();
+                start_compaction_rx.recv().unwrap();
+                store.compact(13)
+            });
+            locked_rx.recv().unwrap();
+
+            let appending = Arc::clone(&shared);
+            let append = scope.spawn(move || {
+                match appending.try_lock() {
+                    Err(TryLockError::WouldBlock) => {}
+                    Err(TryLockError::Poisoned(_)) => {
+                        panic!("the exclusive history writer must not poison the store mutex")
+                    }
+                    Ok(_) => panic!("append must contend while compaction owns the store"),
+                }
+                contention_tx.send(()).unwrap();
+                appending
+                    .lock()
+                    .unwrap()
+                    .append_sample(22, capacity(), state(9.0))
+            });
+            contention_rx.recv().unwrap();
+            start_compaction_tx.send(()).unwrap();
+
+            assert!(matches!(
+                compact.join().unwrap().unwrap(),
+                CompactionOutcome::Durable
+            ));
+            append.join().unwrap().unwrap();
+        });
+
+        let expected = vec![
+            records_from_fixture(&boot(10, "boot-a"))[0].clone(),
+            records_from_fixture(&sample(11, "boot-a", 1.0))[0].clone(),
+            records_from_fixture(&sample(13, "boot-a", 2.0))[0].clone(),
+            records_from_fixture(&boot(20, &live_boot_id))[0].clone(),
+            records_from_fixture(&sample(21, &live_boot_id, 7.0))[0].clone(),
+            records_from_fixture(&sample(22, &live_boot_id, 9.0))[0].clone(),
+        ];
+        assert_complete_canonical_path(&path, &expected, "serialized append");
+        assert_eq!(
+            canonical_records(&fs::read(&path).unwrap())
+                .iter()
+                .filter(|record| {
+                    matches!(record, Record::Sample(sample)
+                        if sample.timestamp == 22
+                            && sample.boot_id == live_boot_id
+                            && sample.state == state(9.0))
+                })
+                .count(),
+            1,
+            "the append requested during compaction appears exactly once after replacement"
+        );
         let _ = fs::remove_dir_all(dir);
     }
 }
