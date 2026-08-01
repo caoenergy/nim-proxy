@@ -1677,20 +1677,255 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         assert_eq!(value(&rollup.data.totals, "requests_total"), 15.0);
     }
 
+    async fn wait_for_canonical_compaction_idle(history: &Arc<History>, label: &str) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while history.compaction_running.load(Ordering::SeqCst) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{label}: canonical compaction did not become idle"
+            );
+            tokio::task::yield_now().await;
+        }
+    }
+
     #[tokio::test]
-    async fn canonical_history_never_schedules_legacy_compaction() {
+    async fn canonical_compaction_tracks_startup_debt_through_restart() {
         let dir = TestDir::new();
-        let history = Arc::new(History::open(dir.0.clone(), 1, capacity(40)).unwrap());
-        *history.dropped_since_compact.lock().unwrap() = COMPACT_AFTER_EXPIRED_SAMPLES + 1;
+        let now = unix_now();
+        let day = 86_400_u64;
+        let cutoff = now.saturating_sub(day);
+        let capacity = canonical_capacity(&[40]);
+        let initial = canonical_snapshot(&capacity);
+        let old_boot = cutoff.saturating_sub(500);
+        let old_sample = cutoff.saturating_sub(400);
+        let baseline = cutoff.saturating_sub(100);
+        let retained = cutoff.saturating_add(60);
+        let records = [
+            canonical_boot(old_boot, "boot-a", &capacity),
+            canonical_sample(old_sample, "boot-a", &capacity, 10.0, 1.0),
+            canonical_sample(baseline, "boot-a", &capacity, 20.0, 1.0),
+            canonical_sample(retained, "boot-a", &capacity, 30.0, 2.0),
+        ];
+        let mut bytes = Vec::new();
+        for record in &records {
+            bytes.extend(codec::encode_record(record).unwrap());
+            bytes.push(b'\n');
+        }
+        let canonical = dir.0.join("history-v1.jsonl");
+        let legacy = dir.0.join("history.jsonl");
+        fs::write(&canonical, bytes).unwrap();
 
-        history.append(unix_now(), SNAPSHOT, capacity(40));
-
-        assert_eq!(
-            history.compaction_generation.load(Ordering::SeqCst),
-            0,
-            "canonical history must not schedule the legacy compactor"
+        let history = Arc::new(History::open(dir.0.clone(), 1, initial.clone()).unwrap());
+        let startup = history.rollup(cutoff, history.boot_t, 100);
+        assert!(
+            startup.complete,
+            "clean retained history is complete at startup"
         );
-        assert!(!history.compaction_pending.load(Ordering::SeqCst));
+        assert_eq!(
+            value(&startup.data.totals, "nimproxy_requests_total"),
+            10.0,
+            "the hidden full-sample baseline preserves the retained counter delta"
+        );
+        assert!(
+            history.status().compaction_pending,
+            "durable canonical retention debt is visible at startup"
+        );
+
+        let runtime = history.boot_t;
+        history.append(
+            runtime,
+            "# TYPE nimproxy_requests_total counter\n\
+             nimproxy_requests_total{client=\"equivalence\"} 40\n\
+             # TYPE nimproxy_active_requests gauge\n\
+             nimproxy_active_requests{client=\"equivalence\"} 4\n",
+            initial.clone(),
+        );
+        wait_for_canonical_compaction_idle(&history, "startup debt").await;
+        assert!(
+            !history.status().compaction_pending,
+            "compaction clears durable retention debt after the fresh full sample"
+        );
+        let compacted = fs::read_to_string(&canonical).unwrap();
+        assert!(
+            !compacted.contains(&format!("\"timestamp\":{old_sample},")),
+            "the unnecessary older sample is removed"
+        );
+        for timestamp in [old_boot, baseline, retained, history.boot_t, runtime] {
+            assert!(
+                compacted.contains(&format!("\"timestamp\":{timestamp},")),
+                "required boot, baseline, retained, and live context is preserved at {timestamp}"
+            );
+        }
+        assert!(
+            compacted
+                .lines()
+                .all(|line| codec::decode_record(line.as_bytes()).is_ok()),
+            "compaction leaves only valid canonical rows"
+        );
+        assert!(
+            !legacy.exists(),
+            "canonical compaction never touches legacy history"
+        );
+
+        drop(history);
+        let reopened = Arc::new(History::open(dir.0.clone(), 1, initial).unwrap());
+        assert!(
+            !reopened.status().compaction_pending,
+            "the required pre-cutoff baseline is not new restart debt"
+        );
+        let after_restart = reopened.rollup(cutoff, reopened.boot_t, 100);
+        assert!(
+            after_restart.complete,
+            "retained history remains complete after restart"
+        );
+        assert_eq!(
+            value(&after_restart.data.totals, "nimproxy_requests_total"),
+            50.0,
+            "the compacted baseline and retained/live samples preserve totals after restart"
+        );
+        assert!(
+            fs::read_to_string(&canonical)
+                .unwrap()
+                .lines()
+                .all(|line| codec::decode_record(line.as_bytes()).is_ok()),
+            "restart keeps canonical bytes valid"
+        );
+        assert!(!legacy.exists(), "restart never creates legacy history");
+    }
+
+    #[tokio::test]
+    async fn canonical_compaction_defers_recovery_until_gap_leaves_horizon() {
+        let dir = TestDir::new();
+        let now = unix_now();
+        let day = 86_400_u64;
+        let cutoff_two_days = now.saturating_sub(day.saturating_mul(2));
+        let cutoff_one_day = now.saturating_sub(day);
+        let old_boot = cutoff_two_days.saturating_sub(100);
+        let old_sample = cutoff_two_days.saturating_sub(50);
+        let corrupt_at = cutoff_two_days.saturating_add(100);
+        let recovery_sample = cutoff_one_day.saturating_add(10);
+        let capacity = canonical_capacity(&[40]);
+        let initial = canonical_snapshot(&capacity);
+        let corrupt = format!(
+            r#"{{"format":"nimproxy-history","v":1,"kind":"sample","timestamp":{corrupt_at},"broken":true}}"#
+        );
+        let records = [
+            canonical_boot(old_boot, "boot-a", &capacity),
+            canonical_sample(old_sample, "boot-a", &capacity, 10.0, 1.0),
+            canonical_boot(cutoff_one_day, "boot-b", &capacity),
+            canonical_sample(recovery_sample, "boot-b", &capacity, 5.0, 2.0),
+        ];
+        let canonical = dir.0.join("history-v1.jsonl");
+        let legacy = dir.0.join("history.jsonl");
+        let mut bytes = Vec::new();
+        for (index, record) in records.iter().enumerate() {
+            if index == 2 {
+                bytes.extend(corrupt.as_bytes());
+                bytes.push(b'\n');
+            }
+            bytes.extend(codec::encode_record(record).unwrap());
+            bytes.push(b'\n');
+        }
+        fs::write(&canonical, bytes).unwrap();
+
+        let history = Arc::new(History::open(dir.0.clone(), 2, initial.clone()).unwrap());
+        let crossing = history.rollup(corrupt_at.saturating_sub(1), recovery_sample, 100);
+        assert!(
+            !crossing.complete,
+            "a query crossing supported-v1 recovery evidence is incomplete"
+        );
+        assert!(
+            history.status().compaction_pending,
+            "intersecting recovery evidence remains visible as canonical compaction debt"
+        );
+
+        let runtime = history.boot_t;
+        let mut expected_after_live_append = fs::read(&canonical).unwrap();
+        expected_after_live_append.extend(
+            codec::encode_record(&canonical_sample(
+                runtime,
+                &history.boot_id,
+                &capacity,
+                9.0,
+                4.0,
+            ))
+            .unwrap(),
+        );
+        expected_after_live_append.push(b'\n');
+        history.append(
+            runtime,
+            "# TYPE nimproxy_requests_total counter\n\
+             nimproxy_requests_total{client=\"equivalence\"} 9\n\
+             # TYPE nimproxy_active_requests gauge\n\
+             nimproxy_active_requests{client=\"equivalence\"} 4\n",
+            initial.clone(),
+        );
+        wait_for_canonical_compaction_idle(&history, "intersecting recovery gap").await;
+        assert!(
+            history.status().compaction_pending,
+            "deferred compaction remains pending while the recovery gap intersects retention"
+        );
+        assert_eq!(
+            fs::read(&canonical).unwrap(),
+            expected_after_live_append,
+            "deferred compaction preserves all canonical evidence byte-for-byte after the live append"
+        );
+
+        history.clone().reconfigure_retention(1, now);
+        wait_for_canonical_compaction_idle(&history, "safe recovery gap").await;
+        assert!(
+            !history.status().compaction_pending,
+            "a gap ending exactly at the cutoff is safe to compact"
+        );
+        let compacted = fs::read_to_string(&canonical).unwrap();
+        assert!(
+            !compacted.contains(&corrupt),
+            "safe compaction removes corrupt and outside evidence"
+        );
+        for timestamp in [old_boot, old_sample] {
+            assert!(
+                !compacted.contains(&format!("\"timestamp\":{timestamp},")),
+                "safe compaction removes outside-horizon record at {timestamp}"
+            );
+        }
+        assert!(
+            compacted
+                .lines()
+                .all(|line| codec::decode_record(line.as_bytes()).is_ok()),
+            "safe compaction leaves valid canonical bytes"
+        );
+        assert!(
+            !legacy.exists(),
+            "canonical compaction never touches legacy history"
+        );
+        let current = history.rollup(cutoff_one_day, runtime, 100);
+        assert!(
+            current.complete,
+            "the retained query is complete after safe compaction"
+        );
+        assert_eq!(
+            value(&current.data.totals, "nimproxy_requests_total"),
+            14.0,
+            "the recovery epoch and live reset preserve retained totals"
+        );
+
+        drop(history);
+        let reopened = Arc::new(History::open(dir.0.clone(), 1, initial).unwrap());
+        assert!(
+            !reopened.status().compaction_pending,
+            "safe compacted recovery history has no restart debt"
+        );
+        let after_restart = reopened.rollup(cutoff_one_day, reopened.boot_t, 100);
+        assert!(
+            after_restart.complete,
+            "safe retained history stays complete after restart"
+        );
+        assert_eq!(
+            value(&after_restart.data.totals, "nimproxy_requests_total"),
+            14.0,
+            "restart preserves safe-compaction totals"
+        );
+        assert!(!legacy.exists(), "restart never creates legacy history");
     }
 
     /// A unique per-test scratch dir (std-only; removed on drop).
