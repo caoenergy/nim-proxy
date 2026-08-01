@@ -547,7 +547,18 @@ def _open_destination(destination, create=False):
         raise SanitizeError("fixture-boundary") from error
 
 
-def _validate_destination_fd(descriptor, allow_stale_evidence=False):
+def _is_public_destination_leaf(metadata):
+    mode = stat.S_IMODE(metadata.st_mode)
+    return bool(
+        stat.S_ISREG(metadata.st_mode)
+        and metadata.st_uid == os.getuid()
+        and mode & stat.S_IRUSR
+        and mode & stat.S_IWUSR
+        and not mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH | stat.S_IWOTH)
+    )
+
+
+def _validate_destination_fd(descriptor, allow_stale_evidence=False, allow_checkout_modes=False):
     try:
         names = set(os.listdir(descriptor))
     except OSError as error:
@@ -562,8 +573,11 @@ def _validate_destination_fd(descriptor, allow_stale_evidence=False):
         try:
             file_descriptor = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=descriptor)
             metadata = os.fstat(file_descriptor)
-            if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid()
-                    or stat.S_IMODE(metadata.st_mode) not in {0o600, 0o644}):
+            valid_leaf = (_is_public_destination_leaf(metadata) if allow_checkout_modes else (
+                stat.S_ISREG(metadata.st_mode) and metadata.st_uid == os.getuid()
+                and stat.S_IMODE(metadata.st_mode) in {0o600, 0o644}
+            ))
+            if not valid_leaf:
                 raise SanitizeError("fixture-set-invalid")
             content_parts = []
             while True:
@@ -580,8 +594,11 @@ def _validate_destination_fd(descriptor, allow_stale_evidence=False):
     try:
         manifest_descriptor = os.open("manifest.json", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=descriptor)
         manifest_metadata = os.fstat(manifest_descriptor)
-        if (not stat.S_ISREG(manifest_metadata.st_mode) or manifest_metadata.st_uid != os.getuid()
-                or stat.S_IMODE(manifest_metadata.st_mode) not in {0o600, 0o644}):
+        valid_manifest = (_is_public_destination_leaf(manifest_metadata) if allow_checkout_modes else (
+            stat.S_ISREG(manifest_metadata.st_mode) and manifest_metadata.st_uid == os.getuid()
+            and stat.S_IMODE(manifest_metadata.st_mode) in {0o600, 0o644}
+        ))
+        if not valid_manifest:
             raise SanitizeError("manifest-invalid")
         manifest_content = b"".join(iter(lambda: os.read(manifest_descriptor, 64 * 1024), b""))
         os.close(manifest_descriptor)
@@ -612,7 +629,7 @@ def validate_destination(destination):
     try:
         if descriptor is None:
             raise SanitizeError("fixture-set-invalid")
-        _validate_destination_fd(descriptor)
+        _validate_destination_fd(descriptor, allow_checkout_modes=True)
     finally:
         if descriptor is not None:
             os.close(descriptor)
@@ -625,7 +642,9 @@ def refresh_manifest(destination):
     try:
         if descriptor is None:
             raise SanitizeError("fixture-set-invalid")
-        fixtures, contents = _validate_destination_fd(descriptor, allow_stale_evidence=True)
+        fixtures, contents = _validate_destination_fd(
+            descriptor, allow_stale_evidence=True, allow_checkout_modes=True
+        )
         manifest = manifest_for(fixtures, contents)
         manifest_content = (json.dumps(
             manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")
@@ -749,7 +768,9 @@ def write_output(input_dir, destination):
     staging_name = None
     try:
         if existing is not None:
-            _validate_destination_fd(existing, allow_stale_evidence=True)
+            _validate_destination_fd(
+                existing, allow_stale_evidence=True, allow_checkout_modes=True
+            )
         staging_name, staging_descriptor = _create_staging_at(parent)
         for filename in sorted(contents):
             _write_private_at(staging_descriptor, filename, contents[filename])
@@ -1329,6 +1350,17 @@ def operational_cases(sentinel):
         checkout_leaves.append(checkout_destination / "manifest.json")
         for path in checkout_leaves:
             os.chmod(path, 0o664)
+        checkout_parent, checkout_descriptor = _open_destination(checkout_destination)
+        try:
+            try:
+                _validate_destination_fd(checkout_descriptor)
+            except SanitizeError as error:
+                checkout_default_error = str(error)
+            else:
+                checkout_default_error = None
+        finally:
+            os.close(checkout_descriptor)
+            os.close(checkout_parent)
         try:
             validate_destination(checkout_destination)
         except SanitizeError as error:
@@ -1382,7 +1414,8 @@ def operational_cases(sentinel):
             executable_manifest_error = str(error)
         else:
             executable_manifest_error = None
-        if (checkout_check_error is not None or checkout_refresh_result != 0
+        if (checkout_default_error != "fixture-set-invalid" or checkout_check_error is not None
+                or checkout_refresh_result != 0
                 or checkout_refresh_error is not None
                 or world_writable_fixture_error != "fixture-set-invalid"
                 or executable_fixture_error != "fixture-set-invalid"
