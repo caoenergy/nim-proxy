@@ -6,6 +6,44 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-08-01] maintenance — publish the v0.6.6 upgrade boundary
+
+Task 17 reconciles the user-facing release documents with the completed
+foundation rather than the early partial integration state. The current
+contract is 443 canonical English messages, 16 generated OpenAPI operations,
+split same-origin public/operator assets, production `en-US` only, an
+intentional reset into canonical `history-v1.jsonl`, the one cooldown metric
+rename, and removal of pricing. The legacy `history.jsonl` file remains
+untouched for rollback or manual deletion. Client-auth memory now distinguishes
+the machine attribution label `local` from the UI mode label **Open (no
+authentication)**. See the [client-auth component](architecture/client-auth.md),
+[README](../README.md), [changelog](../CHANGELOG.md), and
+[Task 17 plan](../docs/plans/v0.6.6-foundation-implementation.md).
+
+## [2026-08-01] maintenance — reconcile current visual applicability
+
+Task 17's fresh visual run exposed a stale Task 9 count in the current gate
+instructions and concept pages. The current source and report agree on 284
+applicable full-document surfaces—188 `en-US` and 96 generated `en-XA`, evenly
+distributed as 71 artifacts at each of four supported widths—with empty
+coverage and integrity problem sets. Task 9's 224-artifact record remains its
+dated evidence rather than current authority. See the
+[test strategy](testing/test-strategy.md), [Dashboard](architecture/dashboard.md),
+[render-gate decision](decisions/render-gate.md), and the
+[Task 17 plan](../docs/plans/v0.6.6-foundation-implementation.md).
+
+## [2026-08-01] maintenance — reconcile Task 16 browser-gate authority
+
+Task 17's knowledge lint reconciles the current browser authorities after the
+Task 16 observation-quality expansion: 35 Rust-generated stable UI JSON files
+feed 69 named served-app interaction rows. Earlier Task 8 and Task 12 counts
+remain dated provenance in their plan and decision records, not current
+authority. The original stored-XSS decision now marks `history.jsonl` as the
+then-current legacy path and points at canonical `history-v1.jsonl`. See the
+[test strategy](testing/test-strategy.md), [Dashboard](architecture/dashboard.md),
+[presentation layer](architecture/presentation-layer.md), and
+[render-gate decision](decisions/render-gate.md).
+
 ## [2026-08-01] component — bounded finalized usage-observation quality
 
 Task 16 adds the private, fixed-cardinality

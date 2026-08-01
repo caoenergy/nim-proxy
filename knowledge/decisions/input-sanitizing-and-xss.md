@@ -15,9 +15,10 @@ The security review found one root cause with three sinks: the client-supplied
 labels, (2) the access-log line, and (3) the dashboard via `innerHTML`. A
 semi-trusted client (an authenticated "friend" in a shared pool) could:
 
-- **Stored XSS** — `model` = `<img src=x onerror=…>` is stored as a label,
-  persisted in `history.jsonl`, and executes in the operator's browser when
-  they open the dashboard.
+- **Stored XSS** — `model` = `<img src=x onerror=…>` was stored as a label,
+  persisted in the then-current `history.jsonl`, and executed in the
+  operator's browser when they opened the dashboard. The canonical successor
+  is now `history-v1.jsonl`; production leaves the legacy file untouched.
 - **Cardinality blowup** — unbounded distinct `model` values grow the metrics
   registry (RAM) and every 5-min history snapshot (disk).
 - **Exposition / log injection** — quotes, braces, and newlines break the
