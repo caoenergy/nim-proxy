@@ -6,6 +6,23 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-08-01] research finding — bounded NIM response topology
+
+One authorized four-request run through local nim-proxy produced successful
+buffered basic, streamed basic, buffered tool, and streamed tool observations.
+Sanitizer-v1 fixtures retain only Task 15's protected structure: buffered usage
+and finish reasons; an SSE comment; null progress followed by `stop`; usage-
+only final SSE events; `[DONE]`; and buffered/streamed tool-call topology with
+a stable redacted id relationship. The evidence manifest leaves every
+unobserved error, malformed/truncated, alternate-finish, multi-choice,
+multi-line, repeated-fragment, and usage variation explicitly unavailable.
+Human and independent review found no credential, URL, request/response prose,
+model/provider/account identity, email, or raw opaque id in the committed set.
+The exact raw files were descriptor-cleaned after review. See the
+[capture runbook](ops/nim-response-capture.md), the
+[test strategy](testing/test-strategy.md), and the
+[Task 14 plan](../docs/plans/v0.6.6-foundation-implementation.md).
+
 ## [2026-08-01] component — bounded atomic canonical history retention
 
 Task 13 compacts only `history-v1.jsonl` behind its exclusive writer. It keeps

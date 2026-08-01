@@ -156,6 +156,19 @@ that proof.
 - **Pacing, pool, dispatch, and affinity:** use the enforcing mock and load
   harness; one upstream violation is failure. Follow the setup prerequisites
   in the [load section](#3-load--scriptsloadtestpy-vs-scriptsmock_nimpy---enforce).
+- **NIM response evidence:** `python3 scripts/capture_nim.py --selftest`
+  exercises environment/URL/profile policy, exact request caps, HTTP/1.0 and
+  TLS lifecycles, secret-free diagnostics, owner-only descriptor-contained
+  publication, and failure cleanup without a service. `python3
+  scripts/sanitize_nim_capture.py --selftest` exercises independent privacy,
+  protected JSON/SSE topology, evidence aggregation, exact schemas, symlink/
+  mode boundaries, atomic publication, and stale-set rejection. After an
+  authorized four-case capture, `python3 scripts/sanitize_nim_capture.py
+  --check tests/fixtures/nim-observations` proves the committed fixtures and
+  manifest are a complete deterministic set. Self-tests do not establish a
+  live NIM shape; live capture does not replace the sentinel and race proofs.
+  Follow the [capture runbook](../ops/nim-response-capture.md) for credential,
+  human-review, and exact raw-cleanup boundaries.
 - **Layout:** use mechanical overflow probes where available plus explicit
   human review under rendered data and supported widths. Behavior passing does
   not prove fit.

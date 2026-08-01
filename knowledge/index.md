@@ -79,6 +79,7 @@ page describes a conclusion, a plan describes the live state.
 | [configure-env](ops/configure-env.md) | Compose publishing, the 5 container env vars, Settings, and lockout recovery |
 | [sharing-with-friends](ops/sharing-with-friends.md) | Create-a-user multi-user setup, key etiquette, ToS positioning |
 | [capacity-math](ops/capacity-math.md) | What N clients on K keys actually does (the 50-clients/3-lanes analysis) |
+| [nim-response-capture](ops/nim-response-capture.md) | Bounded four-case NIM capture, deterministic sanitization, privacy review, and exact raw cleanup |
 
 ## Testing
 
