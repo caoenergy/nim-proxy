@@ -148,7 +148,12 @@ capacity average: the unavailable prefix is not treated as observed time.
 generation lock. It returns current typed metrics plus a tail whose totals are
 the counter delta after the persisted baseline. The tail carries
 `base_history_revision`; the browser accepts it only alongside the matching
-range revision, so a newly persisted sample cannot be double-counted.
+range revision, so a newly persisted sample cannot be double-counted. The
+bounded `nimproxy_usage_observations_total` counter is ordinary generic
+counter state: history preserves its exact field/result rows without a special
+API field, while the dashboard's response-quality derivation ignores
+non-finite/negative rows and only reads a revision-matching live tail. See
+[NIM observations](nim-observations.md) and [Dashboard](dashboard.md).
 
 ## Retention and durability
 

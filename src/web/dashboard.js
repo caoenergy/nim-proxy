@@ -95,6 +95,41 @@ function render() {
   const qwS = wsum('nimproxy_queue_wait_seconds_sum'), qwN = wsum('nimproxy_queue_wait_seconds_count');
   const upS = wsum('nimproxy_upstream_seconds_sum'), upN = wsum('nimproxy_upstream_seconds_count');
   const statusG = wgroups('nimproxy_requests_total', 'status');
+  const observationFields = new Set([
+    'prompt_tokens', 'completion_tokens', 'total_tokens', 'cached_tokens', 'reasoning_tokens',
+  ]);
+  const observationResults = ['invalid', 'unavailable', 'estimated', 'measured'];
+  const observationCounts = Object.fromEntries(observationResults.map(result => [result, 0]));
+  let observationPresent = false;
+  for (const row of last.rows) {
+    if (row.name !== 'nimproxy_usage_observations_total'
+        || !observationFields.has(row.labels.field)
+        || !observationResults.includes(row.labels.result)
+        || !Number.isFinite(+row.value) || +row.value < 0) continue;
+    observationPresent = true;
+    observationCounts[row.labels.result] += +row.value;
+  }
+  const observationMax = Math.max(...Object.values(observationCounts));
+  const observationResult = !observationPresent ? 'unavailable'
+    : observationMax === 0 ? 'zero'
+    : observationResults.find(result => observationCounts[result] === observationMax);
+  const observationQuality = {
+    invalid: {
+      value: catalogMessage('dashboard.overview.observation_quality.invalid'), tone: 'crit',
+    },
+    unavailable: {
+      value: catalogMessage('dashboard.overview.observation_quality.unavailable'), tone: 'warn',
+    },
+    estimated: {
+      value: catalogMessage('dashboard.overview.observation_quality.estimated'), tone: 'warn',
+    },
+    measured: {
+      value: catalogMessage('dashboard.overview.observation_quality.measured'), tone: undefined,
+    },
+    zero: {
+      value: catalogMessage('dashboard.overview.observation_quality.zero'), tone: 'zero',
+    },
+  }[observationResult];
 
   const c = {
     last, rows, windowLabel,
@@ -104,7 +139,7 @@ function render() {
     tpotMS, tpotMC, finTotal, finLen, reasoningByModel, tpotAvg, truncPct, reasonPct, pct,
     reqPts, capacityPoints, curRpm, avgRpm, peakRpm, capacity, rpmNow, capRatio, capColor, wreq, wok, okRatio, okColor,
     cReq, cP, cC, clients, streamT, streamF, toolReqs, totStreamT, totStreamF, totGen, totToolReq,
-    shed, unauth, logins, cooldown429, cooldownOther, qwS, qwN, upS, upN, statusG,
+    shed, unauth, logins, cooldown429, cooldownOther, qwS, qwN, upS, upN, statusG, observationQuality,
   };
   (RENDERERS[activeTab] || renderOverview)(c);
 }
@@ -117,7 +152,7 @@ const clientChip = cl =>
 function renderOverview(c) {
   const { windowLabel, capRatio, capColor, okRatio, okColor, wreq, wok, allP, allC,
     reqPts, rows, shed, unauth, logins, cooldown429, rpmNow, capacity, curRpm,
-    models, ctok, clients, cC, errRate } = c;
+    models, ctok, clients, cC, errRate, observationQuality } = c;
   const ctokPts = rateSeries(s => sum(s.rows, 'nimproxy_completion_tokens_total'));
   const okPts = samples.slice(1).map((s, i) => {
     const dr = sum(s.rows, 'nimproxy_requests_total') - sum(samples[i].rows, 'nimproxy_requests_total');
@@ -145,6 +180,7 @@ function renderOverview(c) {
   $('o-health').innerHTML =
     metricRow(catalogMessage('dashboard.common.row.active_now'), fmt(sum(rows, 'nimproxy_active_requests'))) +
     metricRow(catalogMessage('dashboard.common.row.queued'), fmt(sum(rows, 'nimproxy_queue_depth'))) +
+    metricRow(catalogMessage('dashboard.overview.row.observation_quality'), observationQuality.value, observationQuality.tone) +
     metricRow(catalogMessage('dashboard.common.row.rate_limit_cooldowns'), fmt(cooldown429), cooldown429 > 0 ? 'warn' : 'zero') +
     metricRow(catalogMessage('dashboard.common.row.dropped'), fmt(shed), shed > 0 ? 'crit' : 'zero') +
     metricRow(catalogMessage('dashboard.common.row.unauthorized'), fmt(unauth), unauth > 0 ? 'crit' : 'zero') +

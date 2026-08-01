@@ -26,19 +26,44 @@ pub(crate) struct ResponseObservations {
     pub(crate) usage: UsageObservations,
 }
 
-#[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct UsageObservationMetric {
     pub(crate) field: &'static str,
     pub(crate) result: &'static str,
 }
 
-/// Task 16 RED seam. The deliberately empty result lets the regression state
-/// the locked, bounded mapping before the counter is implemented at the proxy
-/// classification boundary.
-#[cfg(test)]
-pub(crate) fn usage_observation_metrics(_usage: &UsageObservations) -> Vec<UsageObservationMetric> {
-    Vec::new()
+/// Map the finalized fixed usage fields to the only bounded observation metric
+/// labels. This is the sole classification-to-metric boundary: callers must
+/// not inspect response values or recreate these field/result pairs.
+pub(crate) fn usage_observation_metrics(usage: &UsageObservations) -> Vec<UsageObservationMetric> {
+    let result = |observation: &Observation| match observation {
+        Observation::Measured(_) => "measured",
+        Observation::Estimated(_) => "estimated",
+        Observation::Unavailable => "unavailable",
+        Observation::Invalid => "invalid",
+    };
+    vec![
+        UsageObservationMetric {
+            field: "prompt_tokens",
+            result: result(&usage.prompt_tokens),
+        },
+        UsageObservationMetric {
+            field: "completion_tokens",
+            result: result(&usage.completion_tokens),
+        },
+        UsageObservationMetric {
+            field: "total_tokens",
+            result: result(&usage.total_tokens),
+        },
+        UsageObservationMetric {
+            field: "cached_tokens",
+            result: result(&usage.cached_tokens),
+        },
+        UsageObservationMetric {
+            field: "reasoning_tokens",
+            result: result(&usage.reasoning_tokens),
+        },
+    ]
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

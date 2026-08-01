@@ -766,6 +766,26 @@
       "en": "{tokens} in",
       "hash": "b48a8ba7"
     },
+    "dashboard.overview.observation_quality.estimated": {
+      "en": "Estimated",
+      "hash": "b774599a"
+    },
+    "dashboard.overview.observation_quality.invalid": {
+      "en": "Invalid",
+      "hash": "96c34a07"
+    },
+    "dashboard.overview.observation_quality.measured": {
+      "en": "Measured",
+      "hash": "9298c8f4"
+    },
+    "dashboard.overview.observation_quality.unavailable": {
+      "en": "Unavailable",
+      "hash": "ca184496"
+    },
+    "dashboard.overview.observation_quality.zero": {
+      "en": "No observations",
+      "hash": "fed7c51b"
+    },
     "dashboard.overview.perf.higher_is_better": {
       "en": "higher is better",
       "desc": "Note beside a throughput distribution: larger numbers are better. Lowercase, sits under the card heading.",
@@ -836,6 +856,10 @@
     "dashboard.overview.ring.errors.zero": {
       "en": "errors {pct} · {cooldowns} cooldowns",
       "hash": "17ac4dc4"
+    },
+    "dashboard.overview.row.observation_quality": {
+      "en": "Observation quality",
+      "hash": "b56e5b8f"
     },
     "dashboard.overview.top_clients.heading": {
       "en": "Top clients",
