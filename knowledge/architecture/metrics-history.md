@@ -56,7 +56,8 @@ evidence; startup emits at most one warning containing their count, and never
 their names or contents. File order is authoritative and equal timestamps are
 valid. A runtime encode/write/flush/sync failure poisons the writer, so later
 ticks cannot append after partial evidence. `file_bytes` is live metadata from
-the canonical writer. Task 13 owns compaction.
+the canonical writer. Finite-retention compaction applies only to this
+canonical destination and follows the protocol below.
 
 ## Recovery and completeness
 
@@ -158,9 +159,57 @@ range revision, so a newly persisted sample cannot be double-counted.
 long as the default dashboard window.
 
 Changing retention in Settings validates and persists the complete config,
-then immediately trims the visible in-memory index. Task 11 deliberately does
-not compact canonical history; Task 13 owns the atomic replacement protocol
-and its recovery proof. A canonical history-file write failure warns and
-leaves the in-memory index operating, but poisons further durable writes for
-that process; an unusable `DATA_DIR` or config store is still a hard boot error
+then immediately trims the visible in-memory index. A finite canonical cutoff
+is `now - history.days * 86,400`, using saturating arithmetic. Existing
+retention debt is exposed as `compaction_pending` at startup; the first full
+sampler append schedules it. A live finite-retention change schedules work
+immediately. Setting `history.days` to `0` invalidates the finite generation,
+clears pending work, and prevents a stale worker from renaming its candidate.
+Compaction runs on a blocking worker behind the canonical store mutex, never
+on the request dispatcher or rate-limiter path.
+
+For each eligible epoch, canonical compaction retains the epoch boot, the
+latest full sample strictly before the cutoff as its boundary baseline, and
+every record at or after the cutoff, all in original physical order. An epoch
+is eligible when it has a retained observation or is the usable live epoch.
+A checkpoint carries no state of its own and therefore cannot replace the
+pre-cutoff full-sample baseline. This is the minimum context that preserves
+counter deltas, gauges, capacity, completeness, and effective bounds after a
+restart.
+
+The store revalidates the current path while holding its exclusive writer. If
+a recovery gap ends after the cutoff, or the live epoch has no full sample,
+replacement is deferred and `compaction_pending` remains true. A gap ending
+exactly at the cutoff is outside the retained window and may be discarded.
+This rule prevents validated-row rewriting from erasing evidence that still
+makes a retained query incomplete.
+
+For a safe stream, the writer creates a unique same-directory temporary,
+writes the selected canonical records, flushes and syncs it, and requires the
+temporary to decode as exactly that selected stream with no recovery evidence.
+Generation authorization is then held through the atomic rename. The already
+open append-capable temporary handle becomes the live writer after rename; no
+fallible reopen separates replacement from subsequent append. The parent
+directory is synced last. Failures before rename leave the old path complete
+(and may leave an opaque stale temporary); rename produces the complete new
+path. A directory-sync failure after rename is reported as committed but
+durability-uncertain, installs the replacement replay, and leaves cleanup
+pending. Superseding retention generations are rescheduled without overwriting
+newer append diagnostics or events.
+
+The accelerated release proof seeds slightly more than two 30-day horizons,
+then observes three idle checkpoints followed by three no-traffic restart
+epochs. Idle intervals append exactly one checkpoint and zero full samples;
+each 3,600-second restart appends an exact `boot`/`sample` pair while preserving
+the prior raw-byte prefix and range results. In the deterministic fixture the
+settled base was 6,469 bytes, the first checkpoint allowance was 195 bytes, the
+first restart allowance was 391 bytes, and the independent linear bound
+`6,469 + 3*195 + 3*391 = 8,227` bytes equaled the final file. These byte values
+describe the fixed synthetic fixture, not a universal workload-size promise;
+the durable guarantee is bounded retained context and small idle checkpoints
+instead of repeated full idle snapshots.
+
+A canonical history-file write failure warns and leaves the in-memory index
+operating, but poisons further durable writes for that process; an unusable
+`DATA_DIR` or config store is still a hard boot error
 ([configuration](../ops/configure-env.md)).

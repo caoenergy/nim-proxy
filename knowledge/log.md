@@ -6,6 +6,25 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-08-01] component — bounded atomic canonical history retention
+
+Task 13 compacts only `history-v1.jsonl` behind its exclusive writer. It keeps
+each retained epoch's boot, latest strictly pre-cutoff full-sample baseline,
+and physical-order records at or after the cutoff; checkpoints never stand in
+for state. Intersecting recovery evidence or a live epoch without a full
+sample defers replacement. Safe candidates are synced and exactly revalidated
+in the same directory, generation-authorized through rename, adopted through
+the already-open replacement handle, and followed by directory sync. Pre-
+rename failures preserve the old path; post-rename directory-sync uncertainty
+keeps the complete new path pending. Deterministic real-binary proof spans
+more than two horizons, three zero-sample idle checkpoints, and three exact
+restart epochs with an independently established 8,227-byte fixture bound.
+The load harness can atomically report history growth and native Linux peak
+RSS while retaining its zero-client-failure and zero-rate-violation exit
+contract. See [metrics history](architecture/metrics-history.md), the
+[test strategy](testing/test-strategy.md), and the
+[Task 13 plan](../docs/plans/v0.6.6-foundation-implementation.md).
+
 ## [2026-07-31] component — recoverable canonical history completeness
 
 Task 12 replaces the strict intermediate canonical reader with one file-order

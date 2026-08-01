@@ -52,16 +52,11 @@ the time, and rewriting them would be dishonest.
 
 - **Breaking for anything scraping the old series.** Dashboards, alerts, or
   recording rules referencing `nimproxy_lane_benched_total` must be updated.
-- **Retained history shows a gap.** `history.jsonl` persists the metric name
-  verbatim, so points recorded before the upgrade stay under the old key while
-  the dashboard queries the new one. Lane-cooldown charts are blank for
-  pre-upgrade points and return to full fidelity one retention window
-  (`history.days`) after upgrading.
-
-  This was a deliberate choice over a read-time alias in `history.rs`. The
-  alias would work, but it is a permanent compatibility shim carried forever to
-  smooth a one-time bounded gap in a homelab tool — precisely the kind of
-  prototype-phase residue this release exists to remove. The gap is visible,
-  self-healing, and documented.
+- **History receives no compatibility alias.** v0.6.6 deliberately starts the
+  canonical `history-v1.jsonl` contract without importing experimental
+  `history.jsonl`, so pre-upgrade points do not enter the new index under
+  either name. New canonical records persist the cooldown metric verbatim.
+  Adding a permanent read-time alias to smooth a one-time pre-1.0 reset would
+  be precisely the prototype-phase residue this release exists to remove.
 - The vocabulary is now recognizable without explanation, which is what makes
   the labels machine-translatable in the same release.

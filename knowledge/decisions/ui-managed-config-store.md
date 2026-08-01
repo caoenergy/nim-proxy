@@ -53,7 +53,7 @@ And one risk to accept or design around: an unconfigured instance is
 
 ### JSON file, not SQLite
 
-`DATA_DIR/config.json` (sibling of `history.jsonl` — the compose volume
+`DATA_DIR/config.json` (sibling of canonical `history-v1.jsonl` — the compose volume
 already covers it, zero compose changes). The store is **kilobytes,
 read-mostly, single-writer** (the settings handlers), and fully
 **snapshot-cached in memory** (`RwLock<Arc<Config>>`, one snapshot per
@@ -114,11 +114,11 @@ identity mechanics.
 
 ### No encryption at rest
 
-The **`/data` volume is the trust boundary.** NIM keys already sat there in
-`history.jsonl`'s directory and in `.env` in plaintext; anyone who can read the
-volume already had the keys. Encrypting the store would need a key to live
-*somewhere* — another env var, another file on the same volume — which moves
-the problem without solving it. The proportionate hardening is **0600
+The **`/data` volume is the trust boundary.** The same deployment principal
+controls that volume and the `.env` where NIM keys previously lived in
+plaintext. Encrypting the store would need a key to live *somewhere* — another
+env var or another file under the same deployment boundary — which moves the
+problem without solving it. The proportionate hardening is **0600
 permissions + atomic writes** (tmp + `fsync` + `rename` + dir `fsync`), which
 the credential store needs anyway (unlike telemetry, a torn write here loses
 logins). Client API-key secrets get defense-in-depth for free: they're
