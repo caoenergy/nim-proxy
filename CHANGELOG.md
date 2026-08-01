@@ -7,289 +7,139 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.6.6] - 2026-07-29
+## [0.6.6] - 2026-08-01
+
+> **Breaking upgrade:** v0.6.6 intentionally starts dashboard history over,
+> renames one Prometheus series, and removes the pricing contract. Back up the
+> data volume before upgrading.
+
+### Upgrade notes
+
+- Canonical history now lives at `DATA_DIR/history-v1.jsonl`. The proxy does
+  not read, rename, truncate, migrate, or delete the experimental
+  `DATA_DIR/history.jsonl`; historical charts begin with post-upgrade data.
+  Keep the old file for rollback or remove it manually after it is no longer
+  needed.
+- Rename dashboards, alerts, and recording rules from
+  `nimproxy_lane_benched_total` to
+  `nimproxy_lane_cooldown_total`. Every other pre-existing `nimproxy_*`
+  series keeps its name.
+- Pricing settings and estimated-savings fields are removed:
+  `POST /api/settings/pricing`, `server.pricing`,
+  `price_in`/`price_out`, and the `pricing` config block no longer have
+  product meaning. Existing config stores still load; an orphan `pricing`
+  block is ignored.
+- The config store remains schema v1. Locale fields are additive: the server
+  default is `en-US`, while each user's optional preference defaults to no
+  override. No config migration framework or version bump is introduced.
+- v0.6.6 ships only the `en-US` production catalog. The `en-XA`
+  pseudolocale is generated only for tests, and valid but uninstalled locale
+  preferences are rejected.
 
 ### Added
 
-- **`openapi.json`** — a generated OpenAPI 3.1 description of the dashboard
-  API, committed at the repo root. It covers 14 operations: the twelve
-  `/api/*` routes, plus `POST /setup` and `POST /setup/validate-key`, which
-  are flagged unauthenticated because they run before any user exists (and
-  404 once one does). The `/v1` passthrough is deliberately out of scope —
-  that contract belongs to the upstream.
-
-  The spec is generated from the handlers with `utoipa`, so it cannot describe
-  an API that no longer exists: CI regenerates it and fails on any difference.
-  Regenerate locally with `UPDATE_OPENAPI=1 cargo test --test openapi`. No
-  documentation UI is served — the available ones fetch JavaScript from a CDN
-  that the dashboard's Content-Security-Policy forbids, and bundling would add
-  about a megabyte to a `FROM scratch` image. Point an offline viewer or a
-  client generator at the file instead.
-
-- Two vocabulary checks. `locale-v1` gains **frozen**: units, HTTP status
-  codes and API identifiers (`rpm`, `tok/s`, `429`, `/v1`, `NIM`, `TTFT`) must
-  survive verbatim in every translation, because a machine translator will
-  otherwise render `rpm` as `tr/min` and produce a locale that passes every
-  other check while being wrong. The i18n lint gains a **retired-term** check
-  so a standardized interface cannot drift back apart one label at a time. The
-  vocabulary they enforce is now recorded in
-  `knowledge/decisions/standard-vocabulary.md`.
-
-  The retired-term check scans the **whole page**, not just catalog values.
-  Scanning values alone was not enough and the gap was live: `rpm total` was
-  rendering in the setup wizard's review panel, outside the catalog, with the
-  check reporting clean. A label that never made it into the catalog still
-  reaches the operator.
-
-  The frozen check found a defect on its first run: the `en-XA` pseudolocale
-  was accenting those tokens, rendering `NÎM` and a mangled `/v1` across nine
-  messages — in the one locale that exists to prove layout. Generator fixed and
-  `en-XA` regenerated.
-
-- A render gate, `scripts/render_check.js`: it loads the dashboard against
-  captured API payloads, clicks through all five tabs, hovers every chart with
-  real pointer input, and fails on any uncaught page error. No new dependency —
-  Node's built-in WebSocket driving the system browser. It is the only check
-  that proves the page *runs*; `cargo test` asserts on served HTML text and
-  `node --check` proves only that it parses.
-
-  `--escape-probe` enforces the escape-once rule in **both** directions, at both
-  text and attribute sinks. It appends `Ampersand & Quote' <b>Tag</b> DQ"` to
-  every catalog value, and each character is load-bearing:
-
-  - `&` and `'` come back as literal `&amp;` / `&#39;` when something escaped an
-    already-escaped value.
-  - `<b>` parses into a real DOM element when a value reached a raw-HTML text
-    sink unescaped.
-  - `"` closes a quoted attribute early, so an unescaped value at an
-    *attribute* sink makes the parser read the remainder as attribute **names** —
-    and a real attribute name can never contain `<`, `"`, `'` or `=`.
-
-  That last one is not the obvious approach and the obvious approach does not
-  work: `getAttribute()` decodes entities, so a correctly-escaped and an
-  unescaped attribute value are byte-identical by the time the DOM holds them.
-  Scanning attribute values for the tag fires on eight legitimate attributes.
-
-  The first version carried no tag and walked text nodes only, making it a
-  double-escape detector blind to the missing-escape direction — the XSS
-  direction. Established by injection rather than by reading: of the defects
-  tried, the original probe caught a double-escape at a text sink and passed
-  under-escaping at both text and attribute sinks green. All of them now fail,
-  and the detector requires the probe's own marker in the same element so it
-  cannot mistake a legitimate `<b>` for a sink.
-
-  The gate also asserts the status predicates agree. `IS_2XX` / `IS_ERR` are
-  module-scope in `dashboard.html` specifically so it can evaluate them: the
-  captured payloads contain only `200`, `429`, `504` and `disconnect`, so
-  replaying fixtures can never observe the disagreement described under Fixed.
-
-  It covers **both** embedded pages. `--page setup` drives the wizard through
-  its validation errors, key validation, review panel, both states of the
-  client-key option, and the one-time-secret screen; each step asserts the panel
-  it should have revealed is actually visible, so a step that silently does
-  nothing fails rather than measuring step 1 five times. The wizard needs no
-  fixtures — it fetches nothing at load — and its two endpoints are stubbed in
-  the shapes `openapi.json` declares, not shapes chosen to make the page pass.
-
-  The gate also asserts that **both** runtimes refuse to localize an attribute
-  outside `title`/`placeholder`/`aria-label`/`alt`, by running each page's own
-  `applyStatic` over a synthetic element carrying `onclick` and `style`. That
-  invariant was previously prose in a knowledge page and a comment in a lint
-  while only one of the two pages enforced it.
-
-- Localization guards: an `en-XA` pseudolocale (generated, never hand-edited),
-  a `locale-v1` validator covering completeness, placeholder parity, formatter
-  syntax, raw markup, inline balance, source-hash freshness and length caps, and
-  an untagged-string lint. Every check ships with a deliberately broken fixture
-  proving it can fail, and all four run in CI.
-
-  The untagged-string lint had three holes, and **25 English strings were
-  shipping through them with CI green** — including a term this same release
-  retired. All three are closed:
-
-  - It scanned single-quoted strings only, so `src/setup.html`, which uses
-    double quotes throughout, was effectively unscanned. Eight operator-facing
-    error messages sat behind that — a ninth was extracted at the same time but
-    the lint never demanded it, because it contains an underscore.
-  - Nothing looked at text nodes inside template literals. `<span
-    class="k">Superuser</span>` is neither a quoted string nor page markup —
-    `strip_scripts()` deletes the script holding it. Sixteen labels lived there,
-    including a `Latency breakdown` literal ten lines from the catalog id for
-    the same words.
-  - The "this is machinery, not text" filter was applied per **line**, so one
-    `.toFixed(` anywhere on a line exempted every string beside it. That is how
-    `no eligible traffic` rendered in English on a line CI called clean.
-
-  `scripts/check_i18n.py --selftest` now exists, matching `locale_v1.py`'s. Its
-  19 cases are all real false negatives that once printed `i18n OK`, and the
-  controls are the strings it must never flag — CSS declarations, class
-  attributes, frozen units. It was missing while this lint shipped four separate
-  blind spots, so each round of injections proving a fix lived in a scratch
-  directory and evaporated. Reverting any one of the fixes now fails CI.
-
-  A later review pass found a fourth hole that the widening itself opened — the
-  "this is an attribute value" guard allowed whitespace before the `=`, which
-  exempted every JS assignment and comparison (`const x = 'label'`,
-  `el.textContent = 'label'`, `if (s === 'label')`). Tightening it costs zero
-  findings on either page, so the loose form was pure blind spot. Closed, with
-  the reviewer's eleven injections now caught and three legitimate-string
-  controls still correctly ignored.
-
-  It is still not proof that the pages contain no English, and three specific
-  shapes remain invisible:
-
-  - Lowercase single tokens, ignored deliberately because that shape is usually
-    an enum or metric label value. `met` and `missed` were found by reading.
-  - Prose inside a *nested* template literal, and prose in a template literal
-    with no tags around it (`` `Some label ${x}` ``) — the scan looks for text
-    between `>` and `<`. The two live leaks `errors 42% · 8 cooldowns` and
-    `0 now` are exactly that shape.
-  - An English plural written as control flow (`n === 1 ? '' : 's'`), where the
-    English is the absence of a character rather than a string. Four are still
-    live and named in `knowledge/decisions/plural-categories-not-ternaries.md`.
-
-  `tests/fixtures/locales/REMAINING.md` is the measured inventory, and the
-  settings surface remains out of scope until 0.6.7.
-
-- The dashboard and setup wizard now render their text from an embedded
-  `en-US` message catalog rather than hardcoded literals — the groundwork for
-  localization. **225 messages (181 dashboard, 44 setup)**, covering the static
-  markup of both pages, the analytics call sites, the wizard's error messages
-  and the SLO and capacity notes; the settings surface follows in 0.6.7.
-
-  Sentences with interpolated values are **one message with placeholders**, never
-  concatenated fragments — `Key validation failed: {error}`, not
-  `"Key validation failed: " + e` — because word order moves between languages
-  and a fragment gives a translator nothing to work with.
-
-  Counts go through `Intl.PluralRules` (ladder rung 4). Two hardcoded English
-  ternaries — `enabled key${n === 1 ? '' : 's'}` and
-  `interval${n === 1 ? '' : 's'}` — were English grammar sitting in the render
-  path. Both are now six-category plural sets, spelled out as explicit ids so
-  the orphan check can still see them; `locale-v1` requires exact id parity, so
-  a category absent from the source could never be supplied by a translation,
-  and ar/ru/pl/cy need categories English does not have.
-
-  English output is unchanged, and `tests/fixtures/locales/REMAINING.md` is the
-  measured inventory of what still renders in English — regenerate it from
-  `node scripts/render_check.js --locale en-XA`, which prints the count.
-
-  What proves what here is worth being precise about, because it is easy to
-  overstate. `scripts/check_i18n.py` proves each **tagged element still holds
-  the text its catalog id claims**, that no id is missing or orphaned, and that
-  no hash is stale. It does **not** prove the rendered page is unchanged — it
-  compares markup to catalog, and reworded text on both sides round-trips
-  clean. The claim that the page still *renders* the same rests on
-  `scripts/render_check.js`, and note that `cargo test`'s
-  `assert!(html.contains("…"))` checks cannot support it either: the catalog
-  ships inline in the served HTML, so those assertions match whether or not the
-  render path ever uses the string.
+- **A complete canonical English presentation source.** The 443-message
+  `src/web/locales/en-US.json` catalog owns repository text across the
+  dashboard, Settings, setup, login, dialogs, validation, empty/error states,
+  and accessibility labels. Model ids, client names, publisher names, API
+  errors, persisted enums, credentials, and metric values remain unlocalized
+  data.
+- **Localization foundation without runtime translation.** Public setup/login
+  pages receive an exact public catalog projection; the full catalog remains
+  operator-authenticated. A typed public `GET /api/locale-bootstrap`
+  operation, server default, and per-user preference establish the forward
+  contract while `Intl` owns numbers, dates, durations, sorting, and plural
+  categories. Validators enforce id parity, source freshness, placeholders,
+  markup boundaries, frozen protocol tokens, and retired vocabulary.
+- **A generated OpenAPI 3.1 contract.** `openapi.json` describes 16
+  operations: 14 `/api/*` operations and the two setup POST operations.
+  Locale bootstrap and both setup operations explicitly waive the
+  document-level authentication requirement; the other 13 `/api/*`
+  operations require operator authentication. The upstream-owned `/v1`
+  surface, browser pages/assets, login forms, health, and Prometheus exposition
+  remain deliberately outside this spec.
+- **Explicit presentation and HTTP trust boundaries.** Public setup/login
+  assets contain no operator catalog or private data. Dashboard, Settings, and
+  operator assets share the post-setup session gate, which runs before locale
+  lookup. Every live method/path contract is checked across phase,
+  authentication, role, ownership, content type, side effects, and OpenAPI
+  membership.
+- **A split, compile-time presentation layer.** HTML, CSS, JavaScript, and
+  catalogs remain framework-free and build-free, are embedded in the Rust
+  binary, and are served from same-origin routes. Browser startup fails closed
+  until bootstrap, authenticated config where required, and the selected
+  catalog have resolved.
+- **Committed browser and layout gates.** Rust-owned response fixtures drive 69
+  named interaction states across all pages and Settings surfaces. Semantic,
+  keyboard/focus, hostile-catalog, pseudolocale, responsive, cleanup, and
+  full-document visual checks now run against bytes served by the real binary.
+- **Canonical `nimproxy-history/v1`.** Typed boot, full-sample, and compact
+  checkpoint records preserve five-minute anchors, restart boundaries,
+  contemporaneous capacity, exact totals, query-scoped completeness, and
+  atomic time-based retention without rewriting a full unchanged registry
+  snapshot every five minutes.
+- **Evidence-backed NIM response observations.** Sanitized buffered and SSE
+  fixtures pin optional usage, finish, tool-call, framing, and invalid-field
+  behavior without retaining prompts or completions. The bounded
+  `nimproxy_usage_observations_total{field,result}` counter distinguishes
+  `measured`, `estimated`, `unavailable`, and `invalid` instead of
+  presenting absence as zero.
 
 ### Changed
 
-- Every dashboard-API response body is now a Rust type rather than a
-  hand-built JSON literal, and `GET /api/config`'s role filtering is expressed
-  in that type: the admin-only `server` and `users` sections are `Option`s
-  that are never constructed for a `user`, instead of keys added to an
-  otherwise-complete body.
-
-  **No wire change.** The JSON is byte-for-byte what 0.6.5 served, at every
-  nesting level, and the existing end-to-end suite passes unmodified. Two
-  internal side effects an operator may notice: `config.json`'s `limits` block
-  and `governor.overrides` are written in a different key order (the store is
-  read by name, so nothing migrates), and `governor.overrides` is now
-  serialized in sorted order, making repeated saves of the same configuration
-  byte-identical.
-
-- Numbers, durations, and dates in the dashboard are formatted with `Intl`,
-  keyed to the interface's locale rather than the browser's. Two long-standing
-  rounding bugs go with it: `999,999` rendered as `1000.0K` instead of `1M`, and
-  values above a trillion rendered as `1000.0B` because there was no `T` tier.
-  Durations now read `1.0 sec` rather than `1.0 s`, matching the `ms` and `min`
-  forms and what `Intl` considers correct for en-US.
-
-- Dashboard and setup-wizard labels now use standard ops-dashboard vocabulary
-  throughout. `Harness`/`Harnesses` become **Client**/**Clients**; the
-  dashboard's `window` becomes **time range** (the rate-limit rolling window
-  keeps "window"); `lane` becomes **key** in the interface, since a lane is one
-  NIM credential and Settings already said "keys". `Conversation stickiness` →
-  **Session affinity**, `Model-pressure governor` → **Model limits**,
-  `Where time goes` → **Latency breakdown**, `Rate-limit pressure` →
-  **Throttling**, `Historical provisioning` → **Capacity history**, `Keyed` →
-  **API key required**. The composite `Shed · 401 · failed logins` row splits
-  into **Dropped**, **Unauthorized**, and **Failed logins**.
-
-  Display text only — no metric, route, CSS class, `data-*` attribute, or DOM
-  id changed. Metric labels keep `lane` (`nimproxy_lane_requests_total`), so
-  the interface says "key" while the exposition still says "lane"; renaming
-  the series would be a second breaking change and was not taken.
-
-- **Breaking:** the lane state entered after an upstream 429/5xx is now called
-  **cooldown** rather than "bench", and the Prometheus series
-  `nimproxy_lane_benched_total` is renamed to `nimproxy_lane_cooldown_total`.
-  Every other `nimproxy_*` series is unchanged. Update any dashboards, alerts,
-  or recording rules that referenced the old name.
-
-  Retained history stores the metric name verbatim, so lane-cooldown charts
-  show a gap for points recorded before the upgrade and return to full fidelity
-  one retention window (`history.days`) later. This is a deliberate clean break
-  — no compatibility alias is carried.
-
-### Removed
-
-- **Breaking:** pricing configuration and the estimated-savings metric. The
-  `Dollars saved` KPI, the `Saved` columns in the Models, Clients, and
-  Reliability tables, the Pricing settings card, the `pricing` config block
-  (`ref_price_in` / `ref_price_out`), and the `POST /api/settings/pricing`
-  route are gone; `/api/config` no longer returns `server.pricing` and
-  `/api/dashboard/now` no longer returns `price_in` / `price_out`.
-
-  An honest figure needs a published per-model rate for each model in the pool;
-  applying one reference rate to every model measured nothing. Existing config
-  stores containing a `pricing` block still load — the orphan key is ignored,
-  and no migration runs. `REF_PRICE_IN` / `REF_PRICE_OUT` remain in the
-  legacy-env warning list so an upgrader who still sets them is told they do
-  nothing.
+- Dashboard and setup terminology now uses standard proxy, load-balancer,
+  authentication, and operations language. `Harness` becomes **Client**;
+  dashboard `window` becomes **time range**; presentation `lane` becomes
+  **key**; `Conversation stickiness` becomes **Session affinity**;
+  `Model-pressure governor` becomes **Model limits**; and
+  `Where time goes` becomes **Latency breakdown**. Machine identifiers,
+  route names, DOM hooks, config keys, and all metrics except the deliberate
+  cooldown rename remain unchanged.
+- Control-plane success and error bodies are typed Rust values with stable
+  machine-readable rejection codes. JSON media-type, size, syntax/data,
+  query, method, and route failures now use the same fail-closed boundary as
+  handlers. ASCII-sorted member order remains a tested wire contract.
+- The operator console now uses native landmarks, headings, buttons, tables,
+  labels, and a focus-managed one-time-secret dialog. Responsive Settings
+  layouts preserve usable form controls and long machine values from 390px
+  through desktop widths.
+- Presentation text now flows through context-owning sinks: native DOM text
+  and allowlisted text attributes receive catalog ids, while fixed-markup
+  builders receive inert descriptors that resolve and escape only at the HTML
+  boundary. Catalog text cannot enter URLs, styles, events, scripts, CSS, or
+  raw SVG.
+- External font and icon dependencies are gone. The embedded UI uses system
+  fonts and local SVG/text primitives under a same-origin Content Security
+  Policy, keeping the product a single rootless `FROM scratch` binary.
+- History reads valid physical segments without sorting or repairing bytes,
+  exposes partial/unavailable ranges honestly, and compacts only after
+  preserving the owning boot and full-sample boundary needed for exact retained
+  totals.
 
 ### Fixed
 
-- Hovering any time-series chart no longer breaks the dashboard. A
-  module-scope date helper introduced in this release collided with two
-  pre-existing local bindings of the same name, so every chart threw on hover.
-  Because the chart re-applies the last hover position on each live re-render
-  and the poll loop treats any error as a lost connection, resting the cursor
-  over a chart made a perfectly healthy proxy display a red **Disconnected**
-  badge, stop its uptime clock, and leave most of the tab frozen at stale
-  values. Only ever present on unreleased 0.6.6 builds.
+- A 2xx status is classified consistently across availability, charts, and
+  error taxonomy instead of treating only literal HTTP 200 as success.
+- Dashboard catalog values no longer double-escape, and setup/runtime catalog
+  writes enforce the same text-attribute allowlist and structured-message
+  boundary.
+- Chart hover no longer collides with a local date binding and falsely marks a
+  healthy proxy disconnected.
+- Client disconnects release queued and streaming ownership promptly, including
+  the in-flight slot held while an upstream stream is blocked.
+- Optional NIM usage values are independently range- and relationship-checked.
+  Invalid children no longer erase valid siblings, missing reasoning usage no
+  longer implies measured zero, and observation never rewrites proxied response
+  bytes.
+- Empty, whitespace-only, or future-version canonical history refuses startup;
+  recoverable supported-v1 damage is retained as evidence and cannot silently
+  become a complete dashboard range.
 
-- KPI card labels no longer double-escape. Catalog values are escaped once when
-  the catalog loads, and the KPI helper escaped its label a second time. In
-  English no KPI label contains an escapable character, so this was invisible —
-  it would first have appeared as `&#39;` and `&amp;` in the interface of any
-  translated build.
+### Removed
 
-- **Reliability panels no longer contradict each other about what succeeded.**
-  Seven sites (eight occurrences) decided "this request succeeded" by comparing
-  the status label to the literal `'200'`, and the label is whatever the upstream
-  returned, passed through verbatim. A single `204` was simultaneously counted as Success in the
-  stacked outcome chart, as an error in the "Outcomes per minute" chart directly
-  above it, as an `HTTP 204` row in the table directly below, and excluded from
-  the taxonomy entirely — so the Error rate percentage and the segbar rendered
-  inside the *same card* disagreed. There is now one `IS_2XX` / `IS_ERR` pair at
-  module scope and the render gate asserts on it.
-
-- **The setup wizard's `data-i18n-attr` handler had no attribute allowlist.**
-  The dashboard refuses anything outside `title`, `placeholder`, `aria-label`
-  and `alt`; the wizard called `setAttribute()` with whatever attribute name the
-  markup supplied. A markup edit adding `data-i18n-attr="onclick:…"` would have
-  routed a catalog value into an inline event handler, which the
-  Content-Security-Policy permits. Not reachable in the shipped markup, and the
-  static check caught non-allowlisted targets — but both
-  `knowledge/decisions/message-catalog-and-escaping.md` and a comment in
-  `check_i18n.py` asserted the runtime enforced this, and it did not.
-
-- `rpm total` was still rendering in the setup wizard's review panel, a term
-  this release retired, because the retired-term check only read catalog values.
+- The estimated-savings feature and its pricing API/config/dashboard fields.
+- Runtime Google Fonts and third-party icon requests.
+- Compatibility aliases or import paths for experimental history formats.
 
 ## [0.6.5] - 2026-07-28
 

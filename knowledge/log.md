@@ -6,6 +6,20 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-08-01] maintenance — publish the v0.6.6 upgrade boundary
+
+Task 17 reconciles the user-facing release documents with the completed
+foundation rather than the early partial integration state. The current
+contract is 443 canonical English messages, 16 generated OpenAPI operations,
+split same-origin public/operator assets, production `en-US` only, an
+intentional reset into canonical `history-v1.jsonl`, the one cooldown metric
+rename, and removal of pricing. The legacy `history.jsonl` file remains
+untouched for rollback or manual deletion. Client-auth memory now distinguishes
+the machine attribution label `local` from the UI mode label **Open (no
+authentication)**. See the [client-auth component](architecture/client-auth.md),
+[README](../README.md), [changelog](../CHANGELOG.md), and
+[Task 17 plan](../docs/plans/v0.6.6-foundation-implementation.md).
+
 ## [2026-08-01] maintenance — reconcile current visual applicability
 
 Task 17's fresh visual run exposed a stale Task 9 count in the current gate

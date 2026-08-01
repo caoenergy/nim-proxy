@@ -46,9 +46,10 @@ The store's `client_auth.mode` decides:
   SHA-256'd and `ct_eq`'d against the stored digests (`ClientKey.secret_sha256`).
   Fail-closed: keyed with **zero** keys rejects everything. Miss → OpenAI-style
   401, a `nimproxy_unauthorized_total` tick, and a delay to slow brute force.
-- **`open`** (labeled "local") — `/v1` is unauthenticated; trusted networks
-  only. This is the *only* thing the mode toggle affects — the dashboard is
-  never open.
+- **`open`** — `/v1` is unauthenticated; trusted networks only. Requests in
+  this mode use the machine client label `local` for attribution, while the UI
+  calls the mode **Open (no authentication)**. This is the *only* thing the
+  mode toggle affects — the dashboard is never open.
 
 Client secrets are server-generated 128-bit tokens with an `npk_` prefix, shown
 **exactly once** at creation; only the SHA-256 digest (+ last-4 for masked
