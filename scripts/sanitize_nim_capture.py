@@ -1198,6 +1198,16 @@ def operational_cases(sentinel):
         if evidence_status(evidence_rows({streamed: usage_final}), "missing_usage") != "unavailable":
             checks.append("sanitize-evidence-missing-usage")
 
+        usage_only_final_sse_event = operational_fixture(
+            "streamed-basic",
+            'data: {"choices":[{"index":0,"finish_reason":"stop"}],"usage":null}\n\ndata: {"choices":[],"usage":{"prompt_tokens":1}}\n\ndata: [DONE]\n\n',
+        )
+        if evidence_status(
+            evidence_rows({streamed: usage_only_final_sse_event}),
+            "usage_only_final_sse_event",
+        ) != "captured":
+            checks.append("sanitize-evidence-usage-only-final-sse")
+
         distinct = operational_fixture(
             "streamed-basic", 'data: {"choices":[{"index":0,"finish_reason":"stop"}]}\n\ndata: {"choices":[{"index":1,"finish_reason":"length"}]}\n\n'
         )
