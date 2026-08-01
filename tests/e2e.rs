@@ -6,6 +6,7 @@
 
 mod support;
 
+use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -1410,6 +1411,320 @@ async fn wait_for_persisted_chat_total(
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum CanonicalFixtureKind {
+    Boot,
+    Sample,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum CanonicalFixtureStateKind {
+    Counter,
+}
+
+#[derive(serde::Serialize)]
+struct CanonicalFixtureCapacity {
+    capacity_rpm: usize,
+    enabled_keys: usize,
+    key_rpms: [usize; 3],
+}
+
+#[derive(serde::Serialize)]
+struct CanonicalFixtureState {
+    kind: CanonicalFixtureStateKind,
+    metric: &'static str,
+    labels: BTreeMap<String, String>,
+    value: f64,
+}
+
+#[derive(serde::Serialize)]
+struct CanonicalFixtureRow {
+    format: &'static str,
+    v: u8,
+    kind: CanonicalFixtureKind,
+    timestamp: u64,
+    boot_id: &'static str,
+    capacity: CanonicalFixtureCapacity,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    state: Option<Vec<CanonicalFixtureState>>,
+}
+
+fn canonical_history_row(
+    kind: CanonicalFixtureKind,
+    timestamp: u64,
+    value: Option<f64>,
+) -> CanonicalFixtureRow {
+    let labels = [("client".to_owned(), "retention-seed".to_owned())]
+        .into_iter()
+        .collect();
+    CanonicalFixtureRow {
+        format: "nimproxy-history",
+        v: 1,
+        kind,
+        timestamp,
+        boot_id: "seed-boot",
+        capacity: CanonicalFixtureCapacity {
+            capacity_rpm: 120,
+            enabled_keys: 3,
+            key_rpms: [40, 40, 40],
+        },
+        state: value.map(|value| {
+            vec![CanonicalFixtureState {
+                kind: CanonicalFixtureStateKind::Counter,
+                metric: "nimproxy_seeded_requests_total",
+                labels,
+                value,
+            }]
+        }),
+    }
+}
+
+fn read_canonical_history(path: &std::path::Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(path)
+        .expect("history-retention: canonical history remains readable")
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let row: serde_json::Value = serde_json::from_str(line)
+                .expect("history-retention: canonical row remains valid JSON");
+            assert_eq!(row["format"], "nimproxy-history");
+            assert_eq!(row["v"], 1);
+            assert!(row["kind"].is_string());
+            assert!(row["timestamp"].is_u64());
+            assert!(row["boot_id"].is_string());
+            assert!(row["capacity"].is_object());
+            row
+        })
+        .collect()
+}
+
+fn idle_metric_snapshot(metrics: &str) -> Vec<&str> {
+    let mut rows: Vec<_> = metrics
+        .lines()
+        .filter(|line| {
+            line.starts_with("nimproxy_requests_total")
+                || line.starts_with("nimproxy_lane_requests_total")
+                || line.starts_with("nimproxy_queue_wait_seconds_count")
+                || line.starts_with("nimproxy_queue_wait_seconds_sum")
+        })
+        .collect();
+    rows.sort_unstable();
+    rows
+}
+
+async fn wait_for_idle_checkpoint(
+    canonical: &std::path::Path,
+    row_count: usize,
+    sample_count: usize,
+    checkpoint_count: usize,
+) -> Vec<serde_json::Value> {
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        let rows = read_canonical_history(canonical);
+        let samples = rows.iter().filter(|row| row["kind"] == "sample").count();
+        let checkpoints = rows
+            .iter()
+            .filter(|row| row["kind"] == "checkpoint")
+            .count();
+        if checkpoints > checkpoint_count {
+            assert_eq!(
+                samples, sample_count,
+                "history-retention:idle-samples: an idle interval added a full sample instead of a checkpoint"
+            );
+            assert_eq!(
+                checkpoints,
+                checkpoint_count + 1,
+                "history-retention:idle-checkpoints: idle cadence added more than one checkpoint"
+            );
+            assert_eq!(
+                rows.len(),
+                row_count + 1,
+                "history-retention:idle-rows: idle cadence added more than one canonical row"
+            );
+            return rows;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "history-retention:idle-checkpoint: sampler did not persist a checkpoint"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn exercise_history_retention_restarts() {
+    const HORIZON_DAYS: u64 = 30;
+    const HORIZON_SECONDS: u64 = HORIZON_DAYS * 86_400;
+
+    let mock = start_mock().await;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let cutoff = now.saturating_sub(HORIZON_SECONDS);
+    let seed_boot_timestamp = now.saturating_sub(HORIZON_SECONDS * 3);
+    let ancient_seed_sample_timestamp = now.saturating_sub(HORIZON_SECONDS * 3 - 1);
+    let data_dir = scratch_data_dir();
+    let mut config = StoreOpts::default().json(&mock.url);
+    config["history"] = serde_json::json!({"days": HORIZON_DAYS});
+    std::fs::write(
+        data_dir.join("config.json"),
+        serde_json::to_vec_pretty(&config).unwrap(),
+    )
+    .unwrap();
+
+    let seed = [
+        canonical_history_row(CanonicalFixtureKind::Boot, seed_boot_timestamp, None),
+        canonical_history_row(
+            CanonicalFixtureKind::Sample,
+            ancient_seed_sample_timestamp,
+            Some(1.0),
+        ),
+        canonical_history_row(
+            CanonicalFixtureKind::Sample,
+            cutoff.saturating_sub(1),
+            Some(2.0),
+        ),
+        canonical_history_row(
+            CanonicalFixtureKind::Sample,
+            cutoff.saturating_add(600),
+            Some(3.0),
+        ),
+    ];
+    let mut seed_bytes = Vec::new();
+    for row in seed {
+        let line = serde_json::to_vec(&row).unwrap();
+        seed_bytes.extend(line);
+        seed_bytes.push(b'\n');
+    }
+    // Readiness validates this raw seed with the private production codec;
+    // reopening the same directory validates every later replacement again.
+    let canonical = data_dir.join("history-v1.jsonl");
+    std::fs::write(&canonical, seed_bytes).unwrap();
+
+    let mut proxy = start_proxy_in(data_dir, &[("HISTORY_SAMPLE_SECS", "1")]).await;
+    let mut cookie = login(&proxy).await;
+    let initial = dashboard_range(&proxy, &cookie, cutoff, now.saturating_add(60), 1000).await;
+    send_successful_chats(&proxy, 1).await;
+    let _ = wait_for_persisted_chat_total(
+        &proxy,
+        &cookie,
+        initial["history_revision"].as_u64().unwrap(),
+        1.0,
+    )
+    .await;
+    let before_restart =
+        dashboard_range(&proxy, &cookie, cutoff, now.saturating_add(60), 1000).await;
+    let before_idle_metrics_text = metrics(&proxy).await;
+    let before_idle_metrics = idle_metric_snapshot(&before_idle_metrics_text);
+    let compaction_deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        let configured = api_config(&proxy, &cookie).await;
+        let compacted_rows = read_canonical_history(&canonical);
+        if configured["server"]["history"]["compaction_pending"] == false
+            && !compacted_rows
+                .iter()
+                .any(|row| row["timestamp"] == ancient_seed_sample_timestamp)
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < compaction_deadline,
+            "history-retention:compaction-idle: canonical retention did not settle before idle cadence"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let before_idle_rows = read_canonical_history(&canonical);
+    let before_idle_samples = before_idle_rows
+        .iter()
+        .filter(|row| row["kind"] == "sample")
+        .count();
+    let before_idle_checkpoints = before_idle_rows
+        .iter()
+        .filter(|row| row["kind"] == "checkpoint")
+        .count();
+    let idle_rows = wait_for_idle_checkpoint(
+        &canonical,
+        before_idle_rows.len(),
+        before_idle_samples,
+        before_idle_checkpoints,
+    )
+    .await;
+    let after_idle_metrics_text = metrics(&proxy).await;
+    assert_eq!(
+        idle_metric_snapshot(&after_idle_metrics_text),
+        before_idle_metrics,
+        "history-retention:idle-metrics: requests and scheduling do not advance without traffic"
+    );
+
+    proxy = restart(proxy, &[("HISTORY_SAMPLE_SECS", "3600")]).await;
+    cookie = login(&proxy).await;
+    let after_restart =
+        dashboard_range(&proxy, &cookie, cutoff, now.saturating_add(60), 1000).await;
+    assert_eq!(
+        after_restart["totals"], before_restart["totals"],
+        "history-retention:restart-totals: retained counter totals survive restart"
+    );
+    assert_eq!(
+        after_restart["window"]["complete"], before_restart["window"]["complete"],
+        "history-retention:restart-complete: retained-window completeness survives restart"
+    );
+    assert_eq!(
+        after_restart["window"]["available_from"], before_restart["window"]["available_from"],
+        "history-retention:restart-bounds: retained-window lower bound survives restart"
+    );
+
+    let rows = read_canonical_history(&canonical);
+    assert!(
+        rows.windows(2).all(|pair| {
+            pair[0]["timestamp"].as_u64().unwrap() <= pair[1]["timestamp"].as_u64().unwrap()
+        }),
+        "history-retention:physical-order: canonical rows retain physical timestamp order"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row["timestamp"] == cutoff.saturating_sub(1)),
+        "history-retention:baseline: the preceding full-sample baseline is retained"
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row["kind"] == "boot"
+                && row["boot_id"] == "seed-boot"
+                && row["timestamp"] == seed_boot_timestamp
+        }),
+        "history-retention:owning-boot: the baseline's owning boot is retained"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row["timestamp"] == cutoff.saturating_add(600)),
+        "history-retention:horizon: the configured retained horizon is present"
+    );
+    assert!(
+        rows.iter().any(|row| row["boot_id"] != "seed-boot"),
+        "history-retention:fresh-epoch: the fresh process epoch is retained"
+    );
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row["timestamp"] == ancient_seed_sample_timestamp),
+        "history-retention:expired: rows older than the required baseline are removed"
+    );
+    assert!(
+        !proxy.data_dir.join("history.jsonl").exists(),
+        "history-retention:legacy: canonical retention does not create the legacy path"
+    );
+    assert!(
+        idle_rows.iter().any(|row| row["kind"] == "checkpoint"),
+        "history-retention:idle-checkpoint: idle cadence persists checkpoints"
+    );
+}
+
+#[tokio::test]
+async fn history_retention_survives_restart() {
+    exercise_history_retention_restarts().await;
 }
 
 #[tokio::test]
