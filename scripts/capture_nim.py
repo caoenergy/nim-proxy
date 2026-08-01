@@ -2,14 +2,24 @@
 """Capture one bounded private NIM response (implementation follows this RED contract)."""
 
 import argparse
+import base64
 import copy
+import datetime
+import http.client
+import json
 import os
 import pathlib
+import signal
+import socket
+import ssl
 import stat
 import sys
 import tempfile
+import threading
+import time
 import urllib.parse
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
 CASES = (
@@ -26,9 +36,12 @@ REQUIRED_ENVIRONMENT = (
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_SSE_EVENTS = 2_048
 MAX_CAPTURE_SECONDS = 60
+READ_CHUNK_BYTES = 64 * 1024
 OWNER_DIRECTORY_MODE = 0o700
 OWNER_FILE_MODE = 0o600
 EXCLUSIVE_NOFOLLOW_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+FIXED_MAX_TOKENS = 32
+FIXED_PROMPT = "Return one capture marker."
 FIXED_TOOL = {
     "type": "function",
     "function": {
@@ -66,55 +79,553 @@ class CaptureRequestPlan:
     retries: int = 0
 
 
+@dataclass
+class RawDirectory:
+    """Descriptor-owned raw directory identity for safe failure cleanup."""
+
+    directory_descriptor: int
+    parent_descriptor: int
+    leaf: str
+    device: int
+    inode: int
+
+
+class CaptureError(Exception):
+    """A stable, deliberately content-free capture failure."""
+
+    def __init__(self, check: str):
+        self.check = check
+        super().__init__(check)
+
+
 def candidate_environment(environment: dict[str, str]) -> CandidateDecision:
     """GREEN will inspect only the three approved environment names."""
-    del environment
-    return CandidateDecision()
+    return CandidateDecision(
+        rejected=any(
+            not isinstance(environment.get(name), str) or not environment[name]
+            for name in REQUIRED_ENVIRONMENT
+        )
+    )
 
 
 def candidate_url(base_url: str) -> CandidateDecision:
     """GREEN will reject unsafe service roots before any transport opens."""
-    del base_url
-    return CandidateDecision()
+    try:
+        parsed = urllib.parse.urlsplit(base_url)
+        loopback = {"127.0.0.1", "::1"}
+        transport_allowed = parsed.scheme == "https" or (
+            parsed.scheme == "http" and parsed.hostname in loopback
+        )
+        rejected = not (
+            transport_allowed
+            and parsed.hostname
+            and "@" not in parsed.netloc
+            and "?" not in base_url
+            and "#" not in base_url
+        )
+    except ValueError:
+        rejected = True
+    return CandidateDecision(rejected=rejected)
 
 
 def candidate_path(
     output_dir: pathlib.Path, repository: pathlib.Path
 ) -> CandidateDecision:
     """GREEN will create only a new, resolved-outside-repository directory."""
-    del output_dir, repository
-    return CandidateDecision(file_flags=0)
+    try:
+        resolved_repository = repository.resolve()
+        resolved_output = output_dir.resolve(strict=False)
+        lexical_repository = repository.absolute()
+        lexical_output = output_dir.absolute()
+        has_symlink_component = output_dir.is_symlink() or any(
+            parent.is_symlink() for parent in output_dir.parents
+        )
+        safe = (
+            output_dir.is_absolute()
+            and not output_dir.exists()
+            and not has_symlink_component
+            and not lexical_output.is_relative_to(lexical_repository)
+            and not resolved_output.is_relative_to(resolved_repository)
+        )
+    except OSError:
+        safe = False
+    return CandidateDecision(
+        rejected=not safe,
+        file_flags=EXCLUSIVE_NOFOLLOW_FLAGS,
+    )
 
 
 def candidate_owner_mode(path: pathlib.Path, expected_mode: int) -> CandidateDecision:
     """GREEN will reject pre-existing owner-mode drift before writing."""
-    del path, expected_mode
-    return CandidateDecision()
+    try:
+        rejected = stat.S_IMODE(path.stat().st_mode) != expected_mode
+    except OSError:
+        rejected = True
+    return CandidateDecision(rejected=rejected)
 
 
 def candidate_limit(
     response_bytes: int, event_count: int, elapsed_seconds: int
 ) -> CandidateDecision:
     """GREEN will stop and mark bounded truncation at any locked limit."""
-    del response_bytes, event_count, elapsed_seconds
-    return CandidateDecision()
+    return CandidateDecision(
+        truncated=(
+            response_bytes > MAX_RESPONSE_BYTES
+            or event_count > MAX_SSE_EVENTS
+            or elapsed_seconds > MAX_CAPTURE_SECONDS
+        )
+    )
 
 
 def candidate_diagnostic(channel: str, secret: str) -> str:
-    """Current RED output is intentionally unsafe; it is never printed."""
-    del channel
-    return secret
+    """GREEN diagnostics name only a fixed channel, never the supplied data."""
+    del secret
+    return f"capture failure ({channel})"
 
 
 def candidate_request_profile(case: str, model: str) -> CaptureRequestPlan:
     """GREEN will build exactly one fixed request profile for each case."""
-    del case, model
-    return CaptureRequestPlan(body={})
+    streamed = case.startswith("streamed-")
+    tools = case.endswith("-tools")
+    body = {
+        "max_tokens": FIXED_MAX_TOKENS,
+        "messages": [{"content": FIXED_PROMPT, "role": "user"}],
+        "model": model,
+        "stream": streamed,
+    }
+    if streamed:
+        body["stream_options"] = {"include_usage": True}
+    if tools:
+        body["tools"] = [copy.deepcopy(FIXED_TOOL)]
+        body["tool_choice"] = "required"
+    return CaptureRequestPlan(body=body, attempts=1, retries=0)
 
 
-def candidate_capture() -> None:
-    """The CLI shape is frozen; live capture remains absent during RED."""
-    return None
+def capture_environment() -> tuple[str, str, str]:
+    """Read the three approved values and reject empty configuration."""
+    environment = {name: os.environ.get(name, "") for name in REQUIRED_ENVIRONMENT}
+    if candidate_environment(environment).rejected:
+        raise CaptureError("capture-environment")
+    return (
+        environment["NIM_CAPTURE_BASE_URL"],
+        environment["NIM_CAPTURE_BEARER_TOKEN"],
+        environment["NIM_CAPTURE_MODEL"],
+    )
+
+
+def capture_endpoint(base_url: str) -> tuple[str, str, int | None, str]:
+    """Validate a service root and append the one permitted API path."""
+    if candidate_url(base_url).rejected:
+        raise CaptureError("capture-url-boundary")
+    parsed = urllib.parse.urlsplit(base_url)
+    if parsed.hostname is None:
+        raise CaptureError("capture-url-boundary")
+    service_path = parsed.path.rstrip("/")
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise CaptureError("capture-url-boundary") from error
+    return parsed.scheme, parsed.hostname, port, f"{service_path}/chat/completions"
+
+
+def write_all(file_descriptor: int, content: bytes) -> None:
+    """Write all bounded bytes without introducing a buffered file object."""
+    view = memoryview(content)
+    while view:
+        written = os.write(file_descriptor, view)
+        if written <= 0:
+            raise OSError("short private artifact write")
+        view = view[written:]
+
+
+def write_private_at(directory_descriptor: int, name: str, content: bytes) -> None:
+    """Create one exact private regular file beneath an already-safe directory."""
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            name,
+            EXCLUSIVE_NOFOLLOW_FLAGS,
+            OWNER_FILE_MODE,
+            dir_fd=directory_descriptor,
+        )
+        os.fchmod(descriptor, OWNER_FILE_MODE)
+        write_all(descriptor, content)
+        os.fsync(descriptor)
+        file_stat = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(file_stat.st_mode)
+            or file_stat.st_uid != os.getuid()
+            or stat.S_IMODE(file_stat.st_mode) != OWNER_FILE_MODE
+        ):
+            raise CaptureError("capture-owner-mode")
+        os.fsync(directory_descriptor)
+    except CaptureError:
+        raise
+    except OSError as error:
+        raise CaptureError("capture-private-artifact") from error
+    finally:
+        if descriptor != -1:
+            os.close(descriptor)
+
+
+def secure_parent_descriptor(output_dir: pathlib.Path) -> tuple[int, str]:
+    """Walk an absolute output parent through no-follow directory descriptors."""
+    if not output_dir.is_absolute() or output_dir.name in {"", ".", ".."}:
+        raise CaptureError("capture-path-boundary")
+    components = output_dir.parent.parts
+    if not components or components[0] != os.sep:
+        raise CaptureError("capture-path-boundary")
+    descriptor = -1
+    try:
+        descriptor = os.open(os.sep, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        for component in components[1:]:
+            if component in {"", ".", ".."}:
+                raise CaptureError("capture-path-boundary")
+            child = os.open(
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=descriptor,
+            )
+            os.close(descriptor)
+            descriptor = child
+        return descriptor, output_dir.name
+    except CaptureError:
+        if descriptor != -1:
+            os.close(descriptor)
+        raise
+    except OSError as error:
+        if descriptor != -1:
+            os.close(descriptor)
+        raise CaptureError("capture-path-boundary") from error
+
+
+def public_output_matches(
+    output_dir: pathlib.Path,
+    repository: pathlib.Path,
+    directory_stat: os.stat_result,
+) -> bool:
+    """Reject a public path that moved after its descriptor-safe creation."""
+    try:
+        resolved_repository = repository.resolve()
+        resolved_output = output_dir.resolve(strict=True)
+        lexical_repository = repository.absolute()
+        lexical_output = output_dir.absolute()
+        public_stat = output_dir.stat()
+    except OSError:
+        return False
+    return (
+        not lexical_output.is_relative_to(lexical_repository)
+        and not resolved_output.is_relative_to(resolved_repository)
+        and public_stat.st_dev == directory_stat.st_dev
+        and public_stat.st_ino == directory_stat.st_ino
+    )
+
+
+def close_raw_directory(directory: RawDirectory) -> None:
+    """Close the descriptors held for one successfully created raw directory."""
+    os.close(directory.directory_descriptor)
+    os.close(directory.parent_descriptor)
+
+
+def cleanup_raw_directory(directory: RawDirectory, names: tuple[str, ...]) -> None:
+    """Remove only known artifacts in the exact directory created by this process."""
+    try:
+        if directory.directory_descriptor != -1:
+            for name in names:
+                try:
+                    os.unlink(name, dir_fd=directory.directory_descriptor)
+                except OSError:
+                    pass
+        try:
+            current = os.stat(
+                directory.leaf,
+                dir_fd=directory.parent_descriptor,
+                follow_symlinks=False,
+            )
+            if (
+                stat.S_ISDIR(current.st_mode)
+                and current.st_dev == directory.device
+                and current.st_ino == directory.inode
+            ):
+                os.rmdir(directory.leaf, dir_fd=directory.parent_descriptor)
+        except OSError:
+            pass
+    finally:
+        if directory.directory_descriptor != -1:
+            os.close(directory.directory_descriptor)
+        os.close(directory.parent_descriptor)
+
+
+def create_raw_directory(
+    output_dir: pathlib.Path, repository: pathlib.Path
+) -> RawDirectory:
+    """Create and mark a new raw-artifact directory before transport begins."""
+    if candidate_path(output_dir, repository).rejected:
+        raise CaptureError("capture-path-boundary")
+    parent_descriptor = -1
+    descriptor = -1
+    created: RawDirectory | None = None
+    try:
+        parent_descriptor, leaf = secure_parent_descriptor(output_dir)
+        os.mkdir(leaf, OWNER_DIRECTORY_MODE, dir_fd=parent_descriptor)
+        created_stat = os.stat(leaf, dir_fd=parent_descriptor, follow_symlinks=False)
+        created = RawDirectory(
+            -1,
+            parent_descriptor,
+            leaf,
+            created_stat.st_dev,
+            created_stat.st_ino,
+        )
+        parent_descriptor = -1
+        descriptor = os.open(
+            leaf,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+            dir_fd=created.parent_descriptor,
+        )
+        created.directory_descriptor = descriptor
+        descriptor = -1
+        os.fchmod(created.directory_descriptor, OWNER_DIRECTORY_MODE)
+        directory_stat = os.fstat(created.directory_descriptor)
+        if (
+            not stat.S_ISDIR(directory_stat.st_mode)
+            or directory_stat.st_uid != os.getuid()
+            or stat.S_IMODE(directory_stat.st_mode) != OWNER_DIRECTORY_MODE
+        ):
+            raise CaptureError("capture-owner-mode")
+        if not public_output_matches(output_dir, repository, directory_stat):
+            raise CaptureError("capture-path-boundary")
+        write_private_at(
+            created.directory_descriptor, ".nim-capture-raw-v1", b"nim-capture-raw-v1\n"
+        )
+        result = created
+        created = None
+        return result
+    except CaptureError:
+        raise
+    except OSError as error:
+        raise CaptureError("capture-path-boundary") from error
+    finally:
+        if descriptor != -1:
+            os.close(descriptor)
+        if created is not None:
+            cleanup_raw_directory(created, (".nim-capture-raw-v1",))
+        if parent_descriptor != -1:
+            os.close(parent_descriptor)
+
+
+def remaining_seconds(deadline: float) -> float:
+    """Return the positive amount left in the one total monotonic deadline."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise CaptureError("capture-limit")
+    return remaining
+
+
+def truncate_stream(
+    retained: bytearray, streamed: bool, complete_boundary: int, truncated: bool
+) -> tuple[bytes, bool]:
+    """Drop a partial next SSE event whenever a bounded read stops."""
+    if streamed and len(retained) > complete_boundary:
+        del retained[complete_boundary:]
+        truncated = True
+    return bytes(retained), truncated
+
+
+def read_bounded_response(
+    response: http.client.HTTPResponse,
+    streamed: bool,
+    deadline: float,
+) -> tuple[bytes, bool]:
+    """Retain at most the raw-byte and, for SSE, event limits across chunks."""
+    retained = bytearray()
+    current_line = bytearray()
+    events = 0
+    complete_boundary = 0
+    while True:
+        room = MAX_RESPONSE_BYTES - len(retained)
+        if room == 0:
+            return truncate_stream(retained, streamed, complete_boundary, True)
+        try:
+            remaining_seconds(deadline)
+        except CaptureError:
+            return truncate_stream(retained, streamed, complete_boundary, True)
+        try:
+            chunk = response.read(min(READ_CHUNK_BYTES, room))
+        except CaptureError:
+            return truncate_stream(retained, streamed, complete_boundary, True)
+        except (OSError, TimeoutError) as error:
+            if time.monotonic() >= deadline:
+                return truncate_stream(retained, streamed, complete_boundary, True)
+            raise CaptureError("capture-transport") from error
+        if not chunk:
+            return truncate_stream(retained, streamed, complete_boundary, False)
+        for value in chunk:
+            retained.append(value)
+            if not streamed:
+                continue
+            current_line.append(value)
+            if value != ord("\n"):
+                continue
+            if current_line in (b"\n", b"\r\n"):
+                events += 1
+                complete_boundary = len(retained)
+                if events == MAX_SSE_EVENTS:
+                    return bytes(retained), True
+            current_line.clear()
+
+
+def open_connection(
+    scheme: str, host: str, port: int | None, timeout: float
+) -> http.client.HTTPConnection:
+    """Use verified TLS for HTTPS and permit HTTP only after URL validation."""
+    if scheme == "https":
+        return http.client.HTTPSConnection(
+            host,
+            port=port,
+            timeout=timeout,
+            context=ssl.create_default_context(),
+        )
+    return http.client.HTTPConnection(host, port=port, timeout=timeout)
+
+
+class CaptureDeadline:
+    """Linux process-wide alarm scoped to one capture's absolute deadline."""
+
+    def __init__(self, seconds: int) -> None:
+        self.seconds = seconds
+        self.previous_handler: object | None = None
+        self.previous_timer: tuple[float, float] = (0.0, 0.0)
+        self.started = 0.0
+
+    def __enter__(self) -> "CaptureDeadline":
+        self.started = time.monotonic()
+        self.previous_handler = signal.getsignal(signal.SIGALRM)
+        signal.signal(signal.SIGALRM, self._expired)
+        self.previous_timer = signal.setitimer(signal.ITIMER_REAL, self.seconds)
+        return self
+
+    def __exit__(self, exception_type, exception, traceback) -> bool:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, self.previous_handler)
+        previous_delay, previous_interval = self.previous_timer
+        if previous_delay:
+            elapsed = max(0.0, time.monotonic() - self.started)
+            signal.setitimer(
+                signal.ITIMER_REAL,
+                max(0.0, previous_delay - elapsed),
+                previous_interval,
+            )
+        return False
+
+    @staticmethod
+    def _expired(signum: int, frame: object) -> None:
+        del signum, frame
+        raise CaptureError("capture-limit")
+
+
+def close_quietly(value: object | None) -> None:
+    """Close a stdlib transport without allowing cleanup errors to leak details."""
+    close = getattr(value, "close", None)
+    if callable(close):
+        try:
+            close()
+        except OSError:
+            pass
+
+
+def retained_transport(transport: object) -> object:
+    """Keep the original response socket; stdlib TLS sockets cannot be duplicated."""
+    return transport
+
+
+def raw_envelope(
+    case: str,
+    streamed: bool,
+    response: http.client.HTTPResponse,
+    body: bytes,
+    truncated: bool,
+) -> bytes:
+    """Produce the deliberately minimal raw evidence record, without headers."""
+    envelope = {
+        "format": "nim-capture-raw-v1",
+        "case": case,
+        "capture_date": datetime.datetime.now(datetime.UTC).date().isoformat(),
+        "transport": "sse" if streamed else "buffered",
+        "status": int(response.status),
+        "content_type": response.getheader("Content-Type") or "",
+        "truncated": bool(truncated),
+        "body_b64": base64.b64encode(body).decode("ascii"),
+    }
+    return json.dumps(envelope, separators=(",", ":"), ensure_ascii=True).encode("utf-8") + b"\n"
+
+
+def candidate_capture(case: str, output_dir: pathlib.Path) -> None:
+    """Perform exactly one bounded capture and persist only its raw evidence."""
+    deadline = time.monotonic() + MAX_CAPTURE_SECONDS
+    raw_directory: RawDirectory | None = None
+    connection: http.client.HTTPConnection | None = None
+    response: http.client.HTTPResponse | None = None
+    transport: object | None = None
+    completed = False
+    with CaptureDeadline(MAX_CAPTURE_SECONDS):
+        try:
+            base_url, bearer_token, model = capture_environment()
+            scheme, host, port, endpoint = capture_endpoint(base_url)
+            plan = candidate_request_profile(case, model)
+            repository = pathlib.Path(__file__).resolve().parent.parent
+            raw_directory = create_raw_directory(output_dir, repository)
+            connection = open_connection(scheme, host, port, remaining_seconds(deadline))
+            remaining_seconds(deadline)
+            connection.connect()
+            connection_transport = connection.sock
+            if connection_transport is None:
+                raise CaptureError("capture-transport")
+            transport = retained_transport(connection_transport)
+            body = json.dumps(
+                plan.body, separators=(",", ":"), ensure_ascii=False
+            ).encode("utf-8")
+            connection_transport.settimeout(remaining_seconds(deadline))
+            connection.request(
+                "POST",
+                endpoint,
+                body=body,
+                headers={
+                    "Authorization": f"Bearer {bearer_token}",
+                    "Content-Type": "application/json",
+                    "Content-Length": str(len(body)),
+                },
+            )
+            connection_transport.settimeout(remaining_seconds(deadline))
+            response = connection.getresponse()
+            raw_body, truncated = read_bounded_response(
+                response, plan.body["stream"], deadline
+            )
+            write_private_at(
+                raw_directory.directory_descriptor,
+                f"{case}.raw.json",
+                raw_envelope(case, plan.body["stream"], response, raw_body, truncated),
+            )
+            if not public_output_matches(
+                output_dir, repository, os.fstat(raw_directory.directory_descriptor)
+            ):
+                raise CaptureError("capture-path-boundary")
+            completed = True
+        except CaptureError:
+            raise
+        except (OSError, ValueError, http.client.HTTPException) as error:
+            raise CaptureError("capture-transport") from error
+        finally:
+            close_quietly(response)
+            close_quietly(transport)
+            close_quietly(connection)
+            if raw_directory is not None:
+                if completed:
+                    close_raw_directory(raw_directory)
+                else:
+                    cleanup_raw_directory(
+                        raw_directory,
+                        (".nim-capture-raw-v1", f"{case}.raw.json"),
+                    )
 
 
 def exact_boundary_sets(
@@ -278,6 +789,635 @@ def expect_exact(
         )
     else:
         print(f"  ok  {name:34} candidate matches its fixed oracle")
+
+
+def expect_operational_control(
+    check: str, fulfilled: bool, failures: list[str]
+) -> None:
+    """Record a future-facing operational regression without exposing fixture data."""
+    if fulfilled:
+        print(f"  ok  {check:34} operational regression covered")
+    else:
+        failures.append(check)
+
+
+def operational_total_deadline(root: pathlib.Path) -> bool:
+    """Require a fresh remaining timeout at every blocking transport boundary."""
+    original_environment = capture_environment
+    original_endpoint = capture_endpoint
+    original_open_connection = open_connection
+    original_remaining_seconds = remaining_seconds
+    original_monotonic = time.monotonic
+    stages: dict[str, tuple[int, float]] = {}
+    remaining_values: list[float] = []
+
+    class Clock:
+        calls = 0
+
+        def __call__(self) -> float:
+            self.calls += 1
+            return float(self.calls - 1)
+
+    class Socket:
+        def settimeout(self, timeout: float) -> None:
+            del timeout
+
+    class Response:
+        status = 200
+
+        def __init__(self, clock: Clock) -> None:
+            self.clock = clock
+            self.reads = 0
+
+        def getheader(self, name: str) -> str:
+            del name
+            return "application/json"
+
+        def read(self, amount: int) -> bytes:
+            del amount
+            stages["body"] = (self.clock.calls, remaining_values[-1])
+            self.reads += 1
+            return b""
+
+    class Connection:
+        def __init__(self, clock: Clock) -> None:
+            self.clock = clock
+            self.sock = Socket()
+            self.response = Response(clock)
+
+        def connect(self) -> None:
+            stages["connect"] = (self.clock.calls, remaining_values[-1])
+
+        def request(self, *args, **kwargs) -> None:
+            del args, kwargs
+            stages["request"] = (self.clock.calls, remaining_values[-1])
+
+        def getresponse(self) -> Response:
+            stages["headers"] = (self.clock.calls, remaining_values[-1])
+            return self.response
+
+        def close(self) -> None:
+            return None
+
+    clock = Clock()
+
+    def fake_open_connection(
+        scheme: str, host: str, port: int | None, timeout: float
+    ) -> Connection:
+        del scheme, host, port, timeout
+        return Connection(clock)
+
+    def traced_remaining_seconds(deadline: float) -> float:
+        value = original_remaining_seconds(deadline)
+        remaining_values.append(value)
+        return value
+
+    try:
+        globals()["capture_environment"] = lambda: ("https://fixture.invalid", "token", "model")
+        globals()["capture_endpoint"] = lambda base_url: ("https", "fixture.invalid", None, "/v1/chat/completions")
+        globals()["open_connection"] = fake_open_connection
+        globals()["remaining_seconds"] = traced_remaining_seconds
+        time.monotonic = clock
+        candidate_capture("buffered-basic", root / "deadline-output")
+        observed = [stages[name] for name in ("connect", "request", "headers", "body")]
+        return all(
+            later[0] > earlier[0] and later[1] < earlier[1]
+            for earlier, later in zip(observed, observed[1:])
+        )
+    except Exception:
+        return False
+    finally:
+        globals()["capture_environment"] = original_environment
+        globals()["capture_endpoint"] = original_endpoint
+        globals()["open_connection"] = original_open_connection
+        globals()["remaining_seconds"] = original_remaining_seconds
+        time.monotonic = original_monotonic
+
+
+def operational_byte_cap() -> bool:
+    """A full retained buffer must finish without a probing read that can block."""
+    class Socket:
+        def settimeout(self, timeout: float) -> None:
+            del timeout
+
+    class Response:
+        def __init__(self) -> None:
+            self.remaining = MAX_RESPONSE_BYTES
+            self.requests: list[int] = []
+
+        def read(self, amount: int) -> bytes:
+            self.requests.append(amount)
+            if amount > self.remaining:
+                raise AssertionError("read asked for more than the retained room")
+            if self.remaining == 0:
+                raise AssertionError("a full response must not be read again")
+            if self.remaining == READ_CHUNK_BYTES:
+                size = READ_CHUNK_BYTES - 1
+            else:
+                size = min(amount, self.remaining)
+            self.remaining -= size
+            return b"x" * size
+
+    response = Response()
+    try:
+        body, truncated = read_bounded_response(
+            response, False, time.monotonic() + 1
+        )
+    except Exception:
+        return False
+    return (
+        len(body) == MAX_RESPONSE_BYTES
+        and truncated
+        and response.remaining == 0
+        and response.requests[-1] == 1
+    )
+
+
+def operational_event_cap() -> bool:
+    """The 2049th SSE event is never retained, even when it has no terminator."""
+    complete_events = b"data: {}\n\n" * MAX_SSE_EVENTS
+    partial_event = b"data: partial"
+
+    class Response:
+        def __init__(self, chunks: list[bytes]) -> None:
+            self.chunks = iter(chunks)
+
+        def read(self, amount: int) -> bytes:
+            del amount
+            return next(self.chunks, b"")
+
+    def retained_until(chunks: list[bytes], deadline: float) -> tuple[bytes, bool] | None:
+        try:
+            return read_bounded_response(Response(chunks), True, deadline)
+        except Exception:
+            return None
+
+    eof = retained_until([complete_events + partial_event], time.monotonic() + 1)
+    original_monotonic = time.monotonic
+    ticks = iter((0.0, 2.0))
+    try:
+        time.monotonic = lambda: next(ticks)
+        deadline = retained_until([complete_events + partial_event], 1.0)
+    except StopIteration:
+        deadline = None
+    finally:
+        time.monotonic = original_monotonic
+    fill = MAX_RESPONSE_BYTES - len(complete_events)
+    byte_cap = retained_until(
+        [complete_events + partial_event + (b"x" * max(fill, 0)) + b"!"],
+        time.monotonic() + 1,
+    )
+    return all(
+        result == (complete_events, True) for result in (eof, deadline, byte_cap)
+    )
+
+
+def operational_closing_response_socket() -> bool:
+    """The capture keeps its transport before a closing response disowns it."""
+    original_environment = capture_environment
+    original_endpoint = capture_endpoint
+    original_open_connection = open_connection
+
+    class Socket:
+        def __init__(self) -> None:
+            self.timeouts: list[float] = []
+
+        def settimeout(self, timeout: float) -> None:
+            self.timeouts.append(timeout)
+
+    class Response:
+        status = 200
+
+        def __init__(self) -> None:
+            self.reads = 0
+
+        def getheader(self, name: str) -> str:
+            del name
+            return "application/json"
+
+        def read(self, amount: int) -> bytes:
+            del amount
+            self.reads += 1
+            return b"ok" if self.reads == 1 else b""
+
+    class Connection:
+        def __init__(self, socket: Socket) -> None:
+            self.sock = socket
+
+        def connect(self) -> None:
+            return None
+
+        def request(self, *args, **kwargs) -> None:
+            del args, kwargs
+
+        def getresponse(self) -> Response:
+            self.sock = None
+            return Response()
+
+        def close(self) -> None:
+            return None
+
+    socket = Socket()
+    try:
+        globals()["capture_environment"] = lambda: ("https://fixture.invalid", "token", "model")
+        globals()["capture_endpoint"] = lambda base_url: ("https", "fixture.invalid", None, "/v1/chat/completions")
+        globals()["open_connection"] = lambda scheme, host, port, timeout: Connection(socket)
+        with tempfile.TemporaryDirectory(prefix="nim-capture-closing-") as temporary:
+            candidate_capture("buffered-basic", pathlib.Path(temporary) / "output")
+    except Exception:
+        return False
+    finally:
+        globals()["capture_environment"] = original_environment
+        globals()["capture_endpoint"] = original_endpoint
+        globals()["open_connection"] = original_open_connection
+    return bool(socket.timeouts)
+
+
+def operational_http10_buffered_capture(root: pathlib.Path) -> bool:
+    """A real HTTP/1.0 close must not prevent bounded buffered publication."""
+    original_environment = capture_environment
+    requests: list[tuple[str, str, bytes]] = []
+    response_body = b'{"choices":[]}'
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.0"
+
+        def do_POST(self) -> None:
+            content_length = int(self.headers["Content-Length"])
+            requests.append((self.command, self.path, self.rfile.read(content_length)))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response_body)))
+            self.end_headers()
+            self.wfile.write(response_body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            del format, args
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    output = root / "http10-buffered-output"
+    try:
+        thread.start()
+        globals()["capture_environment"] = lambda: (
+            f"http://127.0.0.1:{server.server_port}/v1", "token", "model"
+        )
+        candidate_capture("buffered-basic", output)
+    except Exception:
+        return False
+    finally:
+        globals()["capture_environment"] = original_environment
+        server.shutdown()
+        server.server_close()
+        thread.join()
+    try:
+        envelope = json.loads((output / "buffered-basic.raw.json").read_bytes())
+        request = requests[0]
+        return (
+            len(requests) == 1
+            and request[0:2] == ("POST", "/v1/chat/completions")
+            and json.loads(request[2])["stream"] is False
+            and {entry.name for entry in output.iterdir()}
+            == {".nim-capture-raw-v1", "buffered-basic.raw.json"}
+            and set(envelope)
+            == {
+                "format",
+                "case",
+                "capture_date",
+                "transport",
+                "status",
+                "content_type",
+                "truncated",
+                "body_b64",
+            }
+            and envelope["format"] == "nim-capture-raw-v1"
+            and envelope["case"] == "buffered-basic"
+            and envelope["transport"] == "buffered"
+            and envelope["status"] == 200
+            and envelope["content_type"] == "application/json"
+            and envelope["truncated"] is False
+            and base64.b64decode(envelope["body_b64"], validate=True) == response_body
+        )
+    except (IndexError, KeyError, OSError, ValueError, json.JSONDecodeError):
+        return False
+
+
+def operational_publication_path_swap(root: pathlib.Path) -> bool:
+    """A final parent swap must fail without writing the attacker pathname."""
+    original_environment = capture_environment
+    original_write_private_at = write_private_at
+    parent = root / "publication-parent"
+    parked = root / "publication-parked"
+    attacker = root / "publication-attacker"
+    parent.mkdir()
+    attacker.mkdir()
+    output = parent / "raw"
+    requests: list[tuple[str, str, bytes]] = []
+    response_body = b'{"choices":[]}'
+    swapped = False
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.0"
+
+        def do_POST(self) -> None:
+            content_length = int(self.headers["Content-Length"])
+            requests.append((self.command, self.path, self.rfile.read(content_length)))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response_body)))
+            self.end_headers()
+            self.wfile.write(response_body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            del format, args
+
+    def swap_after_marker(directory_descriptor: int, name: str, content: bytes) -> None:
+        nonlocal swapped
+        original_write_private_at(directory_descriptor, name, content)
+        if name == ".nim-capture-raw-v1":
+            parent.rename(parked)
+            parent.symlink_to(attacker, target_is_directory=True)
+            swapped = True
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    failed = False
+    try:
+        thread.start()
+        globals()["capture_environment"] = lambda: (
+            f"http://127.0.0.1:{server.server_port}/v1", "token", "model"
+        )
+        globals()["write_private_at"] = swap_after_marker
+        try:
+            candidate_capture("buffered-basic", output)
+        except CaptureError as error:
+            failed = error.check == "capture-path-boundary"
+    except Exception:
+        return False
+    finally:
+        globals()["capture_environment"] = original_environment
+        globals()["write_private_at"] = original_write_private_at
+        server.shutdown()
+        server.server_close()
+        thread.join()
+    return (
+        swapped
+        and failed
+        and len(requests) == 1
+        and requests[0][0:2] == ("POST", "/v1/chat/completions")
+        and json.loads(requests[0][2])["stream"] is False
+        and parent.is_symlink()
+        and not output.exists()
+        and not (attacker / output.name).exists()
+        and not (parked / output.name).exists()
+    )
+
+
+def operational_parent_symlink_race(root: pathlib.Path) -> bool:
+    """A post-validation parent swap must not redirect raw creation into the repo."""
+    repository = root / "race-repository"
+    repository.mkdir()
+    parent = root / "race-parent"
+    parent.mkdir()
+    output = parent / "raw"
+    original_mkdir = os.mkdir
+    directory: RawDirectory | None = None
+    swapped = False
+
+    def swap_parent(path, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        is_path_creation = pathlib.Path(path) == output
+        is_dirfd_creation = dir_fd is not None and pathlib.Path(path).name == output.name
+        if (is_path_creation or is_dirfd_creation) and not swapped:
+            swapped = True
+            parent.rmdir()
+            parent.symlink_to(repository, target_is_directory=True)
+        return original_mkdir(path, mode, dir_fd=dir_fd)
+
+    try:
+        os.mkdir = swap_parent
+        directory = create_raw_directory(output, repository)
+    except CaptureError:
+        pass
+    except OSError:
+        pass
+    finally:
+        os.mkdir = original_mkdir
+        if directory is not None:
+            close_raw_directory(directory)
+    return swapped and not (repository / "raw").exists()
+
+
+def operational_publication_sync(root: pathlib.Path) -> bool:
+    """Publishing a raw filename also syncs the directory entry that names it."""
+    directory = root / "publication-directory"
+    directory.mkdir()
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    original_fsync = os.fsync
+    synced: list[int] = []
+
+    def trace_fsync(file_descriptor: int) -> None:
+        synced.append(file_descriptor)
+        original_fsync(file_descriptor)
+
+    try:
+        os.fsync = trace_fsync
+        write_private_at(descriptor, "buffered-basic.raw.json", b"{}")
+    except Exception:
+        return False
+    finally:
+        os.fsync = original_fsync
+        os.close(descriptor)
+    return bool(synced) and synced[-1] == descriptor
+
+
+def operational_oracle_independence(root: pathlib.Path) -> bool:
+    """Production decisions must not borrow the test-only oracle implementation."""
+    names = (
+        "oracle_url",
+        "oracle_path",
+        "oracle_owner_mode",
+        "oracle_limit",
+    )
+    originals = {name: globals()[name] for name in names}
+    outside = root / "independent-outside"
+    owner_only = root / "independent-owner-only"
+    owner_only.mkdir(mode=OWNER_DIRECTORY_MODE)
+    os.chmod(owner_only, OWNER_DIRECTORY_MODE)
+
+    def oracle_called(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("production predicate called a test oracle")
+
+    try:
+        for name in names:
+            globals()[name] = oracle_called
+        candidate_environment({name: "fixture" for name in REQUIRED_ENVIRONMENT})
+        candidate_url("https://fixture.invalid/v1")
+        candidate_path(outside, root / "repository")
+        candidate_owner_mode(owner_only, OWNER_DIRECTORY_MODE)
+        candidate_limit(0, 0, 0)
+    except Exception:
+        return False
+    finally:
+        for name, original in originals.items():
+            globals()[name] = original
+    return True
+
+
+def operational_tls_transport() -> bool:
+    """A real stdlib TLS socket must remain usable as the response transport."""
+    client, peer = socket.socketpair()
+    secure: ssl.SSLSocket | None = None
+    try:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        secure = context.wrap_socket(
+            client,
+            server_hostname="loopback.invalid",
+            do_handshake_on_connect=False,
+        )
+        return retained_transport(secure) is secure
+    except (NotImplementedError, OSError, ValueError):
+        return False
+    finally:
+        if secure is not None:
+            secure.close()
+        else:
+            client.close()
+        peer.close()
+
+
+def operational_partial_cleanup(root: pathlib.Path) -> bool:
+    """Marker and response-write failures leave no created raw directory behind."""
+    repository = root / "cleanup-repository"
+    repository.mkdir()
+    marker_output = root / "cleanup-marker-output"
+    original_write_all = write_all
+
+    def fail_marker(file_descriptor: int, content: bytes) -> None:
+        del content
+        os.write(file_descriptor, b"partial")
+        raise OSError("synthetic marker write failure")
+
+    try:
+        globals()["write_all"] = fail_marker
+        try:
+            create_raw_directory(marker_output, repository)
+        except CaptureError:
+            pass
+        else:
+            return False
+    finally:
+        globals()["write_all"] = original_write_all
+    if marker_output.exists():
+        return False
+
+    response_output = root / "cleanup-response-output"
+    original_environment = capture_environment
+    original_endpoint = capture_endpoint
+    original_open_connection = open_connection
+    writes = 0
+
+    class Transport:
+        def settimeout(self, timeout: float) -> None:
+            del timeout
+
+        def close(self) -> None:
+            return None
+
+    class Response:
+        status = 200
+
+        def getheader(self, name: str) -> str:
+            del name
+            return "application/json"
+
+        def read(self, amount: int) -> bytes:
+            del amount
+            return b""
+
+        def close(self) -> None:
+            return None
+
+    class Connection:
+        def __init__(self) -> None:
+            self.sock = Transport()
+
+        def connect(self) -> None:
+            return None
+
+        def request(self, *args, **kwargs) -> None:
+            del args, kwargs
+
+        def getresponse(self) -> Response:
+            return Response()
+
+        def close(self) -> None:
+            return None
+
+    def fail_response(file_descriptor: int, content: bytes) -> None:
+        nonlocal writes
+        writes += 1
+        if writes == 2:
+            os.write(file_descriptor, b"partial")
+            raise OSError("synthetic response write failure")
+        original_write_all(file_descriptor, content)
+
+    try:
+        globals()["capture_environment"] = lambda: (
+            "https://fixture.invalid", "token", "model"
+        )
+        globals()["capture_endpoint"] = lambda base_url: (
+            "https", "fixture.invalid", None, "/v1/chat/completions"
+        )
+        globals()["open_connection"] = lambda scheme, host, port, timeout: Connection()
+        globals()["write_all"] = fail_response
+        try:
+            candidate_capture("buffered-basic", response_output)
+        except CaptureError:
+            pass
+        else:
+            return False
+    finally:
+        globals()["write_all"] = original_write_all
+        globals()["capture_environment"] = original_environment
+        globals()["capture_endpoint"] = original_endpoint
+        globals()["open_connection"] = original_open_connection
+    return writes == 2 and not response_output.exists()
+
+
+def operational_competing_leaf(root: pathlib.Path) -> bool:
+    """A racing pre-existing output leaf must survive the failed creation."""
+    repository = root / "competing-repository"
+    repository.mkdir()
+    parent = root / "competing-parent"
+    parent.mkdir()
+    output = parent / "raw"
+    original_mkdir = os.mkdir
+    competed = False
+
+    def create_competing_leaf(path, mode=0o777, *, dir_fd=None):
+        nonlocal competed
+        if dir_fd is not None and pathlib.Path(path).name == output.name and not competed:
+            competed = True
+            original_mkdir(path, mode, dir_fd=dir_fd)
+            os.chmod(path, 0o755, dir_fd=dir_fd)
+            raise FileExistsError("synthetic competing output")
+        return original_mkdir(path, mode, dir_fd=dir_fd)
+
+    try:
+        os.mkdir = create_competing_leaf
+        try:
+            create_raw_directory(output, repository)
+        except CaptureError:
+            pass
+        else:
+            return False
+    finally:
+        os.mkdir = original_mkdir
+    return competed and output.is_dir() and stat.S_IMODE(output.stat().st_mode) == 0o755
 
 
 def selftest() -> int:
@@ -489,6 +1629,49 @@ def selftest() -> int:
                 failures,
             )
 
+        expect_operational_control(
+            "capture-total-deadline", operational_total_deadline(root), failures
+        )
+        expect_operational_control("capture-byte-cap", operational_byte_cap(), failures)
+        expect_operational_control("capture-event-cap", operational_event_cap(), failures)
+        expect_operational_control(
+            "capture-closing-response-socket",
+            operational_closing_response_socket(),
+            failures,
+        )
+        expect_operational_control(
+            "capture-http10-buffered-lifecycle",
+            operational_http10_buffered_capture(root),
+            failures,
+        )
+        expect_operational_control(
+            "capture-publication-path-swap",
+            operational_publication_path_swap(root),
+            failures,
+        )
+        expect_operational_control(
+            "capture-parent-symlink-race",
+            operational_parent_symlink_race(root),
+            failures,
+        )
+        expect_operational_control(
+            "capture-publication-sync", operational_publication_sync(root), failures
+        )
+        expect_operational_control(
+            "capture-oracle-independence",
+            operational_oracle_independence(root),
+            failures,
+        )
+        expect_operational_control(
+            "capture-tls-transport", operational_tls_transport(), failures
+        )
+        expect_operational_control(
+            "capture-partial-cleanup", operational_partial_cleanup(root), failures
+        )
+        expect_operational_control(
+            "capture-competing-leaf", operational_competing_leaf(root), failures
+        )
+
     if failures:
         print("capture selftest RED — named contract failures remain:")
         for failure in failures:
@@ -508,9 +1691,16 @@ def main(argv: list[str] | None = None) -> int:
         return selftest()
     if args.case is None or args.output_dir is None:
         parser.error("--case and --output-dir are required unless --selftest is used")
-    candidate_capture()
-    print("[capture-not-implemented] live capture is unavailable", file=sys.stderr)
-    return 1
+    try:
+        candidate_capture(args.case, args.output_dir)
+    except CaptureError as error:
+        print(f"[{error.check}] capture failed", file=sys.stderr)
+        return 1
+    except Exception:
+        print("[capture-failed] capture failed", file=sys.stderr)
+        return 1
+    print("capture complete")
+    return 0
 
 
 if __name__ == "__main__":
