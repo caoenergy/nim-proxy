@@ -817,7 +817,7 @@ const INTERACTION_ROWS = [
     state: 'history-outside-before',
     action: 'select a range wholly before globally available history',
     visible: 'an ordinary range before retained history remains a no-data range',
-    dom: [{ selector: '#rangeinfo', property: 'textContent', equals: 'No data in selected range' }],
+    dom: [{ selector: '#rangeinfo', property: 'textContent', equals: 'No data in selected time range' }],
   },
   {
     id: 'state-history-outside-after',
@@ -825,7 +825,7 @@ const INTERACTION_ROWS = [
     state: 'history-outside-after',
     action: 'select a range wholly after globally available history',
     visible: 'an ordinary range after retained history remains a no-data range',
-    dom: [{ selector: '#rangeinfo', property: 'textContent', equals: 'No data in selected range' }],
+    dom: [{ selector: '#rangeinfo', property: 'textContent', equals: 'No data in selected time range' }],
   },
   {
     id: 'state-extreme-numeric',
@@ -1492,10 +1492,10 @@ const DOM_CONTRACTS = {
     domContract('unavailable-range-message', `document.querySelector('#rangeinfo')?.textContent.trim() ?? null`, 'History unavailable for selected time range'),
   ],
   'state-history-outside-before': [
-    domContract('outside-before-range-message', `document.querySelector('#rangeinfo')?.textContent.trim() ?? null`, 'No data in selected range'),
+    domContract('outside-before-range-message', `document.querySelector('#rangeinfo')?.textContent.trim() ?? null`, 'No data in selected time range'),
   ],
   'state-history-outside-after': [
-    domContract('outside-after-range-message', `document.querySelector('#rangeinfo')?.textContent.trim() ?? null`, 'No data in selected range'),
+    domContract('outside-after-range-message', `document.querySelector('#rangeinfo')?.textContent.trim() ?? null`, 'No data in selected time range'),
   ],
   'state-extreme-numeric': [
     domContract('finite-layout',

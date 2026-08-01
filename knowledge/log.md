@@ -6,6 +6,21 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-07-31] component — recoverable canonical history completeness
+
+Task 12 replaces the strict intermediate canonical reader with one file-order
+scanner whose `AwaitBoot`, `AwaitSample`, `Usable`, and `InvalidEpoch` states
+retain only complete usable epochs. Supported v1 corruption, invalid state,
+unknown kinds, sequence mismatch, regression, boot-only epochs, and an
+unterminated tail remain append-only evidence and create bounded gaps; unknown
+format/version and empty canonical input remain fatal. Range results now carry
+query-scoped completeness and diagnostics. The operator UI distinguishes
+complete, partial, unavailable, and not-yet-observed history without inventing
+zeros. See [metrics history](architecture/metrics-history.md),
+[Dashboard](architecture/dashboard.md), the
+[test strategy](testing/test-strategy.md), and the
+[Task 12 plan](../docs/plans/v0.6.6-foundation-implementation.md).
+
 ## [2026-07-31] component — canonical history-v1 fail-closed store
 
 Task 11 publishes `history-v1.jsonl` through a synced same-directory temporary

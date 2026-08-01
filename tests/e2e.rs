@@ -2724,7 +2724,7 @@ async fn experimental_legacy_history_is_ignored_without_mutation() {
     let legacy_before = std::fs::read(data_dir.join("history.jsonl")).unwrap();
     let proxy = start_proxy_in(data_dir, &[("HISTORY_SAMPLE_SECS", "3600")]).await;
     let cookie = login(&proxy).await;
-    let range = dashboard_range(&proxy, &cookie, 1, 4_102_444_800, 1000).await;
+    let range = dashboard_range(&proxy, &cookie, 1, now.saturating_sub(1), 1000).await;
     assert_eq!(
         successful_chat_requests(&range["totals"]),
         0.0,
@@ -3302,14 +3302,13 @@ async fn corrupt_or_future_store_refuses_to_start() {
     expect_refuses_to_start(future).await;
 }
 
-/// Canonical history is durable evidence: malformed bytes must block startup
-/// rather than being treated as an empty or legacy history file.
+/// Fatal canonical history classes stay fail-closed. Recoverable corruption
+/// is covered separately by `dashboard_history_reports_completeness`.
 #[tokio::test]
 async fn history_startup_is_fail_closed() {
     let mock = start_mock().await;
     for (name, contents) in [
         ("empty", b"".as_slice()),
-        ("corrupt", b"{not canonical}\n".as_slice()),
         (
             "future",
             b"{\"format\":\"nimproxy-history\",\"v\":2,\"kind\":\"boot\",\"timestamp\":1,\"boot_id\":\"future\",\"capacity\":{\"capacity_rpm\":80,\"enabled_keys\":2,\"key_rpms\":[40,40]}}\n",
@@ -3324,7 +3323,7 @@ async fn history_startup_is_fail_closed() {
         std::fs::write(data_dir.join("history-v1.jsonl"), contents).unwrap();
 
         expect_refuses_to_start(data_dir).await;
-        eprintln!("history-startup:{name}: refused malformed canonical input");
+        eprintln!("history-startup:{name}: refused fatal canonical input");
     }
 }
 

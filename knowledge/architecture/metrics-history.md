@@ -1,7 +1,7 @@
 ---
 type: Component
 title: Metrics & history (src/history.rs)
-description: Prometheus registry, versioned JSONL snapshots, reset-aware startup index, exact range rollups, and deferred canonical retention compaction.
+description: Prometheus registry, recoverable canonical JSONL, query-scoped completeness, exact range rollups, and deferred canonical retention compaction.
 tags: [metrics, history, prometheus]
 timestamp: 2026-07-02T00:00:00Z
 ---
@@ -17,15 +17,15 @@ longer downloads or parses its raw exposition.
 ## Persisted format
 
 Task 10 defines the canonical successor format, `nimproxy-history/v1`; Task
-11 publishes and appends it at runtime. `HistoryStore::open` streams existing
-canonical rows strictly before appending one fresh boot boundary, or publishes
-the first boot through a unique same-directory temporary, file sync,
-no-overwrite hard link, temporary-name removal, and directory sync. Any empty,
-unterminated, malformed, future-version, mis-sequenced, or timestamp-regressing
-canonical history refuses startup without repair or truncation. A startup
-attempt whose fresh boot append or sync fails also refuses; a sync failure can
-leave a complete valid boot record, while a partial failed tail remains
-evidence.
+11 publishes and appends it at runtime; Task 12 recovers supported v1 damage
+without presenting the resulting gaps as complete. `HistoryStore::open`
+streams existing canonical rows in physical order before appending one fresh
+boot boundary, or publishes the first boot through a unique same-directory
+temporary, file sync, no-overwrite hard link, temporary-name removal, and
+directory sync. Empty or whitespace-only canonical input and a detectable
+unknown format/version anywhere refuse startup without mutation. A failed
+fresh-boot append or sync also refuses; a sync failure can leave a complete
+valid boot record, while a partial failed tail remains evidence.
 
 Every canonical JSONL row begins, in this exact order, with
 `format:"nimproxy-history"`, `v:1`, and `kind`. The complete field order is:
@@ -53,14 +53,47 @@ reads, renames, truncates, deletes, migrates, or compacts experimental
 `history.jsonl`; it emits one startup warning containing only that path and
 byte length. Stale same-directory canonical temporaries are likewise opaque
 evidence; startup emits at most one warning containing their count, and never
-their names or contents. A nonempty canonical record must end with a newline;
-file order is authoritative, timestamps never decrease, and every sample or
-checkpoint must follow a matching boot. Canonical samples replay into the
-in-memory dashboard index, and a checkpoint carries forward the latest sample
-only inside its boot epoch. A runtime encode/write/flush/sync failure poisons
-the writer, so later ticks cannot append after partial evidence. `file_bytes`
-is live metadata from the canonical writer. Task 12 owns malformed-stream
-recovery semantics; Task 13 owns compaction.
+their names or contents. File order is authoritative and equal timestamps are
+valid. A runtime encode/write/flush/sync failure poisons the writer, so later
+ticks cannot append after partial evidence. `file_bytes` is live metadata from
+the canonical writer. Task 13 owns compaction.
+
+## Recovery and completeness
+
+The canonical scanner is one pass with four explicit states:
+`AwaitBoot`, `AwaitSample`, `Usable`, and `InvalidEpoch`. A valid boot starts a
+candidate epoch; only a valid full sample makes it usable, and checkpoints
+carry that sample's state only inside the same boot id. Malformed supported-v1
+JSON, an invalid state entry or duplicate semantic series, an unknown v1 kind,
+a boot-id mismatch, an orphan checkpoint, or a timestamp regression invalidates
+the candidate epoch. Its records are excluded until a monotonic boot followed
+by a valid sample re-establishes usable state. A boot-only epoch is excluded
+rather than treated as empty history.
+
+The scanner never sorts. A trustworthy timestamp from a rejected JSON object
+still advances the physical ordering bound, so a later lower-timestamp boot
+cannot manufacture validity. A supported unterminated tail is left untouched;
+startup syncs one delimiter before appending its fresh boot so later restarts
+can scan the append-only evidence. A complete unterminated record that declares
+an unsupported format/version remains fatal. All recovered bytes remain in the
+file; startup neither truncates nor repairs them.
+
+Recovery records bounded gaps and query-timestamped diagnostic events rather
+than raw rows. `excluded_epochs` counts invalidated or boot-only candidate
+epochs; `excluded_records` counts their physical records and damaging records.
+`valid_samples` and `valid_checkpoints` count accepted record kinds through the
+query end, while `normalized_series` counts the state entries normalized by
+those accepted samples/checkpoints. `skipped_metric_lines` remains separate
+live Prometheus-text parsing evidence. Diagnostics are cumulative only through
+the requested `to`; they do not claim that every count occurred inside the
+requested `from..to` slice.
+
+`History::rollup` returns `HistoryWindow<Rollup>` with `complete`, `data`, and
+`diagnostics`. A window is complete only when it contains usable observations
+and no recovery gap overlaps the requested interval. A gap-free query with no
+usable observation is unavailable rather than an invented zero. A later valid
+epoch can therefore be complete for its own interval even when earlier queries
+remain partial or unavailable.
 
 ### Sanitized corpus evidence
 
@@ -98,7 +131,8 @@ only precomputation: page-specific dashboard models are deliberately not cached
 - the latest observed value per gauge series within the window;
 - chart buckets capped by the requested point budget;
 - contemporaneous capacity per chart bucket;
-- available/effective bounds, diagnostics, and a monotonic history revision.
+- available/effective bounds, query-scoped completeness/diagnostics, and a
+  monotonic history revision.
 
 Totals are computed from the normalized index, not from the chart buckets, so
 `points=2` and `points=288` return identical totals. Sample timestamps are the

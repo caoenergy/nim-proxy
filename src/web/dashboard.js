@@ -846,7 +846,8 @@ function updateScope() {
       });
       return;
     }
-    if (window.available_from != null) {
+    if (window.available_from != null && window.available_to != null
+      && window.requested_from >= window.available_from && window.requested_to <= window.available_to) {
       setMessageText($('rangeinfo'), 'dashboard.common.empty.history_unavailable');
       return;
     }

@@ -125,6 +125,20 @@ complete application-path inventory. This supersession keeps the original
 decision's provenance while making typed Rust serialization the current wire
 authority.
 
+### Supersession — Task 12 history completeness (2026-07-31)
+
+Task 9 expanded the interaction matrix to 55 rows. Task 12 adds three
+Rust-generated fixtures and three browser rows, bringing the current authority
+to 24 stable JSON files and 58 named rows. The generated partial fixture proves
+incomplete history with usable effective bounds;
+`dashboard-unavailable.json` proves an incomplete requested interval inside
+global availability with no usable points or invented zeros; and the two
+outside-bound fixtures prove ordinary empty requests wholly before or after
+global availability remain no-data ranges. All states assert their exact
+catalog-owned range status through the same served-byte CDP boundary. The Task
+8 numbers above remain the dated scope of that supersession rather than current
+totals.
+
 - Two CI steps in the existing `check` job, so the required-status-check list
   in [release.md](../ops/release.md) does not change.
 - `scripts/mock_nim.py` honors `max_tokens` so a capped request finishes with

@@ -65,8 +65,8 @@ page describes a conclusion, a plan describes the live state.
 | [dispatcher](architecture/dispatcher.md) | Global FIFO slot queue; abandoned-waiter slot return; affinity accounting |
 | [governor](architecture/governor.md) | Per-model concurrency gate; classifies worker exhaustion apart from 429s and backs off the model, adaptively |
 | [streaming-pipeline](architecture/streaming-pipeline.md) | Heartbeats, retry/failover, absolute deadlines, idle timeout, SSE usage scanning |
-| [metrics-history](architecture/metrics-history.md) | Prometheus registry + versioned JSONL, reset-aware startup index, exact rollups, and atomic retention |
-| [dashboard](architecture/dashboard.md) | Split embedded operator console; one persisted window across 5 tabs plus clearly scoped Now values |
+| [metrics-history](architecture/metrics-history.md) | Prometheus registry + recoverable canonical JSONL, query-scoped completeness, exact rollups, and atomic retention |
+| [dashboard](architecture/dashboard.md) | Split embedded operator console; one honest complete/partial/unavailable window across 5 tabs plus clearly scoped Now values |
 | [presentation-layer](architecture/presentation-layer.md) | Compile-time public/operator pages and assets with strict same-origin CSP, explicit gates, and served-byte browser proof |
 | [client-auth](architecture/client-auth.md) | `/v1` client keys (open/keyed) + store-backed multi-user dashboard sessions; fail-closed posture |
 | [http-trust-boundary-map](architecture/http-trust-boundary-map.md) | Every live route mapped across phase, authentication, roles, wire types, side effects, callers, OpenAPI, and real-request proof |
