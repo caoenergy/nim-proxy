@@ -4352,10 +4352,10 @@ async fn corrupt_or_future_store_refuses_to_start() {
     expect_refuses_to_start(future).await;
 }
 
-/// Fatal canonical history classes stay fail-closed. Recoverable corruption
-/// is covered separately by `dashboard_history_reports_completeness`.
+/// Rejected canonical history degrades to in-memory history without changing
+/// the configured store or canonical bytes.
 #[tokio::test]
-async fn history_startup_is_fail_closed() {
+async fn history_startup_degrades_to_memory_without_mutating_canonical() {
     let mock = start_mock().await;
     for (name, contents) in [
         ("empty", b"".as_slice()),
@@ -4372,8 +4372,27 @@ async fn history_startup_is_fail_closed() {
         .unwrap();
         std::fs::write(data_dir.join("history-v1.jsonl"), contents).unwrap();
 
-        expect_refuses_to_start(data_dir).await;
-        eprintln!("history-startup:{name}: refused fatal canonical input");
+        let config_before = std::fs::read(data_dir.join("config.json")).unwrap();
+        let history_before = std::fs::read(data_dir.join("history-v1.jsonl")).unwrap();
+        let proxy = start_proxy_in(data_dir, &[("HISTORY_SAMPLE_SECS", "3600")]).await;
+        let response = client()
+            .post(proxy.url("/v1/chat/completions"))
+            .json(&chat_body(&format!("history startup {name}"), false))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "history-startup:{name}: /v1 remains available");
+        assert_eq!(
+            std::fs::read(proxy.data_dir.join("config.json")).unwrap(),
+            config_before,
+            "history-startup:{name}: config bytes remain unchanged"
+        );
+        assert_eq!(
+            std::fs::read(proxy.data_dir.join("history-v1.jsonl")).unwrap(),
+            history_before,
+            "history-startup:{name}: canonical bytes remain unchanged"
+        );
+        proxy.terminate();
     }
 }
 
