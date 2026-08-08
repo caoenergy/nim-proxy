@@ -353,37 +353,50 @@ impl HistoryStore {
             .to_path_buf();
         let (temporary, mut output) =
             create_temporary(&directory, &mut failure, FailurePoint::CompactionTempCreate)?;
-        for record in &retained {
-            write_record(
-                &mut output,
-                record,
-                failure.as_deref_mut(),
-                Some(FailurePoint::CompactionTempWrite),
-            )
-            .map_err(write_error_to_io)?;
-        }
-        output.flush()?;
-        fail(&mut failure, FailurePoint::CompactionTempSync)?;
-        output.sync_all()?;
-
-        let replacement_replay = validate_canonical(&temporary).map_err(open_error_to_io)?;
-        if replacement_replay.records != retained
-            || !replacement_replay.gaps.is_empty()
-            || replacement_replay.needs_separator
-            || replacement_replay.diagnostics.excluded_epochs != 0
-            || replacement_replay.diagnostics.excluded_records != 0
-        {
-            return Err(io::Error::other(
-                "compaction replacement does not exactly validate as retained canonical history",
-            ));
-        }
-        let Some(authorization) = authorize() else {
-            drop(output);
-            let _ = fs::remove_file(&temporary);
-            return Ok(CompactionOutcome::Superseded);
+        let prepared = (|| -> io::Result<Option<(T, Replay)>> {
+            for record in &retained {
+                write_record(
+                    &mut output,
+                    record,
+                    failure.as_deref_mut(),
+                    Some(FailurePoint::CompactionTempWrite),
+                )
+                .map_err(write_error_to_io)?;
+            }
+            output.flush()?;
+            fail(&mut failure, FailurePoint::CompactionTempSync)?;
+            output.sync_all()?;
+            let replacement_replay = validate_canonical(&temporary).map_err(open_error_to_io)?;
+            if replacement_replay.records != retained
+                || !replacement_replay.gaps.is_empty()
+                || replacement_replay.needs_separator
+                || replacement_replay.diagnostics.excluded_epochs != 0
+                || replacement_replay.diagnostics.excluded_records != 0
+            {
+                return Err(io::Error::other(
+                    "compaction replacement does not exactly validate as retained canonical history",
+                ));
+            }
+            let Some(authorization) = authorize() else {
+                return Ok(None);
+            };
+            fail(&mut failure, FailurePoint::CompactionRename)?;
+            fs::rename(&temporary, &self.path)?;
+            Ok(Some((authorization, replacement_replay)))
+        })();
+        let (authorization, replacement_replay) = match prepared {
+            Err(error) => {
+                drop(output);
+                let _ = fs::remove_file(&temporary);
+                return Err(error);
+            }
+            Ok(None) => {
+                drop(output);
+                let _ = fs::remove_file(&temporary);
+                return Ok(CompactionOutcome::Superseded);
+            }
+            Ok(Some((authorization, replacement_replay))) => (authorization, replacement_replay),
         };
-        fail(&mut failure, FailurePoint::CompactionRename)?;
-        fs::rename(&temporary, &self.path)?;
         drop(authorization);
 
         self.file = output;
@@ -1077,8 +1090,8 @@ mod tests {
 
     use super::{
         add_sample, append_with_test_failure, compact_with_test_failure, open_with_test_failure,
-        validate_canonical, CompactionOutcome, Epoch, FailurePoint, HistoryStore, OpenError,
-        ScannerState,
+        stale_temporary_count, validate_canonical, CompactionOutcome, Epoch, FailurePoint,
+        HistoryStore, OpenError, ScannerState,
     };
     use crate::history::{
         codec::{
@@ -2685,6 +2698,11 @@ mod tests {
                 "{point:?}: canonical path remains the complete old bytes"
             );
             validate_canonical(&path).unwrap();
+            assert_eq!(
+                stale_temporary_count(&dir).unwrap(),
+                0,
+                "{point:?}: failed compaction must remove its attempt temporary"
+            );
             let _ = fs::remove_dir_all(dir);
         }
 
