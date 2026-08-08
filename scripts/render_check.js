@@ -436,7 +436,6 @@ const INTERACTION_ROWS = [
     state: 'mutation-success',
     action: 'change the history fields and activate Save',
     visible: 'Saved is visible beside History and dashboard',
-    dom: [{ selector: '#history-err', property: 'textContent', equals: 'Saved.' }],
     request: {
       method: 'POST',
       path: '/api/settings/history',
@@ -1433,6 +1432,7 @@ const DOM_CONTRACTS = {
       ]`,
       ['30', '7', '99.9']),
     domContract('history-saved', `document.querySelector('#history-err')?.textContent.trim() ?? null`, 'Saved.'),
+    domContract('history-persistence-degraded', `document.querySelector('[data-i18n="settings.server.history.persistence_degraded"]')?.textContent.trim() ?? null`, 'History persistence is degraded. Restart the proxy to retry canonical storage.'),
   ],
   'mutation-governor-toggle': [
     domContract('governor-disabled', `document.querySelector('#gov-tog')?.getAttribute('aria-pressed') ?? null`, 'false'),

@@ -1443,6 +1443,10 @@
       "en": "Oldest data point",
       "hash": "ef4ab020"
     },
+    "settings.server.history.persistence_degraded": {
+      "en": "History persistence is degraded. Restart the proxy to retry canonical storage.",
+      "hash": "4b24eb63"
+    },
     "settings.server.history.retention": {
       "en": "History retention · 0 = unlimited",
       "hash": "c137c172"

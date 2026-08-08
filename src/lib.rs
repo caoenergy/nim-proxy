@@ -540,6 +540,10 @@ pub async fn run() {
         "nimproxy_usage_observations_total",
         "Final classified upstream usage observations by field and result."
     );
+    metrics::describe_gauge!(
+        "nimproxy_history_persistence_degraded",
+        "Whether canonical history persistence is degraded (0 = ok, 1 = degraded)."
+    );
 
     let pool: PoolHandle = Arc::new(RwLock::new(Arc::new(Pool::new(pool_specs))));
 
@@ -563,6 +567,13 @@ pub async fn run() {
             ))
         }
     };
+    metrics::gauge!("nimproxy_history_persistence_degraded").set(
+        if hist.status().persistence == "degraded" {
+            1.0
+        } else {
+            0.0
+        },
+    );
     {
         let hist = hist.clone();
         let prom = prometheus.clone();

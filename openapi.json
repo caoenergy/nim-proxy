@@ -1594,7 +1594,8 @@
         "required": [
           "compaction_pending",
           "days",
-          "file_bytes"
+          "file_bytes",
+          "persistence"
         ],
         "properties": {
           "available_from": {
@@ -1618,6 +1619,9 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          },
+          "persistence": {
+            "type": "string"
           }
         }
       },

@@ -303,6 +303,7 @@ function renderServer() {
         <div class="conbox"><div class="slabel" data-i18n="settings.server.history.data_file"></div><div class="kmeta" data-style="display:block">${escapeHtml(historyBytesMessage())}</div></div>
       </div>
       ${sv.history.compaction_pending ? '<p class="shint" data-style="color:var(--amber-lt)" data-i18n="settings.server.history.compaction_pending"></p>' : ''}
+      ${sv.history.persistence === 'degraded' ? '<p class="shint" data-style="color:var(--amber-lt)" data-i18n="settings.server.history.persistence_degraded"></p>' : ''}
       <div class="serr" id="history-err"></div>
     </div>`;
   applyStatic($('setbody'));

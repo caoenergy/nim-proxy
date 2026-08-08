@@ -4357,6 +4357,28 @@ async fn corrupt_or_future_store_refuses_to_start() {
 #[tokio::test]
 async fn history_startup_degrades_to_memory_without_mutating_canonical() {
     let mock = start_mock().await;
+    let canonical_data_dir = scratch_data_dir();
+    std::fs::write(
+        canonical_data_dir.join("config.json"),
+        serde_json::to_vec_pretty(&StoreOpts::default().json(&mock.url)).unwrap(),
+    )
+    .unwrap();
+    let canonical_proxy =
+        start_proxy_in(canonical_data_dir, &[("HISTORY_SAMPLE_SECS", "3600")]).await;
+    let canonical_cookie = login(&canonical_proxy).await;
+    let canonical_config = api_config(&canonical_proxy, &canonical_cookie).await;
+    assert_eq!(
+        canonical_config["server"]["history"]["persistence"], "ok",
+        "history-startup:canonical: canonical persistence is healthy"
+    );
+    assert!(
+        metrics(&canonical_proxy)
+            .await
+            .lines()
+            .any(|line| line == "nimproxy_history_persistence_degraded 0"),
+        "history-startup:canonical: canonical persistence gauge is zero"
+    );
+    canonical_proxy.terminate();
     for (name, contents) in [
         ("empty", b"".as_slice()),
         (
@@ -4375,6 +4397,20 @@ async fn history_startup_degrades_to_memory_without_mutating_canonical() {
         let config_before = std::fs::read(data_dir.join("config.json")).unwrap();
         let history_before = std::fs::read(data_dir.join("history-v1.jsonl")).unwrap();
         let proxy = start_proxy_in(data_dir, &[("HISTORY_SAMPLE_SECS", "3600")]).await;
+        let cookie = login(&proxy).await;
+        let config = api_config(&proxy, &cookie).await;
+        assert_eq!(
+            config["server"]["history"]["persistence"],
+            "degraded",
+            "history-startup:{name}: rejected canonical persistence is degraded"
+        );
+        assert!(
+            metrics(&proxy)
+                .await
+                .lines()
+                .any(|line| line == "nimproxy_history_persistence_degraded 1"),
+            "history-startup:{name}: rejected canonical persistence gauge is one"
+        );
         let response = client()
             .post(proxy.url("/v1/chat/completions"))
             .json(&chat_body(&format!("history startup {name}"), false))

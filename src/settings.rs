@@ -445,6 +445,7 @@ pub async fn api_config(
                 compaction_pending: history.compaction_pending,
                 days: sc.history.days,
                 file_bytes: history.file_bytes,
+                persistence: history.persistence,
             },
             limits: sc.limits.clone(),
         };
