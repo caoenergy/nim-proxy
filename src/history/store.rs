@@ -448,6 +448,10 @@ impl HistoryStore {
         &self.boot_id
     }
 
+    pub(crate) fn last_timestamp(&self) -> Option<u64> {
+        self.last_timestamp
+    }
+
     pub(crate) fn take_replay(&mut self) -> Replay {
         std::mem::take(&mut self.replay)
     }
