@@ -907,13 +907,21 @@ impl History {
     }
 
     pub fn append(self: &Arc<Self>, t: u64, snapshot: &str, capacity: CapacitySnapshot) {
+        let canonical_last = self
+            .canonical
+            .as_ref()
+            .and_then(|store| store.lock().unwrap().last_timestamp());
         let current = parse_exposition(snapshot);
         let canonical_state = canonical_state(&current);
         let mut inner = self.inner.lock().unwrap();
         // Wall clocks can move backward, and a retained file can contain a
         // future-dated point. Keep ingestion order without fabricating time:
         // equal timestamps preserve binary-search ordering and exact deltas.
-        let t = inner.available_to.map_or(t, |latest| latest.max(t));
+        let t = [Some(t), inner.available_to, canonical_last]
+            .into_iter()
+            .flatten()
+            .max()
+            .expect("the input timestamp is always present");
         let explicit_reset = inner.last_parsed.is_some()
             && inner.last_sample_boot.as_deref() != Some(self.boot_id.as_str());
         let normalized = normalize(inner.last_parsed.as_ref(), &current, explicit_reset);
@@ -1818,19 +1826,23 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
     }
 
     #[test]
-    fn append_clamps_clock_rollback_to_preserve_sorted_index() {
-        let history = memory_history(0);
+    fn append_clamps_clock_rollback_to_canonical_order_and_persists_sample() {
+        let dir = TestDir::new();
+        let history = Arc::new(History::open(dir.0.clone(), 0, capacity(40)).unwrap());
+        let boot_t = history.boot_t;
         history.append(
-            300,
-            "# TYPE requests_total counter\nrequests_total 10\n",
-            capacity(40),
-        );
-        history.append(
-            200,
+            boot_t.saturating_sub(60),
             "# TYPE requests_total counter\nrequests_total 15\n",
             capacity(40),
         );
 
+        let records = fs::read_to_string(dir.0.join("history-v1.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| codec::decode_record(line.as_bytes()).unwrap())
+            .collect::<Vec<_>>();
+        assert!(matches!(records.last(), Some(codec::Record::Sample(sample))
+            if sample.timestamp == boot_t));
         let timestamps = history
             .inner
             .lock()
@@ -1839,10 +1851,10 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
             .iter()
             .map(|point| point.t)
             .collect::<Vec<_>>();
-        assert_eq!(timestamps, [300, 300]);
+        assert_eq!(timestamps, [boot_t]);
         assert!(timestamps.windows(2).all(|pair| pair[0] <= pair[1]));
-        assert_eq!(history.status().available_to, Some(300));
-        let rollup = history.rollup(299, 300, 20);
+        assert_eq!(history.status().available_to, Some(boot_t));
+        let rollup = history.rollup(boot_t.saturating_sub(1), boot_t, 20);
         assert_eq!(value(&rollup.data.totals, "requests_total"), 15.0);
     }
 
