@@ -800,7 +800,14 @@ fn create_temporary(
     for _ in 0..32 {
         let path = directory.join(format!("{TEMP_PREFIX}{}", new_boot_id()));
         fail(failure, failure_point)?;
-        match OpenOptions::new().append(true).create_new(true).open(&path) {
+        let mut options = OpenOptions::new();
+        options.append(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&path) {
             Ok(file) => return Ok((path, file)),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),
@@ -1736,6 +1743,19 @@ mod tests {
         assert_eq!(boot.capacity, capacity());
         assert!(!boot.boot_id.is_empty(), "store owns a fresh boot id");
         assert!(!dir.join("history.jsonl").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(dir.join("history-v1.jsonl"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(
+                mode, 0o600,
+                "first publication must create history-v1.jsonl as 0600"
+            );
+        }
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -2734,6 +2754,15 @@ mod tests {
             store.compact(13).unwrap(),
             CompactionOutcome::Durable
         ));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(
+                mode, 0o600,
+                "compaction replacement must preserve history-v1.jsonl mode"
+            );
+        }
         #[cfg(unix)]
         let replacement_inode = {
             use std::os::unix::fs::MetadataExt;
