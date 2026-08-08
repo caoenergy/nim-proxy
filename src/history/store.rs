@@ -24,6 +24,8 @@ pub struct HistoryStore {
     poisoned: bool,
     #[cfg(test)]
     test_compaction_directory_sync_failure: bool,
+    #[cfg(test)]
+    test_runtime_partial_append_once: bool,
 }
 
 #[derive(Debug, Default)]
@@ -175,6 +177,8 @@ impl HistoryStore {
                     poisoned: false,
                     #[cfg(test)]
                     test_compaction_directory_sync_failure: false,
+                    #[cfg(test)]
+                    test_runtime_partial_append_once: false,
                 })
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -196,6 +200,8 @@ impl HistoryStore {
                             poisoned: false,
                             #[cfg(test)]
                             test_compaction_directory_sync_failure: false,
+                            #[cfg(test)]
+                            test_runtime_partial_append_once: false,
                         })
                     }
                     Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
@@ -217,6 +223,8 @@ impl HistoryStore {
                             poisoned: false,
                             #[cfg(test)]
                             test_compaction_directory_sync_failure: false,
+                            #[cfg(test)]
+                            test_runtime_partial_append_once: false,
                         })
                     }
                     Err(error) => Err(error.into()),
@@ -232,7 +240,20 @@ impl HistoryStore {
         capacity: Capacity,
         state: Vec<StateEntry>,
     ) -> Result<(), WriteError> {
-        self.append_sample_inner(timestamp, capacity, state, None)
+        #[cfg(test)]
+        {
+            let mut failure = std::mem::take(&mut self.test_runtime_partial_append_once).then_some(
+                FailureSwitch {
+                    point: FailurePoint::RuntimePartialAppend,
+                    fired: None,
+                },
+            );
+            self.append_sample_inner(timestamp, capacity, state, failure.as_mut())
+        }
+        #[cfg(not(test))]
+        {
+            self.append_sample_inner(timestamp, capacity, state, None)
+        }
     }
 
     fn append_sample_inner(
@@ -240,13 +261,13 @@ impl HistoryStore {
         timestamp: u64,
         capacity: Capacity,
         state: Vec<StateEntry>,
-        failure: Option<&mut FailureSwitch>,
+        mut failure: Option<&mut FailureSwitch>,
     ) -> Result<(), WriteError> {
         if self.poisoned {
             return Err(WriteError::Poisoned);
         }
         if self.last_state.as_ref() == Some(&state) {
-            return self.checkpoint(timestamp, capacity);
+            return self.checkpoint_inner(timestamp, capacity, failure.take());
         }
         let record = Record::Sample(SampleRecord {
             timestamp,
@@ -264,6 +285,7 @@ impl HistoryStore {
         Ok(())
     }
 
+    #[allow(dead_code)] // Retained for direct store checks; append_sample forwards injected failures below.
     pub fn checkpoint(&mut self, timestamp: u64, capacity: Capacity) -> Result<(), WriteError> {
         self.checkpoint_inner(timestamp, capacity, None)
     }
@@ -450,6 +472,15 @@ impl HistoryStore {
 
     pub(crate) fn last_timestamp(&self) -> Option<u64> {
         self.last_timestamp
+    }
+
+    pub(crate) fn poisoned(&self) -> bool {
+        self.poisoned
+    }
+
+    #[cfg(test)]
+    pub(crate) fn arm_test_runtime_partial_append_once(&mut self) {
+        self.test_runtime_partial_append_once = true;
     }
 
     pub(crate) fn take_replay(&mut self) -> Replay {

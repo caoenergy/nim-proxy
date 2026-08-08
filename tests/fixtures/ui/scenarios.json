@@ -55,7 +55,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -139,7 +140,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -223,7 +225,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -307,7 +310,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -385,7 +389,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -469,7 +474,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -547,7 +553,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -7243,7 +7250,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -7327,7 +7335,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -7411,7 +7420,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -7495,7 +7505,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -7579,7 +7590,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -7663,7 +7675,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -7747,7 +7760,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -7820,7 +7834,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -7904,7 +7919,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -7977,7 +7993,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -8061,7 +8078,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -8145,7 +8163,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -8227,7 +8246,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -8311,7 +8331,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -8395,7 +8416,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -8477,7 +8499,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -8551,7 +8574,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -8612,7 +8636,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -8696,7 +8721,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -8763,7 +8789,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -8841,7 +8868,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,
@@ -8925,7 +8953,8 @@
         "available_from": 1700000000,
         "compaction_pending": true,
         "days": 30,
-        "file_bytes": 12345
+        "file_bytes": 12345,
+        "persistence": "degraded"
       },
       "limits": {
         "heartbeat_secs": 10,

@@ -305,6 +305,7 @@ pub struct HistorySettings {
     /// Retention in days; 0 = keep forever.
     pub days: u64,
     pub file_bytes: u64,
+    pub persistence: String,
 }
 
 /// A user row with how much of the pool they own.
@@ -1207,6 +1208,7 @@ mod tests {
                 compaction_pending: true,
                 days: 30,
                 file_bytes: 12_345,
+                persistence: "degraded".into(),
             },
             limits: Limits::default(),
         }
@@ -2381,6 +2383,7 @@ mod tests {
                 compaction_pending: false,
                 days: 30,
                 file_bytes: 0,
+                persistence: "ok".into(),
             },
         );
         sorted(
@@ -2402,6 +2405,7 @@ mod tests {
                 compaction_pending: false,
                 days: 30,
                 file_bytes: 0,
+                persistence: "ok".into(),
             },
             limits: Limits::default(),
         };

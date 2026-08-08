@@ -443,8 +443,9 @@ fn diagnostics_at(inner: &HistoryInner, to: u64) -> HistoryDiagnostics {
 pub struct HistoryStatus {
     pub available_from: Option<u64>,
     pub available_to: Option<u64>,
-    pub file_bytes: u64,
     pub compaction_pending: bool,
+    pub file_bytes: u64,
+    pub persistence: String,
 }
 
 /// ASCII-ordered: served inside `/api/dashboard` (see `src/api.rs`).
@@ -883,26 +884,34 @@ impl History {
             (inner.available_from, inner.available_to)
         };
         let compaction_pending = self.compaction_pending.load(Ordering::SeqCst);
-        let file_bytes = self.canonical.as_ref().map_or_else(
+        let (file_bytes, persistence) = self.canonical.as_ref().map_or_else(
             || {
-                self.file
-                    .as_ref()
-                    .and_then(|path| fs::metadata(path).ok())
-                    .map_or(0, |metadata| metadata.len())
+                (
+                    self.file
+                        .as_ref()
+                        .and_then(|path| fs::metadata(path).ok())
+                        .map_or(0, |metadata| metadata.len()),
+                    "degraded".to_owned(),
+                )
             },
             |store| {
-                store
-                    .lock()
-                    .ok()
-                    .and_then(|store| store.file_bytes().ok())
-                    .unwrap_or(0)
+                let store = store.lock().unwrap();
+                (
+                    store.file_bytes().unwrap_or(0),
+                    if store.poisoned() {
+                        "degraded".to_owned()
+                    } else {
+                        "ok".to_owned()
+                    },
+                )
             },
         );
         HistoryStatus {
             available_from,
             available_to,
-            file_bytes,
             compaction_pending,
+            file_bytes,
+            persistence,
         }
     }
 
@@ -973,12 +982,17 @@ impl History {
         }
 
         if let Some(store) = &self.canonical {
-            if let Err(error) = store.lock().unwrap().append_sample(
-                t,
-                canonical_capacity(&capacity),
-                canonical_state,
-            ) {
-                tracing::warn!("canonical history append failed: {error}");
+            let mut store = store.lock().unwrap();
+            let was_poisoned = store.poisoned();
+            if let Err(error) =
+                store.append_sample(t, canonical_capacity(&capacity), canonical_state)
+            {
+                if !was_poisoned && store.poisoned() {
+                    metrics::gauge!("nimproxy_history_persistence_degraded").set(1.0);
+                    tracing::error!("canonical history persistence degraded: {error}");
+                } else if !matches!(error, store::WriteError::Poisoned) {
+                    tracing::warn!("canonical history append failed: {error}");
+                }
             }
         }
 
@@ -1566,8 +1580,23 @@ fn sync_parent_directory(_path: &Path) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use std::fmt::Write as _;
+    use std::io;
     use std::sync::Arc;
     use std::time::Duration;
+
+    #[derive(Clone)]
+    struct SharedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl io::Write for SharedWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
 
     fn capacity(rpm: usize) -> CapacitySnapshot {
         CapacitySnapshot {
@@ -1856,6 +1885,100 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
         assert_eq!(history.status().available_to, Some(boot_t));
         let rollup = history.rollup(boot_t.saturating_sub(1), boot_t, 20);
         assert_eq!(value(&rollup.data.totals, "requests_total"), 15.0);
+    }
+
+    #[test]
+    fn canonical_persistence_health_degrades_on_changed_sample_and_checkpoint_poison() {
+        for (label, prime_first) in [("changed", false), ("checkpoint", true)] {
+            let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+            let handle = recorder.handle();
+            metrics::with_local_recorder(&recorder, || {
+                let dir = TestDir::new();
+                let history = Arc::new(History::open(dir.0.clone(), 0, capacity(40)).unwrap());
+                let timestamp = history.boot_t;
+                let path = dir.0.join("history-v1.jsonl");
+
+                assert_eq!(history.status().persistence, "ok", "{label}: fresh store");
+                if prime_first {
+                    history.append(timestamp, SNAPSHOT, capacity(40));
+                }
+                let before_failure = fs::read(&path).unwrap();
+                history
+                    .canonical
+                    .as_ref()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .arm_test_runtime_partial_append_once();
+
+                let logs = Arc::new(Mutex::new(Vec::new()));
+                let writer = logs.clone();
+                let subscriber = tracing_subscriber::fmt()
+                    .with_ansi(false)
+                    .without_time()
+                    .with_target(false)
+                    .with_max_level(tracing::Level::ERROR)
+                    .with_writer(move || SharedWriter(writer.clone()))
+                    .finish();
+                tracing::subscriber::with_default(subscriber, || {
+                    history.append(timestamp, SNAPSHOT, capacity(40));
+                    assert_eq!(
+                        history.status().persistence,
+                        "degraded",
+                        "{label}: first failed durable append degrades persistence"
+                    );
+                    assert_eq!(
+                        history.inner.lock().unwrap().points.len(),
+                        if prime_first { 2 } else { 1 }
+                    );
+                    let after_failed_tick = fs::read(&path).unwrap();
+                    assert!(
+                        after_failed_tick.starts_with(&before_failure),
+                        "{label}: partial append preserves existing canonical bytes"
+                    );
+
+                    history.append(timestamp, SNAPSHOT, capacity(40));
+                    assert_eq!(
+                        fs::read(&path).unwrap(),
+                        after_failed_tick,
+                        "{label}: later poisoned tick adds no bytes"
+                    );
+                });
+
+                let log = String::from_utf8(logs.lock().unwrap().clone()).unwrap();
+                assert_eq!(
+                    log.matches("canonical history persistence degraded")
+                        .count(),
+                    1,
+                    "{label}: only the first poison transition is an error"
+                );
+                assert!(matches!(
+                    history
+                        .canonical
+                        .as_ref()
+                        .unwrap()
+                        .lock()
+                        .unwrap()
+                        .append_sample(timestamp, canonical_capacity(&[40]), Vec::new()),
+                    Err(store::WriteError::Poisoned)
+                ));
+                assert_eq!(
+                    handle
+                        .render()
+                        .lines()
+                        .find(|line| line.starts_with("nimproxy_history_persistence_degraded ")),
+                    Some("nimproxy_history_persistence_degraded 1"),
+                    "{label}: the no-label gauge remains degraded"
+                );
+
+                let restarted = History::open(dir.0.clone(), 0, capacity(40)).unwrap();
+                assert_eq!(
+                    restarted.status().persistence,
+                    "ok",
+                    "{label}: only a fresh store after restart can return to ok"
+                );
+            });
+        }
     }
 
     async fn wait_for_canonical_compaction_idle(history: &Arc<History>, label: &str) {
