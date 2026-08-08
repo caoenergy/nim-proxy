@@ -34,7 +34,7 @@ jobs:
         run: |
           python3 scripts/check_agent_guide.py --selftest
           python3 scripts/check_agent_guide.py
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master (toolchain via input)
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master (toolchain via input)
         with:
           toolchain: stable
           components: rustfmt, clippy
@@ -148,12 +148,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master (toolchain via input)
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master (toolchain via input)
         with:
           toolchain: stable
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7 # v2.85.0
+      - uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2.85.5
         with:
           tool: cargo-llvm-cov
       # The e2e suite spawns the real binary; the test harness forwards the
@@ -183,7 +183,7 @@ jobs:
       # minimum, not stable. Keep this toolchain in lockstep with
       # `rust-version` in Cargo.toml.
       - run: rm rust-toolchain.toml
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master (toolchain via input)
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master (toolchain via input)
         with:
           toolchain: "1.87"
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -281,7 +281,7 @@ jobs:
       # new low-noise rules can't block unrelated PRs.
       - name: zizmor (SARIF → code scanning)
         uses: zizmorcore/zizmor-action@6fc4b006235f201fdab3722e17240ab420d580e5 # v0.6.1
-      - uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7 # v2.85.0
+      - uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2.85.5
         with:
           tool: zizmor@1 # gate pinned to the same major the SARIF action bundles
       - name: zizmor (gate on high severity)
