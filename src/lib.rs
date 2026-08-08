@@ -545,15 +545,22 @@ pub async fn run() {
 
     // Metrics history: finish indexing before the listener can report ready,
     // then sample the registry with contemporaneous pool capacity.
+    let history_capacity = capacity_snapshot(&pool.read().unwrap());
     let hist = match history::History::open(
         data_dir.clone(),
         stored.history.days,
-        capacity_snapshot(&pool.read().unwrap()),
+        history_capacity.clone(),
     ) {
         Ok(history) => Arc::new(history),
         Err(error) => {
-            eprintln!("\nnim-proxy cannot start: canonical history is unusable: {error}\n");
-            std::process::exit(1);
+            tracing::error!(
+                "canonical history unavailable: {error}; continuing with in-memory history"
+            );
+            Arc::new(history::History::load(
+                None,
+                stored.history.days,
+                history_capacity,
+            ))
         }
     };
     {
