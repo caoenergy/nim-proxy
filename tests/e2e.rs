@@ -4590,6 +4590,17 @@ async fn setup_wizard_claims_the_proxy() {
         & 0o777;
     assert_eq!(mode, 0o600, "config store must be 0600");
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let history_mode = std::fs::metadata(proxy.data_dir.join("history-v1.jsonl"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(history_mode, 0o600, "canonical history file must be 0600");
+    }
+
     // The wizard is gone once the proxy is claimed.
     assert_eq!(
         client()
