@@ -4451,7 +4451,8 @@ async fn fresh_boot_enters_setup_mode() {
 }
 
 /// Native setup fallback uses the same atomic claim as the JavaScript wizard
-/// and redirects with the newly minted session instead of exposing JSON.
+/// and redirects with the newly minted session without losing a one-time
+/// client secret in the bodyless response.
 #[tokio::test]
 async fn noscript_setup_form_claims_the_proxy() {
     let proxy = start_proxy_fresh().await;
@@ -4462,7 +4463,6 @@ async fn noscript_setup_form_claims_the_proxy() {
             ("password", "noscript-password"),
             ("nim_key", "noscript-nim-key"),
             ("nim_rpm", "40"),
-            ("create_client_key", "default"),
         ])
         .send()
         .await
@@ -4470,6 +4470,14 @@ async fn noscript_setup_form_claims_the_proxy() {
     assert_eq!(response.status(), 303);
     assert_eq!(response.headers()["location"], "/");
     assert!(response.headers().contains_key("set-cookie"));
+    let stored: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(proxy.data_dir.join("config.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        stored["client_auth"]["keys"].as_array().unwrap().len(),
+        0,
+        "native setup must not mint a one-time client secret it cannot display"
+    );
     assert_eq!(
         client()
             .get(proxy.url("/setup"))

@@ -77,7 +77,10 @@ is running, bootstrap, config, catalog, or application-asset failure reveals onl
 later application request. Login and setup have a `<noscript>` reveal for the
 existing server forms only: Login continues its form POST, while Setup submits
 its existing fields through the same atomic claim path and receives its session
-redirect. The dashboard has no such fallback and remains session-gated.
+redirect. The native Setup projection never requests a client API key because
+the redirect has no response body in which to reveal its one-time secret; the
+authenticated dashboard remains the secret-creation surface. The dashboard has
+no such fallback and remains session-gated.
 
 ## Proof
 

@@ -6210,6 +6210,9 @@ async function main() {
       hiddenSteps: [...document.querySelectorAll('#step2, #step3')].filter((step) =>
         getComputedStyle(step).display === 'none'
       ).length,
+      clientKeyField: !!document.querySelector('[name="create_client_key"]'),
+      clientKeyOptionVisible: !!document.querySelector('#step3 .opt') &&
+        getComputedStyle(document.querySelector('#step3 .opt')).display !== 'none',
       unnamed: [...document.querySelectorAll('input[name]')].filter((input) =>
         !input.labels?.length && !input.getAttribute('aria-label') && !input.getAttribute('aria-labelledby')
       ).map((input) => input.name),
@@ -6222,6 +6225,8 @@ async function main() {
       problems.push('server form is missing credentials or submit control');
     if (IS_SETUP && !fallback.key) problems.push('setup form is missing the NIM key control');
     if (IS_SETUP && fallback.hiddenSteps) problems.push('setup form retains hidden required sections');
+    if (IS_SETUP && (fallback.clientKeyField || fallback.clientKeyOptionVisible))
+      problems.push('setup form could mint a one-time client secret that the redirect cannot display');
     if (fallback.unnamed.length) problems.push(`server form has unnamed controls: ${fallback.unnamed.join(', ')}`);
     await cleanupRun();
     if (problems.length) {

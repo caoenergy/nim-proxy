@@ -1874,11 +1874,6 @@
       "desc": "Checkbox label. {key} and {endpoint} are fixed machine values.",
       "hash": "fc1a3704"
     },
-    "setup.step3.mintkey_noscript": {
-      "en": "Create client API key",
-      "desc": "Static checkbox label when JavaScript is unavailable.",
-      "hash": "020c2257"
-    },
     "setup.step3.mintwarn": {
       "en": "Without a client API key, {b}all{/b} /v1 requests are rejected. Create one in Settings → Access & keys, or change API authentication to Open (no authentication).",
       "desc": "{b}...{/b} emphasizes that every /v1 request is rejected until the operator creates a client key or explicitly opens API authentication.",

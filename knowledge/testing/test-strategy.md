@@ -111,7 +111,8 @@ that proof.
   --noscript` disable script execution in real Chromium and require the
   corresponding visible native form and its original POST action; the setup
   E2E form-claim test then proves the form uses the same atomic setup
-  transition and session redirect.
+  transition and session redirect without minting an undisclosed one-time
+  client secret.
   Startup probes cover bootstrap/catalog failure, malformed schema, delayed
   catalog resolution, request-stage stylesheet loss on all three pages, and a
   later operator application-script loss. They require failed CSS to leave the

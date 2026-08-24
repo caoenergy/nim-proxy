@@ -118,8 +118,6 @@ struct NoScriptSetupForm {
     nim_key: Option<String>,
     #[serde(default)]
     nim_rpm: Option<usize>,
-    #[serde(default)]
-    create_client_key: Option<String>,
 }
 
 impl From<NoScriptSetupForm> for SetupReq {
@@ -138,7 +136,9 @@ impl From<NoScriptSetupForm> for SetupReq {
             password: form.password,
             base_url: form.base_url,
             nim_keys,
-            create_client_key: form.create_client_key.map(|name| CreateClientKey { name }),
+            // A client secret is shown exactly once. The native form redirects,
+            // so it must not mint a secret it has no safe response body to show.
+            create_client_key: None,
         }
     }
 }

@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   canonicalizable spellings such as `en-us`; `en-XA` remains test-only.
 - Embedded invariant pages are assembled once per process. Login and setup
   retain their catalog gate for JavaScript clients while exposing their native
-  server forms when JavaScript is unavailable.
+  server forms when JavaScript is unavailable. Native setup redirects into the
+  authenticated dashboard without minting a client secret it cannot display.
 - Settings retains the validated-model confirmation after successfully adding a
   NIM API key. History diagnostics now report actual inferred counter resets.
 - Dashboard polling now distinguishes a render failure from a lost proxy
@@ -65,7 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **A complete canonical English presentation source.** The 450-message
+- **A complete canonical English presentation source.** The 449-message
   `src/web/locales/en-US.json` catalog owns repository text across the
   dashboard, Settings, setup, login, dialogs, validation, empty/error states,
   and accessibility labels. Model ids, client names, publisher names, API
