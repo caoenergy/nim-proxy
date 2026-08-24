@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unavailable rather than invalid.
 - The Models finish-reason table includes the emitted `function_call` category,
   so all six bounded finish-reason shares are represented.
+- Dashboard history rollups now release the config-store mutex after taking
+  their small configuration snapshot. Sampler append/fsync work runs on the
+  Tokio blocking pool and is joined before the next sample or shutdown.
 
 ## [0.6.6] - 2026-08-01
 

@@ -35,7 +35,7 @@ use axum::routing::{any, get, post};
 use axum::Router;
 use bytes::Bytes;
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
-use tokio::sync::Mutex;
+use tokio::sync::{watch, Mutex};
 
 use auth::Admin;
 use dispatch::Dispatcher;
@@ -210,6 +210,30 @@ struct DashboardQuery {
     points: Option<usize>,
 }
 
+/// The dashboard needs only these durable settings. Capture them before any
+/// history work so a long rollup cannot delay an operator save or auth lookup.
+struct DashboardConfigSnapshot {
+    auth: bool,
+    config_revision: u64,
+    default_window_days: u64,
+    retention_days: u64,
+    slo_target_percent: f64,
+}
+
+fn dashboard_config_snapshot(
+    store: &std::sync::Mutex<config::StoredConfig>,
+    config_revision: &AtomicU64,
+) -> DashboardConfigSnapshot {
+    let stored = store.lock().unwrap();
+    DashboardConfigSnapshot {
+        auth: stored.client_auth.mode == config::Mode::Keyed,
+        config_revision: config_revision.load(std::sync::atomic::Ordering::SeqCst),
+        default_window_days: stored.dashboard.default_window_days,
+        retention_days: stored.history.days,
+        slo_target_percent: stored.dashboard.slo_target_percent,
+    }
+}
+
 #[utoipa::path(
     get,
     path = "/api/dashboard",
@@ -225,15 +249,12 @@ async fn api_dashboard(
     State(state): State<Arc<AppState>>,
     api::ApiQuery(query): api::ApiQuery<DashboardQuery>,
 ) -> Response {
-    let stored = state.store.lock().unwrap();
-    let config_revision = state
-        .config_revision
-        .load(std::sync::atomic::Ordering::SeqCst);
+    let config = dashboard_config_snapshot(&state.store, &state.config_revision);
     let now = unix_now();
     let following_now = query.to.is_none();
-    let requested_from = query.from.unwrap_or_else(|| {
-        now.saturating_sub(stored.dashboard.default_window_days.saturating_mul(86_400))
-    });
+    let requested_from = query
+        .from
+        .unwrap_or_else(|| now.saturating_sub(config.default_window_days.saturating_mul(86_400)));
     let requested_to = query.to.unwrap_or(now);
     if requested_from >= requested_to {
         return (
@@ -252,7 +273,7 @@ async fn api_dashboard(
         query.points.unwrap_or(288).clamp(2, 1000),
     );
     axum::Json(api::DashboardResponse {
-        config_revision,
+        config_revision: config.config_revision,
         diagnostics: rollup.diagnostics,
         history_revision: rollup.data.history_revision,
         latest: rollup.data.latest,
@@ -262,13 +283,13 @@ async fn api_dashboard(
             available_from: rollup.data.available_from,
             available_to: rollup.data.available_to,
             complete: rollup.complete,
-            default_window_days: stored.dashboard.default_window_days,
+            default_window_days: config.default_window_days,
             effective_from: rollup.data.effective_from,
             effective_to: rollup.data.effective_to,
             following_now,
             requested_from,
             requested_to,
-            retention_days: stored.history.days,
+            retention_days: config.retention_days,
         },
     })
     .into_response()
@@ -287,28 +308,25 @@ async fn api_dashboard(
 async fn api_dashboard_now(
     State(state): State<Arc<AppState>>,
 ) -> axum::Json<api::DashboardNowResponse> {
-    let stored = state.store.lock().unwrap();
-    let config_revision = state
-        .config_revision
-        .load(std::sync::atomic::Ordering::SeqCst);
+    let config = dashboard_config_snapshot(&state.store, &state.config_revision);
     let pool = state.pool();
     let now = unix_now();
     let current = state.history.current(now, || state.prometheus.render());
     let history_revision = current.tail.base_history_revision;
     axum::Json(api::DashboardNowResponse {
-        auth: stored.client_auth.mode == config::Mode::Keyed,
+        auth: config.auth,
         available_from: current.available_from,
         available_to: current.available_to,
         capacity_rpm: pool.capacity_rpm(),
-        config_revision,
-        default_window_days: stored.dashboard.default_window_days,
+        config_revision: config.config_revision,
+        default_window_days: config.default_window_days,
         history_revision,
         lanes: pool.len(),
         metrics: current.metrics,
-        retention_days: stored.history.days,
+        retention_days: config.retention_days,
         rpms: pool.rpms(),
         sampled_at: now,
-        slo_target_percent: stored.dashboard.slo_target_percent,
+        slo_target_percent: config.slo_target_percent,
         started: state.started,
         tail: current.tail,
         version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -574,7 +592,8 @@ pub async fn run() {
             0.0
         },
     );
-    {
+    let (sampler_shutdown, sampler_shutdown_rx) = watch::channel(false);
+    let sampler = {
         let hist = hist.clone();
         let prom = prometheus.clone();
         let pool = pool.clone();
@@ -583,16 +602,25 @@ pub async fn run() {
             .parse()
             .expect("HISTORY_SAMPLE_SECS");
         tokio::spawn(async move {
+            let mut sampler_shutdown_rx = sampler_shutdown_rx;
             loop {
-                hist.append(
-                    unix_now(),
-                    &prom.render(),
-                    capacity_snapshot(&pool.read().unwrap()),
-                );
-                tokio::time::sleep(Duration::from_secs(sample_secs.max(1))).await;
+                let snapshot = prom.render();
+                let capacity = {
+                    let pool = pool.read().unwrap();
+                    capacity_snapshot(&pool)
+                };
+                hist.append_async(unix_now(), &snapshot, capacity).await;
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(sample_secs.max(1))) => {}
+                    changed = sampler_shutdown_rx.changed() => {
+                        if changed.is_err() || *sampler_shutdown_rx.borrow() {
+                            break;
+                        }
+                    }
+                }
             }
-        });
-    }
+        })
+    };
 
     let state = Arc::new(AppState {
         dispatch: Dispatcher::new(pool.clone()),
@@ -699,8 +727,9 @@ pub async fn run() {
     tracing::info!("dashboard         http://localhost:{port}/  (metrics at /metrics)");
     tracing::info!("listening on      {addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await.expect("bind");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async {
+    let graceful_sampler_shutdown = sampler_shutdown.clone();
+    let server = axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
             // Docker sends SIGTERM on stop; terminals send SIGINT.
             let ctrl_c = tokio::signal::ctrl_c();
             #[cfg(unix)]
@@ -718,7 +747,29 @@ pub async fn run() {
                 let _ = ctrl_c.await;
             }
             tracing::info!("shutting down");
+            let _ = graceful_sampler_shutdown.send(true);
         })
-        .await
-        .expect("server");
+        .await;
+    let _ = sampler_shutdown.send(true);
+    sampler.await.expect("history sampler task");
+    server.expect("server");
+}
+
+#[cfg(test)]
+mod dashboard_lock_tests {
+    use super::*;
+
+    #[test]
+    fn dashboard_config_snapshot_releases_the_store_before_history_work() {
+        let store = std::sync::Mutex::new(config::StoredConfig::default());
+        let revision = AtomicU64::new(7);
+        let snapshot = dashboard_config_snapshot(&store, &revision);
+
+        assert_eq!(snapshot.default_window_days, 30);
+        assert_eq!(snapshot.config_revision, 7);
+        assert!(
+            store.try_lock().is_ok(),
+            "dashboard history work must not retain the config-store mutex"
+        );
+    }
 }

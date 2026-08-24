@@ -175,6 +175,13 @@ clears pending work, and prevents a stale worker from renaming its candidate.
 Compaction runs on a blocking worker behind the canonical store mutex, never
 on the request dispatcher or rate-limiter path.
 
+The sampler also executes one complete append/checkpoint transaction on
+Tokio's blocking pool. Its Tokio task awaits and observes that task before it
+can sleep into the next cadence or finish shutdown, preserving file order,
+flush/sync durability, poison/degraded reporting, and the existing mutex-based
+serialization with compaction. A blocking-task panic is logged and marks
+persistence degraded rather than becoming a detached failure.
+
 For each eligible epoch, canonical compaction retains the epoch boot, the
 latest full sample strictly before the cutoff as its boundary baseline, and
 every record at or after the cutoff, all in original physical order. An epoch

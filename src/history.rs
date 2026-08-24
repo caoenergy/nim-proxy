@@ -565,6 +565,9 @@ enum CompactionTestPoint {
 #[cfg(test)]
 type CompactionTestHook = Arc<dyn Fn(CompactionTestPoint) + Send + Sync>;
 
+#[cfg(test)]
+type AppendBlockingTestHook = Arc<dyn Fn() + Send + Sync>;
+
 pub struct History {
     inner: Mutex<HistoryInner>,
     file: Option<PathBuf>,
@@ -582,8 +585,13 @@ pub struct History {
     boot_t: u64,
     initial_capacity: CapacitySnapshot,
     canonical: Option<Mutex<store::HistoryStore>>,
+    /// A joined blocking append failed before the store could report its own
+    /// poison state. Keep the existing operator persistence signal honest.
+    append_task_failed: AtomicBool,
     #[cfg(test)]
     compaction_test_hook: Mutex<Option<CompactionTestHook>>,
+    #[cfg(test)]
+    append_blocking_test_hook: Mutex<Option<AppendBlockingTestHook>>,
 }
 
 impl History {
@@ -849,8 +857,11 @@ impl History {
             boot_t,
             initial_capacity,
             canonical: None,
+            append_task_failed: AtomicBool::new(false),
             #[cfg(test)]
             compaction_test_hook: Mutex::new(None),
+            #[cfg(test)]
+            append_blocking_test_hook: Mutex::new(None),
         };
         history.persist_boot_marker();
         let inner = history.inner.lock().unwrap();
@@ -932,7 +943,7 @@ impl History {
                 let store = store.lock().unwrap();
                 (
                     store.file_bytes().unwrap_or(0),
-                    if store.poisoned() {
+                    if store.poisoned() || self.append_task_failed.load(Ordering::SeqCst) {
                         "degraded".to_owned()
                     } else {
                         "ok".to_owned()
@@ -1049,6 +1060,43 @@ impl History {
             {
                 self.request_compaction(t.saturating_sub(days.saturating_mul(86_400)));
             }
+        }
+    }
+
+    /// Persist one sampler snapshot on Tokio's blocking pool. The caller waits
+    /// for completion so sample ordering and persistence-health reporting stay
+    /// identical to the synchronous append contract.
+    pub async fn append_async(
+        self: &Arc<Self>,
+        t: u64,
+        snapshot: &str,
+        capacity: CapacitySnapshot,
+    ) {
+        let history = self.clone();
+        let snapshot = snapshot.to_owned();
+        let result = tokio::task::spawn_blocking(move || {
+            #[cfg(test)]
+            history.invoke_append_blocking_test_hook();
+            history.append(t, &snapshot, capacity);
+        })
+        .await;
+        if let Err(error) = result {
+            self.append_task_failed.store(true, Ordering::SeqCst);
+            metrics::gauge!("nimproxy_history_persistence_degraded").set(1.0);
+            tracing::error!("history append blocking task failed: {error}");
+        }
+    }
+
+    #[cfg(test)]
+    fn set_append_blocking_test_hook(&self, hook: AppendBlockingTestHook) {
+        *self.append_blocking_test_hook.lock().unwrap() = Some(hook);
+    }
+
+    #[cfg(test)]
+    fn invoke_append_blocking_test_hook(&self) {
+        let hook = self.append_blocking_test_hook.lock().unwrap().clone();
+        if let Some(hook) = hook {
+            hook();
         }
     }
 
@@ -1675,8 +1723,91 @@ mod tests {
             boot_t: 0,
             initial_capacity: capacity(40),
             canonical: None,
+            append_task_failed: AtomicBool::new(false),
             compaction_test_hook: Mutex::new(None),
+            append_blocking_test_hook: Mutex::new(None),
         })
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn async_append_uses_the_blocking_pool_and_waits_for_persistence() {
+        let directory = std::env::temp_dir().join(format!(
+            "nim-proxy-history-append-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        let history = Arc::new(History::open(directory.clone(), 0, capacity(40)).unwrap());
+        let (sampler_tx, sampler_rx) = std::sync::mpsc::channel();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let release_rx = Arc::new(Mutex::new(release_rx));
+        history.set_append_blocking_test_hook(Arc::new(move || {
+            started_tx.send(std::thread::current().id()).unwrap();
+            release_rx.lock().unwrap().recv().unwrap();
+        }));
+
+        let appending = {
+            let history = history.clone();
+            tokio::spawn(async move {
+                sampler_tx.send(std::thread::current().id()).unwrap();
+                history
+                    .append_async(
+                        100,
+                        "# TYPE requests_total counter\nrequests_total 1\n",
+                        capacity(40),
+                    )
+                    .await;
+            })
+        };
+        let sampler_thread = sampler_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("sampler must reach its Tokio worker");
+        let persistence_thread = started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("append must reach the blocking persistence task");
+        assert_ne!(
+            persistence_thread, sampler_thread,
+            "append must not use a Tokio worker"
+        );
+        assert!(
+            !appending.is_finished(),
+            "append must await the blocking persistence task before completing"
+        );
+        release_tx.send(()).unwrap();
+        appending.await.unwrap();
+        assert!(directory.join("history-v1.jsonl").exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn async_append_panic_marks_persistence_degraded() {
+        let directory = std::env::temp_dir().join(format!(
+            "nim-proxy-history-append-panic-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        let history = Arc::new(History::open(directory.clone(), 0, capacity(40)).unwrap());
+        history.set_append_blocking_test_hook(Arc::new(|| panic!("append test panic")));
+
+        history
+            .append_async(
+                100,
+                "# TYPE requests_total counter\nrequests_total 1\n",
+                capacity(40),
+            )
+            .await;
+
+        assert_eq!(
+            history.revision(),
+            0,
+            "a failed append has no indexed sample"
+        );
+        assert_eq!(
+            history.status().persistence,
+            "degraded",
+            "a joined append-task failure is visible to operators"
+        );
+        fs::remove_dir_all(directory).unwrap();
     }
 
     const SNAPSHOT: &str = r#"

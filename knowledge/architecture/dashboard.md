@@ -132,6 +132,12 @@ Two authenticated typed endpoints replace browser parsing of raw exposition:
   current capacity/config/SLO, retained bounds, revisions, and the
   post-persistence counter tail.
 
+Each handler captures exactly its required config-store values and revision in
+one short mutex scope, then releases that mutex before calling `History::rollup`
+or `History::current`. A concurrent save may therefore govern a later response,
+but each response's config-derived fields and revision remain one coherent
+snapshot and history work cannot delay settings or authentication lookups.
+
 The retired `/api/history` and `/dash/config.json` routes are absent. Raw
 `/metrics` remains available to authenticated Prometheus scrapers, not as a
 dashboard transport.
