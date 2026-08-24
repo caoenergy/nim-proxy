@@ -160,7 +160,7 @@ def tagged(source: str, attr: str):
 
 NEVER_TRANSLATE = {
     "TTFT", "TPOT", "tok", "tok/s", "Tools/req", "Msgs/req", "p50 / p95", "p50", "p95",
-    "requests / min", "req/min", "rpm", "JSON", "HTTP", "POST", "SLO", "NIM",
+    "requests / min", "req/min", "rpm", "JSON", "HTTP", "POST", "SLO", "NIM", "PROXY",
     "/v1", "%", "429", "401", "503", "504", "5xx",
     "requests/min", "nvapi-\u2026", "npk_\u2026",
 }
@@ -258,6 +258,19 @@ def looks_like_prose(text: str) -> bool:
     if len(words) >= 2 and re.match(r"^[A-Za-z]", text):
         return True
     return bool(re.match(r"^[A-Z][a-z]{2,}$", text))
+
+
+def looks_like_visible_prose(text: str) -> bool:
+    """Human-facing markup also owns short/lowercase repository prose.
+
+    A quoted bare token remains ambiguous code machinery, but text between
+    rendered tags is already at a display sink. Keep frozen wire/status/unit
+    values and role controls out of scope while catching short labels such as
+    ``up``/``OK`` and ordinary lower-case copy such as ``total``/``copy``.
+    """
+    if looks_like_prose(text) or frozen(text):
+        return looks_like_prose(text)
+    return bool(re.fullmatch(r"[A-Za-z]{3,}", text) or text in {"up", "OK"})
 
 
 UI_TEXT_ELEMENTS = {"button", "label", "span", "summary"}
@@ -617,9 +630,11 @@ def lint_untagged(name: str, raw: str) -> list:
         # must still expose "validated" rather than vanishing as `${`-bearing.
         lit = INTERPOLATION.sub("\x00", m.group(0))
         for node in TEXT_NODE.findall(lit):
+            if "\x00" not in node:
+                continue
             for piece in node.split("\x00"):
                 piece = piece.strip()
-                if piece and looks_like_prose(piece):
+                if piece and looks_like_visible_prose(piece):
                     errors.append(unowned_ui_string(name, scanned, m.start(),
                         f"prose {piece!r} in template markup — route it through message()"))
 
@@ -687,6 +702,11 @@ class _MarkupTextOwnership(HTMLParser):
         text = data.strip()
         if "\x00" in text or "${" in text:
             return
+        if any(
+            "data-urolepick" in attrs or "data-urole" in attrs
+            for _, attrs in self.stack
+        ):
+            return
         interactive_label = (
             any(tag in UI_TEXT_ELEMENTS for tag, _ in self.stack)
             and not any(
@@ -695,10 +715,10 @@ class _MarkupTextOwnership(HTMLParser):
             )
             and not frozen(text)
         )
-        relevant = interactive_label and not looks_like_prose(text)
+        relevant = (interactive_label and not looks_like_prose(text)) or looks_like_visible_prose(text)
         if not text or (self.interactive_only and not relevant):
             return
-        if not self.interactive_only and not (looks_like_prose(text) or relevant):
+        if not self.interactive_only and not relevant:
             return
         if any(any(key.startswith("data-i18n") for key in attrs) for _, attrs in self.stack):
             return
@@ -906,6 +926,8 @@ SELFTEST_CASES = [
     ("colon-prefixed-prose", "const z = `<div>note: some fresh label</div>`;", "unowned-ui-string"),
     ("template-text-node", "const z = `<div><span>Some fresh label</span></div>`;", "unowned-ui-string"),
     ("lowercase-template-text", "const z = `<span>total</span>`;", "unowned-ui-string"),
+    ("noninteractive-template-lowercase", "const z = `<div>total</div>`;", "unowned-ui-string"),
+    ("noninteractive-template-short", "const z = `<p>up </p>`;", "unowned-ui-string"),
     ("short-template-text", "const z = `<button>OK</button>`;", "unowned-ui-string"),
     ("lowercase-nested-template-text", "const z = `<button><span>copy</span></button>`;", "unowned-ui-string"),
     ("display-call-arg", "prow('Some fresh label here', 1);", "unowned-ui-string"),
@@ -926,6 +948,7 @@ SELFTEST_CASES = [
     ("frozen-unit", "const z = 'tok/s';", None),
     ("template-frozen-unit", "const z = `<span>tok/s</span>`;", None),
     ("template-status-code", "const z = `<span>429</span>`;", None),
+    ("template-url", "const z = `<span>https://fixture.invalid</span>`;", None),
     ("template-machine-role", "const z = `<button data-urolepick=\"user\">user</button>`;", None),
     ("lowercase-token", "const z = 'sticky';", None),
 ]
@@ -951,6 +974,8 @@ SOURCE_CLASS_SELFTESTS = [
      '\n<div data-i18n="probe"><span>Owned descendant label</span></div>', lint_untagged_markup, None),
     ("lowercase-button-markup", "tests/fixtures/locales/unowned-button.html",
      "\n<button>copy</button>", lint_untagged_markup, 2),
+    ("lowercase-static-markup", "tests/fixtures/locales/unowned-label.html",
+     "\n<div>total</div>", lint_untagged_markup, 2),
     ("short-button-markup", "tests/fixtures/locales/unowned-button.html",
      "\n<button>OK</button>", lint_untagged_markup, 2),
     ("lowercase-nested-button-markup", "tests/fixtures/locales/unowned-button.html",

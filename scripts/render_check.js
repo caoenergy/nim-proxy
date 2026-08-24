@@ -2561,7 +2561,57 @@ function requestMatches(request, matcher) {
   return true;
 }
 
-function interactionCoverageProblems(observations) {
+function newSortableHeaderCoverage() {
+  return { rendered: new Map(), observed: new Map() };
+}
+
+function recordSortableHeaderCoverage(coverage, rowId, report) {
+  for (const identity of report.rendered || []) {
+    if (!coverage.rendered.has(identity)) coverage.rendered.set(identity, new Set());
+    coverage.rendered.get(identity).add(rowId);
+  }
+  for (const observation of report.observed || []) {
+    coverage.observed.set(observation.identity, { ...observation, rowId });
+  }
+}
+
+function sortableHeaderCoverageProblems(coverage) {
+  const problems = [];
+  if (!coverage || !(coverage.rendered instanceof Map) || !(coverage.observed instanceof Map)) {
+    return [{ check: 'ui-sortable-header:coverage', detail: 'missing aggregate coverage' }];
+  }
+  for (const [identity] of coverage.rendered) {
+    const observed = coverage.observed.get(identity);
+    if (!observed) {
+      problems.push({ check: `ui-sortable-header:${identity}`, detail: 'rendered sortable header was not exercised' });
+      continue;
+    }
+    const attempts = observed.attempts || [];
+    const targets = attempts.map(attempt => attempt.targetDirection).sort();
+    const directions = attempts.map(attempt => attempt.observedDirection).sort();
+    if (canonicalJson(targets) !== canonicalJson(['ascending', 'descending'])
+        || canonicalJson(directions) !== canonicalJson(['ascending', 'descending'])) {
+      problems.push({ check: `ui-sortable-header:${identity}`, detail: `directions ${canonicalJson(attempts)} do not cover ascending and descending` });
+    }
+    if (attempts.some(attempt => attempt.targetDirection !== attempt.observedDirection)) {
+      problems.push({ check: `ui-sortable-header:${identity}`, detail: `sort direction state was inverted: ${canonicalJson(attempts)}` });
+    }
+    if (attempts.some(attempt => attempt.reacquired !== true)) {
+      problems.push({ check: `ui-sortable-header:${identity}`, detail: 'live header was not reacquired after its table re-rendered' });
+    }
+    if (observed.rowsBefore !== observed.rowsAfter) {
+      problems.push({ check: `ui-sortable-header:${identity}`, detail: 'sorting changed row data rather than only row order' });
+    }
+  }
+  for (const [identity] of coverage.observed) {
+    if (!coverage.rendered.has(identity)) {
+      problems.push({ check: `ui-sortable-header:${identity}`, detail: 'exercise named a header absent from the rendered matrix' });
+    }
+  }
+  return problems;
+}
+
+function interactionCoverageProblems(observations, sortableHeaderCoverage = null) {
   const problems = [];
   for (const detail of fixtureRecipeProblems(INTERACTION_ROWS)) {
     problems.push({ check: 'ui-fixture-recipe-drift', detail });
@@ -2640,6 +2690,7 @@ function interactionCoverageProblems(observations) {
       }
     }
   }
+  if (sortableHeaderCoverage) problems.push(...sortableHeaderCoverageProblems(sortableHeaderCoverage));
   return problems;
 }
 
@@ -2757,6 +2808,56 @@ function interactionSelftest() {
     [row.id, completeObservation(row)]));
   if (interactionCoverageProblems(complete).length) {
     failures.push('complete observation set did not pass');
+  }
+
+  const completeSortableCoverage = newSortableHeaderCoverage();
+  recordSortableHeaderCoverage(completeSortableCoverage, 'selftest', {
+    rendered: ['table-selftest:data-i=0'],
+    observed: [{
+      identity: 'table-selftest:data-i=0',
+      attempts: [
+        { targetDirection: 'ascending', observedDirection: 'ascending', reacquired: true },
+        { targetDirection: 'descending', observedDirection: 'descending', reacquired: true },
+      ],
+      rowsBefore: '["row-a","row-b"]',
+      rowsAfter: '["row-a","row-b"]',
+    }],
+  });
+  if (sortableHeaderCoverageProblems(completeSortableCoverage).length) {
+    failures.push('complete sortable-header coverage did not pass');
+  }
+  const expectSortableHeaderFailure = (name, coverage, identity) => {
+    if (!sortableHeaderCoverageProblems(coverage)
+      .some(problem => problem.check === `ui-sortable-header:${identity}`)) {
+      failures.push(`${name} did not name ui-sortable-header:${identity}`);
+    }
+  };
+  {
+    const missing = JSON.parse(JSON.stringify({
+      rendered: [...completeSortableCoverage.rendered.keys()],
+      observed: [...completeSortableCoverage.observed.entries()],
+    }));
+    const coverage = newSortableHeaderCoverage();
+    for (const identity of missing.rendered) coverage.rendered.set(identity, new Set(['selftest']));
+    expectSortableHeaderFailure('missing sortable-header exercise', coverage, 'table-selftest:data-i=0');
+  }
+  {
+    const inverted = JSON.parse(JSON.stringify({
+      rendered: [...completeSortableCoverage.rendered.keys()],
+      observed: [...completeSortableCoverage.observed.entries()],
+    }));
+    const coverage = newSortableHeaderCoverage();
+    for (const identity of inverted.rendered) coverage.rendered.set(identity, new Set(['selftest']));
+    for (const [identity, observation] of inverted.observed) coverage.observed.set(identity, observation);
+    coverage.observed.get('table-selftest:data-i=0').attempts[1].observedDirection = 'ascending';
+    expectSortableHeaderFailure('inverted sortable-header direction', coverage, 'table-selftest:data-i=0');
+  }
+  {
+    const unobserved = newSortableHeaderCoverage();
+    recordSortableHeaderCoverage(unobserved, 'selftest', {
+      rendered: ['table-unobserved:data-i=7'], observed: [],
+    });
+    expectSortableHeaderFailure('unobserved sortable-header addition', unobserved, 'table-unobserved:data-i=7');
   }
 
   const expectStableFailure = (name, observations, rowId) => {
@@ -4541,7 +4642,7 @@ const SETTINGS_PRESTATE_PANEL = new Map([
 
 async function runMatrixContext({
   browser, row, role, configuredProxy, setupProxy, visualCapture = null,
-  visualLocale = null, skipDomAssertions = false,
+  visualLocale = null, skipDomAssertions = false, sortableHeaderCoverage = null,
 }) {
   const origin = row.fixtures.page === 'setup' ? setupProxy.origin : configuredProxy.origin;
   const pagePath = row.fixtures.page === 'dashboard'
@@ -5034,6 +5135,9 @@ async function runMatrixContext({
         drain,
       });
     }
+    if (sortableHeaderCoverage && row.fixtures.page === 'dashboard') {
+      await exerciseUnobservedSortableHeaders(browser, sessionId, sortableHeaderCoverage, row.id);
+    }
     run.pageErrors.push(...await evaluateRaw(
       browser,
       sessionId,
@@ -5117,23 +5221,81 @@ function mergeMatrixContextObservations(row, observations) {
   return merged;
 }
 
+async function exerciseUnobservedSortableHeaders(browser, sessionId, coverage, rowId) {
+  const alreadyObserved = [...coverage.observed.keys()];
+  const report = await evaluateRaw(browser, sessionId, `(() => {
+    const alreadyObserved = new Set(${JSON.stringify(alreadyObserved)});
+    const rowData = table => JSON.stringify([...table.querySelectorAll('tbody tr')]
+      .map(row => [...row.cells].map(cell => cell.textContent).join('\\u001f')).sort());
+    const direction = header => {
+      if (!header || !header.classList.contains('on')) return null;
+      const text = header.textContent.trimEnd();
+      return text.endsWith('↑') ? 'ascending' : text.endsWith('↓') ? 'descending' : null;
+    };
+    const identityOf = header => {
+      const table = header.closest('table');
+      const owner = table && table.parentElement && table.parentElement.parentElement;
+      return (owner && owner.id ? owner.id : 'missing-table-id') + ':data-i=' + header.dataset.i;
+    };
+    const rendered = [...document.querySelectorAll('th[data-i]')].map(identityOf);
+    const observed = [];
+    for (const identity of rendered) {
+      if (alreadyObserved.has(identity)) continue;
+      const [ownerId, index] = identity.split(':data-i=');
+      const owner = document.getElementById(ownerId);
+      const table = owner && owner.querySelector('table');
+      const findLive = () => owner && owner.querySelector('th[data-i="' + index + '"]');
+      const before = table ? rowData(table) : null;
+      const attempts = [];
+      let live = findLive();
+      for (let step = 0; step < 2 && live; step += 1) {
+        const previous = live;
+        previous.click();
+        live = findLive();
+        const observedDirection = direction(live);
+        const targetDirection = step === 0
+          ? observedDirection
+          : attempts[0].observedDirection === 'ascending' ? 'descending' : 'ascending';
+        attempts.push({
+          targetDirection,
+          observedDirection,
+          reacquired: live !== previous,
+        });
+      }
+      observed.push({
+        identity,
+        attempts,
+        rowsBefore: before,
+        rowsAfter: owner && owner.querySelector('table')
+          ? rowData(owner.querySelector('table'))
+          : null,
+      });
+    }
+    return { rendered, observed };
+  })()`);
+  recordSortableHeaderCoverage(coverage, rowId, report);
+}
+
 async function runInteractionMatrix({ browser, configuredProxy, tmpdir }) {
   const setupDir = path.join(tmpdir, 'matrix-setup');
   fs.mkdirSync(setupDir);
   const setupProxy = await startProxy(setupDir, true);
   const observations = new Map();
+  const sortableHeaderCoverage = newSortableHeaderCoverage();
   try {
     for (const row of INTERACTION_ROWS) {
       const roles = Array.isArray(row.fixtures.role) ? row.fixtures.role : [row.fixtures.role];
       const contexts = [];
       for (const role of roles) {
-        contexts.push(await runMatrixContext({
+        const observation = await runMatrixContext({
           browser,
           row,
           role,
           configuredProxy,
           setupProxy,
-        }));
+          sortableHeaderCoverage,
+        });
+        contexts.push(observation);
       }
       observations.set(row.id, mergeMatrixContextObservations(row, contexts));
       if (process.env.DEBUG) console.log(`[matrix] ${row.id} observed`);
@@ -5143,7 +5305,7 @@ async function runInteractionMatrix({ browser, configuredProxy, tmpdir }) {
       throw new Error('interaction setup proxy did not exit');
     }
   }
-  return observations;
+  return { observations, sortableHeaderCoverage };
 }
 
 function prepareVisualArtifactDir() {
@@ -7237,13 +7399,16 @@ async function main() {
   }
 
   let matrixObservations = null;
+  let sortableHeaderCoverage = null;
   if (allStates) {
     await browser.send('Target.closeTarget', { targetId });
-    matrixObservations = await runInteractionMatrix({
+    const matrix = await runInteractionMatrix({
       browser,
       configuredProxy: proxy,
       tmpdir,
     });
+    matrixObservations = matrix.observations;
+    sortableHeaderCoverage = matrix.sortableHeaderCoverage;
   }
 
   await cleanupRun();
@@ -7255,7 +7420,7 @@ async function main() {
     : `rendered ${TABS.length} tabs, hovered ${hovered.length} charts`);
 
   if (allStates) {
-    const problems = interactionCoverageProblems(matrixObservations);
+    const problems = interactionCoverageProblems(matrixObservations, sortableHeaderCoverage);
     if (problems.length) {
       console.error(`\nFAIL — ${problems.length} browser interaction row(s) disagreed`);
       for (const { check, detail } of problems) {
