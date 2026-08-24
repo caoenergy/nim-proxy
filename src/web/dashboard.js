@@ -188,7 +188,7 @@ function renderOverview(c) {
 
   const perfBlock = (label, note, p50, p95, fmtV) => {
     const scale = Math.max(isFinite(p50) ? p50 : 0, isFinite(p95) ? p95 : 0, 1e-9) * 1.25;
-    const pos = v => Math.min(96, v / scale * 100).toFixed(1) + '%';
+    const pos = v => stylePercent(v / scale * 100, 1, 96);
     return `<div><div data-style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px">` +
       `<span data-style="font-size:12.5px;color:var(--ink-2)">${escapeHtml(label)}</span><span data-style="font:400 10px var(--mono);color:var(--ink-3)">${escapeHtml(note)}</span></div>` +
       `<div class="ptrack">${isFinite(p50) ? `<div class="p50" data-style="left:${pos(p50)}"></div>` : ''}${isFinite(p95) ? `<div class="p95" data-style="left:${pos(p95)}"></div>` : ''}</div>` +
@@ -444,7 +444,7 @@ function renderReliability(c) {
     <div class="hbig" data-style="color:${met ? 'var(--green-lt)' : 'var(--red)'};margin-top:8px">${availTxt}</div>
     <div data-style="font:400 11px var(--mono);color:var(--ink-3);margin-top:2px">${escapeHtml(sloLine(slo, eligible, met))}</div>
     <div data-style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink-25);margin:16px 0 6px">${escapeHtml(catalogMessage('dashboard.reliability.hero.error_budget'))}<span data-style="font:500 11px var(--mono);color:var(--ink-2)">${escapeHtml(catalogMessage('dashboard.reliability.hero.budget_used', { pct: budget.toFixed(0) + '%' }))}</span></div>
-    <div class="htrack"><span data-style="width:${budget.toFixed(0)}%;background:${budget >= 100 ? 'var(--red)' : 'var(--amber)'}"></span></div>`;
+    <div class="htrack"><span data-style="width:${stylePercent(budget)};background:${budget >= 100 ? 'var(--red)' : 'var(--amber)'}"></span></div>`;
 
   /* hero: where time goes (median-ish composition from windowed averages) */
   const qw = qwN ? qwS / qwN : 0, ttft = ttftN ? ttftS / ttftN : NaN, up = upN ? upS / upN : NaN;
@@ -462,7 +462,7 @@ function renderReliability(c) {
       `<div data-style="display:flex;align-items:baseline;gap:10px"><span class="hlabel">${escapeHtml(catalogMessage('dashboard.reliability.latency.title'))}</span>
       <span class="note" data-style="font:400 10px var(--mono);color:var(--ink-3)">${escapeHtml(catalogMessage('dashboard.reliability.latency.note'))}</span>
       <span data-style="margin-left:auto;font-size:22px;font-weight:600;letter-spacing:-0.5px">${secs(tot)}</span></div>
-      <div class="segbar" data-style="height:16px;margin:16px 0 12px">${segs.map(s => `<div data-style="width:${(s.v / tot * 100).toFixed(1)}%;background:${s.color}"></div>`).join('')}</div>
+      <div class="segbar" data-style="height:16px;margin:16px 0 12px">${segs.map(s => `<div data-style="width:${stylePercent(s.v / tot * 100, 1)};background:${s.color}"></div>`).join('')}</div>
       <div class="seglegend">${segs.map(s => `<div class="sl"><span class="sw" data-style="background:${s.color}"></span><div><div class="sll">${escapeHtml(s.label)}</div><div class="slv">${secs(s.v)}</div></div></div>`).join('')}</div>`;
   }
 
@@ -490,9 +490,9 @@ function renderReliability(c) {
       <div><div class="tlabel">${escapeHtml(catalogMessage('dashboard.common.row.active_now'))}</div><div data-style="font-size:26px;font-weight:600;color:var(--green)">${fmt(act)}</div></div>
       <div><div class="tlabel">${escapeHtml(catalogMessage('dashboard.common.row.queued'))}</div><div data-style="font-size:26px;font-weight:600;color:var(--amber)">${fmt(que)}</div></div>
     </div>
-    <div class="segbar" data-style="height:8px;border-radius:99px;margin:12px 0">${act + que ? `<div data-style="width:${(act / (act + que) * 100)}%;background:var(--green)"></div><div data-style="width:${(que / (act + que) * 100)}%;background:var(--amber)"></div>` : '<div data-style="width:100%;background:var(--track)"></div>'}</div>
+    <div class="segbar" data-style="height:8px;border-radius:99px;margin:12px 0">${act + que ? `<div data-style="width:${stylePercent(act / (act + que) * 100)};background:var(--green)"></div><div data-style="width:${stylePercent(que / (act + que) * 100)};background:var(--amber)"></div>` : '<div data-style="width:100%;background:var(--track)"></div>'}</div>
     <div data-style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--hairline)"><span class="tlabel">${escapeHtml(catalogMessage('dashboard.common.row.error_rate'))}</span><span data-style="font:600 15px var(--mono);color:${errN ? 'var(--red)' : 'var(--ink-3)'}">${wreq ? pctOf(errN / wreq, 1) : NO_VALUE}</span></div>
-    <div class="segbar" data-style="height:6px;border-radius:99px;margin-top:8px;gap:1px">${taxCounts.length ? taxCounts.map(x => `<div data-style="width:${(x.n / taxTot * 100).toFixed(1)}%;background:${x.color}" title="${escapeHtml(x.label)}: ${fmt(x.n)}"></div>`).join('') : '<div data-style="width:100%;background:var(--track)"></div>'}</div>`;
+    <div class="segbar" data-style="height:6px;border-radius:99px;margin-top:8px;gap:1px">${taxCounts.length ? taxCounts.map(x => `<div data-style="width:${stylePercent(x.n / taxTot * 100, 1)};background:${x.color}" title="${escapeHtml(x.label)}: ${fmt(x.n)}"></div>`).join('') : '<div data-style="width:100%;background:var(--track)"></div>'}</div>`;
 
   lineChart($('chart-reqrate'), [{ name: catalogMessage('dashboard.chart.requests_per_min'), color: MED, pts: reqPts, area: true }], fmt, { height: 150 });
   const outcomeSeries = [
@@ -723,7 +723,7 @@ function renderCapacity(c) {
     <span class="note" data-style="font:400 10px var(--mono);color:var(--ink-3)">${escapeHtml(catalogMessage('dashboard.capacity.note.current_vs_capacity'))}</span>
     <span data-style="margin-left:auto;font-size:30px;font-weight:600;letter-spacing:-1px;color:${capColor}">${Math.round(satPct * 100)}%</span></div>
     <div data-style="position:relative;height:20px;background:var(--track);border-radius:6px;overflow:hidden;margin:16px 0 8px">
-      <div data-style="position:absolute;inset:0;width:${(satPct * 100).toFixed(1)}%;background:linear-gradient(90deg,var(--green-dk),var(--green));border-radius:6px"></div>
+      <div data-style="position:absolute;inset:0;width:${stylePercent(satPct * 100, 1)};background:linear-gradient(90deg,var(--green-dk),var(--green));border-radius:6px"></div>
     </div>
     <div data-style="display:flex;justify-content:space-between;font:400 11px var(--mono);color:var(--ink-3)">
       <span data-style="color:var(--ink-2)">${fmt(rpmNow)} / ${fmt(capacity)} rpm</span>
@@ -908,8 +908,13 @@ function updateScope() {
   }
 }
 
-function syncFollowControl(offline = false) {
-  if (offline) {
+function syncFollowControl(fault = false) {
+  if (fault === 'render') {
+    $('live').className = 'live fault';
+    setMessageText($('liveText'), 'dashboard.nav.live.render_failed');
+    return;
+  }
+  if (fault) {
     $('live').className = 'live down';
     setMessageText($('liveText'), 'dashboard.nav.live.disconnected');
     return;
@@ -944,6 +949,7 @@ let pollingNow = false;
 async function pollNow() {
   if (pollingNow) return;
   pollingNow = true;
+  let rendering = false;
   try {
     const response = await fetch('/api/dashboard/now');
     if (!response.ok) throw new Error(`now ${response.status}`);
@@ -983,13 +989,14 @@ async function pollNow() {
         rebuildSamples();
       }
     }
+    rendering = true;
     render();
     syncFollowControl();
     setMessageText($('uptime'), 'dashboard.common.uptime', {
       duration: ago(next.sampled_at - cfg.started),
     });
   } catch {
-    syncFollowControl(true);
+    syncFollowControl(rendering ? 'render' : true);
   } finally {
     pollingNow = false;
   }

@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Settings retains the validated-model confirmation after successfully adding a
   NIM API key. History diagnostics now report actual inferred counter resets.
+- Dashboard polling now distinguishes a render failure from a lost proxy
+  connection. Dynamic style application isolates rejected nodes, percentage
+  style keys remain bounded, publisher/client identity maps reject inherited
+  keys, and stacked-chart tooltips resolve catalog series ids like their
+  legends.
 
 ## [0.6.6] - 2026-08-01
 

@@ -735,6 +735,11 @@
       "desc": "Live-tail control: the range is pinned to fixed bounds.",
       "hash": "f288738f"
     },
+    "dashboard.nav.live.render_failed": {
+      "en": "Render failed",
+      "desc": "Live-tail control: the dashboard could not render a successfully received update, distinct from losing contact with the proxy.",
+      "hash": "b704deeb"
+    },
     "dashboard.nav.live.tooltip": {
       "en": "Click to freeze/resume the selected time range",
       "hash": "c08680d1"

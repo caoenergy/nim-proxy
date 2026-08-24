@@ -17,6 +17,8 @@ const dynamicStyleClasses = new Map();
 const dynamicStyleKeysByClass = new Map();
 let dynamicStyleSequence = 0;
 let dynamicStyleCompactions = 0;
+const stylePercent = (value, digits = 0, maximum = 100) =>
+  `${Math.max(0, Math.min(maximum, Number.isFinite(value) ? value : 0)).toFixed(digits)}%`;
 function operatorStyleSheet() {
   const sheet = [...document.styleSheets].find(candidate =>
     candidate.href?.endsWith('/assets/operator/operator.css'));
@@ -75,23 +77,28 @@ function applyDynamicStyles(root) {
   if (root.nodeType === Node.ELEMENT_NODE && root.hasAttribute('data-style')) nodes.push(root);
   root.querySelectorAll?.('[data-style]').forEach(node => nodes.push(node));
   for (const node of nodes) {
-    const declarations = [];
-    for (const declaration of node.dataset.style.split(';')) {
-      const colon = declaration.indexOf(':');
-      if (colon < 1) continue;
-      const property = declaration.slice(0, colon).trim();
-      const value = declaration.slice(colon + 1).trim();
-      if (!DYNAMIC_STYLE_PROPERTIES.has(property))
-        throw new Error(`forbidden dynamic style property: ${property}`);
-      if (!value || /[{}@]/.test(value) || /url\s*\(/i.test(value) || !CSS.supports(property, value))
-        throw new Error(`forbidden dynamic style value for ${property}`);
-      declarations.push(`${property}:${value}`);
+    try {
+      const declarations = [];
+      for (const declaration of node.dataset.style.split(';')) {
+        const colon = declaration.indexOf(':');
+        if (colon < 1) continue;
+        const property = declaration.slice(0, colon).trim();
+        const value = declaration.slice(colon + 1).trim();
+        if (!DYNAMIC_STYLE_PROPERTIES.has(property))
+          throw new Error(`forbidden dynamic style property: ${property}`);
+        if (!value || /[{}@]/.test(value) || /url\s*\(/i.test(value) || !CSS.supports(property, value))
+          throw new Error(`forbidden dynamic style value for ${property}`);
+        declarations.push(`${property}:${value}`);
+      }
+      const name = dynamicStyleClass(declarations);
+      for (const old of [...node.classList].filter(value => value.startsWith('dynamic-style-')))
+        node.classList.remove(old);
+      node.classList.add(name);
+      node.removeAttribute('data-style');
+    } catch (_) {
+      // Invalid inert input remains inert; later nodes from this same root are
+      // independent declarations and must still be considered.
     }
-    const name = dynamicStyleClass(declarations);
-    for (const old of [...node.classList].filter(value => value.startsWith('dynamic-style-')))
-      node.classList.remove(old);
-    node.classList.add(name);
-    node.removeAttribute('data-style');
   }
 }
 const styleObserver = new MutationObserver(records => {
@@ -722,7 +729,7 @@ function stackChart(el, series, unitFmt, opts = {}) {
       dots += `<circle cx="${mx}" cy="${Y(cum[k][bi])}" r="3" fill="${bands[k].color}" stroke="${css('--bg')}" stroke-width="1.5"/>`;
     let html = `<div class="t">${at(STAMP, ts[bi])}</div>`;
     for (const s of bands)
-      html += `<div class="row"><span><i class="sw" data-style="background:${s.color}"></i>${escapeHtml(s.name)}</span><b>${unitFmt(bandAt(s, bi))}</b></div>`;
+      html += `<div class="row"><span><i class="sw" data-style="background:${s.color}"></i>${escapeHtml(s.nameId ? catalogMessage(s.nameId) : s.name)}</span><b>${unitFmt(bandAt(s, bi))}</b></div>`;
     html += `<div class="row" data-style="border-top:1px solid var(--hairline);margin-top:3px;padding-top:4px"><span>${escapeHtml(catalogMessage('dashboard.common.tooltip.total'))}</span><b>${unitFmt(totals[bi])}</b></div>`;
     hoverg.innerHTML = xh.outerHTML + dots;
     hoverg.setAttribute('visibility', 'visible');
@@ -795,7 +802,7 @@ function barList(el, entries, fmtV, maxV) {
   const max = maxV || Math.max(1e-9, ...vals.map(e => e.v));
   el.innerHTML = entries.map(e =>
     `<div class="brow"><span class="bname" title="${escapeHtml(e.name)}">${escapeHtml(e.label ?? e.name)}</span>` +
-    `<span class="btrack">${isFinite(e.v) ? `<span data-style="width:${Math.max(2, e.v / max * 100).toFixed(0)}%;background:${e.color}"></span>` : ''}</span>` +
+    `<span class="btrack">${isFinite(e.v) ? `<span data-style="width:${stylePercent(Math.max(2, e.v / max * 100))};background:${e.color}"></span>` : ''}</span>` +
     `<span class="bval">${escapeHtml(e.vtext ?? (isFinite(e.v) ? fmtV(e.v) : '–'))}</span></div>`).join('');
 }
 
@@ -806,7 +813,7 @@ function leaderList(el, entries, fmtV) {
   el.innerHTML = entries.map(e =>
     `<div class="lead">${e.chip}<div class="lbody">` +
     `<div class="lrow"><span class="lname" title="${escapeHtml(e.name)}">${escapeHtml(e.label ?? e.name)}</span><span class="lval">${fmtV(e.v)}</span></div>` +
-    `<div class="ltrack"><span data-style="width:${Math.max(2, e.v / max * 100).toFixed(0)}%;background:${e.color}"></span></div>` +
+    `<div class="ltrack"><span data-style="width:${stylePercent(Math.max(2, e.v / max * 100))};background:${e.color}"></span></div>` +
     `</div></div>`).join('');
 }
 
@@ -919,7 +926,8 @@ const PUBLISHERS = {
 };
 function publisher(model) {
   const ns = model.includes('/') ? model.split('/')[0] : '';
-  const p = PUBLISHERS[ns.toLowerCase()];
+  const key = ns.toLowerCase();
+  const p = Object.prototype.hasOwnProperty.call(PUBLISHERS, key) ? PUBLISHERS[key] : null;
   if (p) return p;
   const name = ns || 'unknown';
   return { name, slug: null, color: '#5A6150' };
@@ -945,7 +953,10 @@ function hueFor(name) {
   for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
   return `hsl(${h % 360} 58% 62%)`;
 }
-const clientColor = c => CLIENT_COLORS[String(c).toLowerCase()] || hueFor(c);
+const clientColor = c => {
+  const key = String(c).toLowerCase();
+  return Object.prototype.hasOwnProperty.call(CLIENT_COLORS, key) ? CLIENT_COLORS[key] : hueFor(c);
+};
 /* model line color: publisher brand, deduped per chart via hash fallback */
 function seriesColors(models) {
   const used = new Set();

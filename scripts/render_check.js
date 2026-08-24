@@ -6472,6 +6472,105 @@ async function main() {
       console.error(`[dynamic-style-bound] FAIL — ${dynamicStyleFailure}`);
       throw reportedFailure();
     }
+
+    /* Keep a rejected inert declaration from poisoning a later descendant in
+       the same inserted root, and keep untrusted metric ratios from creating
+       unbounded CSS rule keys.
+       These probes use the served shared/dashboard helpers, not copies. */
+    const renderIsolationFailure = await evaluate(`
+      (async () => {
+        const problems = [];
+        const styleRoot = document.createElement('div');
+        styleRoot.innerHTML = '<i data-style="not-an-allowed-property:1px"></i>'
+          + '<i data-style="width:17px"></i>';
+        document.body.appendChild(styleRoot);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const [rejected, later] = styleRoot.children;
+        if (later.hasAttribute('data-style')
+            || ![...later.classList].some(name => name.startsWith('dynamic-style-')))
+          problems.push('a rejected nested data-style node prevented a later node in its mutation-batch root from styling');
+        styleRoot.remove();
+
+        const percentHost = document.createElement('div');
+        document.body.appendChild(percentHost);
+        barList(percentHost, [{ name: 'probe', v: 10000, color: 'var(--green)' }], fmt, 100);
+        const percentageDeclaration = percentHost.querySelector('[data-style]')?.dataset.style || '';
+        if (!/^width:100(?:\\.0+)?%;/.test(percentageDeclaration))
+          problems.push('percentage-derived dynamic style key was not bounded with the established rounding rule: ' + percentageDeclaration);
+        percentHost.remove();
+
+        const chart = document.createElement('div');
+        document.body.appendChild(chart);
+        const points = [{ t: 1000, v: 1 }, { t: 2000, v: 2 }];
+        stackChart(chart, [{ name: 'wrong tooltip name', nameId: 'dashboard.chart.success', color: 'var(--green)', pts: points }], fmt);
+        const svg = chart.querySelector('svg');
+        const rect = svg.getBoundingClientRect();
+        svg.dispatchEvent(new MouseEvent('mousemove', {
+          bubbles: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2,
+        }));
+        if (!tip.textContent.includes(message('dashboard.chart.success'))
+            || tip.textContent.includes('wrong tooltip name'))
+          problems.push('stackChart tooltip did not resolve nameId like its legend');
+        hideTip();
+        chart.remove();
+
+        const inheritedPublisher = publisher('constructor/model');
+        if (inheritedPublisher.name !== 'constructor' || inheritedPublisher.color !== '#5A6150')
+          problems.push('publisher lookup accepted an inherited prototype key');
+        if (!String(clientColor('constructor')).startsWith('hsl('))
+          problems.push('client lookup accepted an inherited prototype key');
+
+        const savedFetch = window.fetch;
+        try {
+          window.fetch = async () => ({
+            ok: true,
+            json: async () => { throw new Error('parse isolation probe'); },
+          });
+          await pollNow();
+          if ($('liveText').textContent.trim() !== 'Disconnected')
+            problems.push('response parse failure was reported as ' + $('liveText').textContent.trim() + ' instead of Disconnected');
+        } finally {
+          window.fetch = savedFetch;
+        }
+
+        const savedRange = rangeData;
+        try {
+          rangeData = null;
+          window.fetch = async input => {
+            const url = String(input);
+            if (url.endsWith('/api/dashboard/now'))
+              return { ok: true, json: async () => structuredClone(nowData) };
+            if (url.includes('/api/dashboard?'))
+              return { ok: false, status: 503 };
+            throw new Error('unexpected range-failure probe request: ' + url);
+          };
+          await pollNow();
+          if ($('liveText').textContent.trim() !== 'Disconnected')
+            problems.push('range fetch failure was reported as ' + $('liveText').textContent.trim() + ' instead of Disconnected');
+        } finally {
+          rangeData = savedRange;
+          window.fetch = savedFetch;
+          render();
+          syncFollowControl();
+        }
+
+        const savedRender = render;
+        try {
+          render = () => { throw new Error('render isolation probe'); };
+          await pollNow();
+          if ($('liveText').textContent.trim() !== 'Render failed')
+            problems.push('render exception was reported as ' + $('liveText').textContent.trim() + ' instead of Render failed');
+        } finally {
+          render = savedRender;
+          render();
+          syncFollowControl();
+        }
+        return problems.join('; ');
+      })()`);
+    if (renderIsolationFailure) {
+      console.error(`[render-isolation] FAIL — ${renderIsolationFailure}`);
+      throw reportedFailure();
+    }
   }
 
   /* Exercise the page's real ID/descriptor runtime. Static self-tests cover

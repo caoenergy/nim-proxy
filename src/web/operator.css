@@ -48,6 +48,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .live .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px rgba(118,185,0,0.7); flex: none; }
 .live.idle { color: var(--ink-3); } .live.idle .dot { background: var(--ink-3); box-shadow: none; }
 .live.down { color: var(--red); } .live.down .dot { background: var(--red); box-shadow: 0 0 8px rgba(227,104,104,0.7); }
+.live.fault { color: var(--amber); } .live.fault .dot { background: var(--amber); box-shadow: 0 0 8px rgba(232,180,72,0.7); }
 
 /* ---------- main column ---------- */
 .main {
