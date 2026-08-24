@@ -6,6 +6,16 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-08-24] lint — make standard vocabulary executable end to end
+
+The Capacity dashboard count is the number of enabled NIM API keys, not the
+number of requests currently occupying slots. The canonical user-facing term
+is therefore **Enabled keys**; the stable catalog id remains unchanged. The
+standard-vocabulary mapping now records `Slots in use` as retired, and the
+existing i18n checker reads that mapping table to reject any linter retirement
+the decision calls standard. Its positive and inverted self-tests preserve the
+authority boundary without adding a second vocabulary source.
+
 ## [2026-08-01] maintenance — publish the v0.6.6 upgrade boundary
 
 Task 17 reconciles the user-facing release documents with the completed

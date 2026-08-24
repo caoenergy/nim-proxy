@@ -89,7 +89,7 @@ breaking change and was not taken.
 | exhaustions/min | **Capacity errors/min** |
 | Lane | **Key** |
 | Lane slot | **Slot** |
-| Lane slots · Now | **Slots in use** |
+| Slots in use | **Enabled keys** |
 | Rate-limit pressure | **Throttling** |
 | Rate-limit benches / Other benches | **Rate-limit cooldowns** / **Upstream error cooldowns** |
 | 429s this window | **Rate limited (429)** |
@@ -149,8 +149,9 @@ retired `rpm total` run.
 - **Two checks, no new script.** `locale_v1.py` gains `frozen`: for every
   never-translate token the source uses, the translation must contain it
   verbatim. `check_i18n.py` gains `lint_retired_vocabulary`: no catalog value
-  may reintroduce a retired term. Both reuse the single `NEVER_TRANSLATE`
-  definition rather than copying it.
+  may reintroduce a retired term, and it reads this mapping table to reject a
+  linter retirement that the table calls standard. Both reuse the single
+  `NEVER_TRANSLATE` definition rather than copying it.
 - **The retired list is multi-word and distinctive on purpose.** Single
   ambiguous words are excluded: `window` is still correct for the rate-limit
   window, `lane` for metric labels, and `Open`/`bench` have unrelated

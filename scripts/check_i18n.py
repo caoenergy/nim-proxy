@@ -32,6 +32,7 @@ from html.parser import HTMLParser
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 EMERGENCY_TEXT = "NIM Proxy interface failed to load."
+STANDARD_VOCABULARY = ROOT / "knowledge/decisions/standard-vocabulary.md"
 PAGE_SOURCES = {
     "src/web/dashboard.html": (
         "src/web/shared.js",
@@ -785,6 +786,46 @@ RETIRED = {
 }
 
 
+def mapping_standard_terms(markdown: str) -> set[str]:
+    """Read only the Standard column of the decision's vocabulary table.
+
+    The prose around the table is explanatory and may legitimately repeat a
+    retired term. The table is the executable authority: its second column is
+    the canonical replacement inventory that `RETIRED` must never contradict.
+    """
+    in_mapping = False
+    terms = set()
+    for line in markdown.splitlines():
+        if line == "### The mapping":
+            in_mapping = True
+            continue
+        if in_mapping and line.startswith("Kept as already standard:"):
+            break
+        if not in_mapping or not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) != 2 or cells == ["Retired", "Standard"]:
+            continue
+        if all(re.fullmatch(r"-+", cell) for cell in cells):
+            continue
+        terms.add(re.sub(r"[*`]", "", cells[1]).strip())
+    return terms
+
+
+def lint_vocabulary_authority(markdown: str, retired=None) -> list:
+    """Reject a linter retirement that the governing mapping calls standard."""
+    retired = RETIRED if retired is None else retired
+    standards = mapping_standard_terms(markdown)
+    if not standards:
+        return ["[vocabulary-authority] standard-vocabulary mapping table was not found"]
+    return [
+        "[vocabulary-authority] standard-vocabulary.md lists retired term "
+        f"{old!r} in its Standard column; lint replacement is {new!r}"
+        for old, new in retired.items()
+        if old in standards
+    ]
+
+
 def lint_retired_vocabulary(name: str, raw: str, catalog=None) -> list:
     """No shipped text may reintroduce a retired term.
 
@@ -1247,12 +1288,50 @@ def selftest() -> int:
     else:
         print("  ok  noncanonical-vocabulary  trips noncanonical-vocabulary")
 
+    authority_ok = lint_vocabulary_authority(
+        """### The mapping
+
+| Retired | Standard |
+|---|---|
+| Slots in use | **Enabled keys** |
+
+Kept as already standard: Capacity
+""",
+        {"Slots in use": "Enabled keys"},
+    )
+    if authority_ok:
+        failures.append(
+            "vocabulary-authority: canonical mapping unexpectedly failed "
+            f"{authority_ok!r}"
+        )
+    else:
+        print("  ok  vocabulary-authority     accepts canonical mapping")
+
+    authority_inverted = lint_vocabulary_authority(
+        """### The mapping
+
+| Retired | Standard |
+|---|---|
+| Lane slots · Now | **Slots in use** |
+
+Kept as already standard: Capacity
+""",
+        {"Slots in use": "Enabled keys"},
+    )
+    if not any("[vocabulary-authority]" in problem for problem in authority_inverted):
+        failures.append(
+            "vocabulary-authority: inverted mapping was accepted without the "
+            "required named check id"
+        )
+    else:
+        print("  ok  vocabulary-authority     rejects inverted mapping")
+
     if failures:
         print("\nselftest FAILED:")
         for f in failures:
             print("  -", f)
         return 1
-    total = len(SELFTEST_CASES) + len(SOURCE_CLASS_SELFTESTS) + len(SINK_SELFTEST_CASES)
+    total = len(SELFTEST_CASES) + len(SOURCE_CLASS_SELFTESTS) + len(SINK_SELFTEST_CASES) + 2
     print(f"\nselftest ok — {total} cases, every check observed to fail")
     return 0
 
@@ -1261,6 +1340,7 @@ def main() -> int:
     if "--selftest" in sys.argv[1:]:
         return selftest()
     errors = []
+    errors.extend(lint_vocabulary_authority(STANDARD_VOCABULARY.read_text()))
     referenced = set()
     catalog_path = ROOT / "src/web/locales/en-US.json"
     catalog = json.loads(catalog_path.read_text())["messages"]
