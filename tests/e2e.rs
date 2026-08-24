@@ -2349,6 +2349,71 @@ async fn streaming_deadline_stops_an_active_non_idle_stream() {
         "deadline surfaced: {body}"
     );
     assert!(started.elapsed() < Duration::from_secs(2));
+
+    let metrics = metrics(&proxy).await;
+    for field in [
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "cached_tokens",
+        "reasoning_tokens",
+    ] {
+        assert!(
+            metrics.contains(&format!(
+                r#"nimproxy_usage_observations_total{{field="{field}",result="unavailable"}} 1"#
+            )),
+            "deadline must finalize the no-usage observer once: {metrics}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn streaming_deadline_finalizes_early_usage_once_without_losing_measurements() {
+    let mock = start_mock().await;
+    mock.state.push(Behavior::ActiveStreamWithEarlyUsage(25));
+    let proxy = start_proxy_with(
+        &mock.url,
+        StoreOpts {
+            stream_idle_secs: 5,
+            ..Default::default()
+        },
+        &[],
+    )
+    .await;
+
+    let response = client()
+        .post(proxy.url("/v1/chat/completions"))
+        .header("x-nim-proxy-deadline-ms", "175")
+        .json(&chat_body("early-usage-deadline", true))
+        .send()
+        .await
+        .unwrap();
+    let body = read_sse(response).await;
+    assert!(
+        body.contains("deadline_exceeded"),
+        "deadline surfaced: {body}"
+    );
+
+    let metrics = metrics(&proxy).await;
+    for (field, result) in [
+        ("prompt_tokens", "measured"),
+        ("completion_tokens", "measured"),
+        ("total_tokens", "measured"),
+        ("cached_tokens", "unavailable"),
+        ("reasoning_tokens", "unavailable"),
+    ] {
+        assert!(
+            metrics.contains(&format!(
+                r#"nimproxy_usage_observations_total{{field="{field}",result="{result}"}} 1"#
+            )),
+            "deadline must retain the early {field} result exactly once: {metrics}"
+        );
+    }
+    assert!(
+        metrics.contains(r#"nimproxy_prompt_tokens_total{client="local",model="mock/model-a"} 7"#)
+            && metrics.contains(r#"nimproxy_completion_tokens_total{client="local",model="mock/model-a",source="usage"} 3"#),
+        "measured token counters survive the deadline: {metrics}"
+    );
 }
 
 #[tokio::test]

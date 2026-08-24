@@ -1323,6 +1323,17 @@ const DOM_CONTRACTS = {
           '#side [data-tab="settings"]',
         ],
       }),
+    domContract('complete-finish-reason-table', `(() => {
+      const table = document.querySelector('#table-finish');
+      const headers = Array.from(table?.querySelectorAll('thead th') || [])
+        .map(cell => cell.textContent.trim().replace(/ [↑↓]$/, ''));
+      const shares = Array.from(table?.querySelectorAll('tbody tr:first-child td') || []).slice(1)
+        .map(cell => Number.parseFloat(cell.textContent));
+      return { headers, shareTotal: Math.round(shares.reduce((sum, value) => sum + value, 0)) };
+    })()`, {
+      headers: ['Model', 'Completed', 'Function call', 'Truncated', 'Tool call', 'Filtered', 'Other'],
+      shareTotal: 100,
+    }),
   ],
   'navigation-settings-role-panels': [
     domContract('authorized-subnavigation-activates-visible-panel-by-role',

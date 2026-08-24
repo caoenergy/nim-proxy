@@ -746,6 +746,31 @@ mod tests {
                 25.0,
             ),
             labeled_metric(
+                "nimproxy_finish_reason_total",
+                &[("model", "fixture/alpha"), ("reason", "function_call")],
+                5.0,
+            ),
+            labeled_metric(
+                "nimproxy_finish_reason_total",
+                &[("model", "fixture/alpha"), ("reason", "length")],
+                5.0,
+            ),
+            labeled_metric(
+                "nimproxy_finish_reason_total",
+                &[("model", "fixture/alpha"), ("reason", "tool_calls")],
+                5.0,
+            ),
+            labeled_metric(
+                "nimproxy_finish_reason_total",
+                &[("model", "fixture/alpha"), ("reason", "content_filter")],
+                5.0,
+            ),
+            labeled_metric(
+                "nimproxy_finish_reason_total",
+                &[("model", "fixture/alpha"), ("reason", "other")],
+                5.0,
+            ),
+            labeled_metric(
                 "nimproxy_stream_requests_total",
                 &[("client", "fixture-client"), ("stream", "true")],
                 20.0,

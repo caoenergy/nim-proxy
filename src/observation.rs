@@ -79,19 +79,46 @@ pub(crate) enum FinishResult {
     Invalid,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum FinishReason {
-    ContentFilter,
-    FunctionCall,
-    Length,
-    Other,
-    Stop,
-    ToolCalls,
+macro_rules! finish_reasons {
+    ($($variant:ident => $label:literal),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        pub(crate) enum FinishReason {
+            $($variant,)+
+        }
+
+        impl FinishReason {
+            #[cfg(test)]
+            pub(crate) const ALL: [Self; finish_reasons!(@count $($variant),+)] = [
+                $(Self::$variant,)+
+            ];
+
+            pub(crate) const fn metric_label(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $label,)+
+                }
+            }
+        }
+    };
+    (@count $($variant:ident),+) => { <[()]>::len(&[$(finish_reasons!(@unit $variant)),+]) };
+    (@unit $variant:ident) => { () };
+}
+
+// This declaration owns every bounded finish-reason label. Its generated
+// exhaustive matcher and ALL list make a new emitted category visible to the
+// metric/dashboard contract test instead of silently dropping its share.
+finish_reasons! {
+    ContentFilter => "content_filter",
+    FunctionCall => "function_call",
+    Length => "length",
+    Other => "other",
+    Stop => "stop",
+    ToolCalls => "tool_calls",
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StreamOutcome {
     Completed,
+    Deadline,
     Disconnected,
     Truncated,
 }
@@ -112,6 +139,9 @@ enum SeenNumber {
 impl SeenNumber {
     fn observe(&mut self, value: Option<&serde_json::Value>) {
         let Some(value) = value else { return };
+        if value.is_null() {
+            return;
+        }
         let next = value.as_u64().map_or(Self::Invalid, Self::Value);
         *self = match (*self, next) {
             (Self::Absent, value) => value,
@@ -161,6 +191,7 @@ impl UsageState {
         self.total.observe(usage.get("total_tokens"));
         match usage.get("prompt_tokens_details") {
             None => {}
+            Some(serde_json::Value::Null) => {}
             Some(serde_json::Value::Object(details)) => {
                 self.cached.observe(details.get("cached_tokens"));
             }
@@ -168,6 +199,7 @@ impl UsageState {
         }
         match usage.get("completion_tokens_details") {
             None => {}
+            Some(serde_json::Value::Null) => {}
             Some(serde_json::Value::Object(details)) => {
                 self.reasoning.observe(details.get("reasoning_tokens"));
             }
@@ -408,8 +440,16 @@ impl ObservationState {
         }
     }
 
-    fn finish(self, incomplete: bool, estimate: Option<u64>) -> ResponseObservations {
-        let usage = if incomplete {
+    fn finish(
+        self,
+        outcome: StreamOutcome,
+        incomplete: bool,
+        estimate: Option<u64>,
+    ) -> ResponseObservations {
+        let usage = if matches!(
+            outcome,
+            StreamOutcome::Disconnected | StreamOutcome::Truncated
+        ) {
             unavailable_usage()
         } else {
             self.usage.finish(estimate)
@@ -568,8 +608,9 @@ impl SseObserver {
             self.remember_unterminated_indexes();
         }
         let incomplete = outcome != StreamOutcome::Completed || unterminated;
-        self.state
-            .finish(incomplete, (!incomplete).then_some(self.completion_events))
+        let estimate = (outcome == StreamOutcome::Completed && !unterminated)
+            .then_some(self.completion_events);
+        self.state.finish(outcome, incomplete, estimate)
     }
 
     #[cfg(test)]
@@ -583,7 +624,7 @@ pub(crate) fn observe_buffered(body: &[u8]) -> ResponseObservations {
     if let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) {
         state.observe_buffered(&value);
     }
-    state.finish(false, None)
+    state.finish(StreamOutcome::Completed, false, None)
 }
 
 fn unavailable_usage() -> UsageObservations {
@@ -875,7 +916,7 @@ mod tests {
             ),
             (
                 br#"{"usage":{"prompt_tokens":null,"completion_tokens":{}}}"#.as_slice(),
-                (Observation::Invalid, Observation::Invalid),
+                (Observation::Unavailable, Observation::Invalid),
             ),
         ] {
             let actual = observe_buffered(body);
@@ -895,6 +936,78 @@ mod tests {
         assert_eq!(actual.usage.total_tokens, Observation::Invalid);
         assert_eq!(actual.usage.cached_tokens, Observation::Invalid);
         assert_eq!(actual.usage.reasoning_tokens, Observation::Invalid);
+    }
+
+    #[test]
+    fn null_usage_fields_and_details_are_unavailable_but_non_null_malformed_values_are_invalid() {
+        // Mutation caught: JSON null is an explicit absence, not a malformed
+        // numeric/detail observation. Only non-null wrong types are Invalid.
+        let actual = observe_buffered(
+            br#"{"usage":{"prompt_tokens":null,"completion_tokens":null,"total_tokens":null,"prompt_tokens_details":null,"completion_tokens_details":null}}"#,
+        );
+        assert_eq!(actual.usage, super::unavailable_usage());
+
+        let actual = observe_buffered(
+            br#"{"usage":{"prompt_tokens":1,"prompt_tokens_details":[],"completion_tokens":2,"completion_tokens_details":false}}"#,
+        );
+        assert_eq!(actual.usage.prompt_tokens, Observation::Measured(1));
+        assert_eq!(actual.usage.completion_tokens, Observation::Measured(2));
+        assert_eq!(actual.usage.cached_tokens, Observation::Invalid);
+        assert_eq!(actual.usage.reasoning_tokens, Observation::Invalid);
+    }
+
+    #[test]
+    fn deadline_preserves_observed_usage_without_estimating_or_completing_the_stream() {
+        // Mutation caught: treating a deadline like a disconnect/truncation
+        // discards already-observed usage before its one final accounting.
+        let mut observer = SseObserver::default();
+        observer.push(b"data: {\"choices\":[{\"index\":0,\"delta\":{}}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":3,\"total_tokens\":10}}\n\n");
+        let actual = observer.finish(StreamOutcome::Deadline);
+        assert_eq!(actual.usage.prompt_tokens, Observation::Measured(7));
+        assert_eq!(actual.usage.completion_tokens, Observation::Measured(3));
+        assert_eq!(actual.usage.total_tokens, Observation::Measured(10));
+        assert_eq!(actual.usage.cached_tokens, Observation::Unavailable);
+        assert_eq!(actual.usage.reasoning_tokens, Observation::Unavailable);
+        assert_eq!(actual.finish_reasons[0].result, FinishResult::Unavailable);
+    }
+
+    #[test]
+    fn dashboard_finish_reason_fixture_covers_every_metric_label() {
+        // Mutation caught: a bounded finish label reaches the metric recorder
+        // but silently disappears from the dashboard table.
+        let dashboard = include_str!("web/dashboard.js");
+        let catalog = include_str!("web/locales/en-US.json");
+        assert_finish_dashboard_labels(dashboard);
+
+        let missing = dashboard.replacen("['function_call',", "['missing',", 1);
+        assert!(
+            std::panic::catch_unwind(|| assert_finish_dashboard_labels(&missing)).is_err(),
+            "the dashboard-label assertion must reject an inverted fixture"
+        );
+        assert!(catalog.contains("dashboard.models.finish.function_call"));
+    }
+
+    fn assert_finish_dashboard_labels(dashboard: &str) {
+        let finish = dashboard
+            .split_once("const FINISH = [")
+            .and_then(|(_, tail)| tail.split_once("];"))
+            .map(|(declaration, _)| declaration)
+            .expect("dashboard FINISH declaration");
+        let mut actual = finish
+            .split("['")
+            .skip(1)
+            .map(|entry| entry.split_once("',").expect("FINISH label").0)
+            .collect::<Vec<_>>();
+        let mut expected = FinishReason::ALL
+            .iter()
+            .map(|reason| reason.metric_label())
+            .collect::<Vec<_>>();
+        actual.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(
+            actual, expected,
+            "dashboard FINISH labels must exactly equal every emitted metric label"
+        );
     }
 
     #[test]
@@ -1215,7 +1328,7 @@ mod tests {
         );
         assert!(state.finishes_overflowed);
 
-        let actual = state.finish(false, None);
+        let actual = state.finish(StreamOutcome::Completed, false, None);
         assert_eq!(actual.finish_reasons.len(), MAX_INDEXED_STREAM_OBSERVATIONS);
         assert!(
             actual

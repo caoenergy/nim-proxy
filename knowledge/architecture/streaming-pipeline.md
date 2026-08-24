@@ -38,11 +38,14 @@ For a `stream: true` chat request:
    time rather than at the stall cutoff (with `stream_idle` 0 there is no
    cutoff, so this is what prevents hung upstreams from pinning slots until
    restart).
-7. **Account**: TTFT histogram at first chunk; finalized measured prompt,
+7. **Account**: TTFT histogram at first chunk; one owner finalizes the bounded
+   observer at every terminal stream exit. A deadline preserves usage already
+   observed before expiry without estimating the partial stream; disconnected
+   and truncated streams remain unavailable. Finalized measured prompt,
    measured/estimated completion (`source="usage"`/`"estimate"`), bounded
-   finish, reasoning, and tool counters at end; one access-log line per
-   request. Invalid/unavailable upstream observation values emit no existing
-   numeric/quality metric.
+   finish, reasoning, and tool counters are recorded once; one access-log line
+   is emitted per request. Invalid/unavailable upstream observation values emit
+   no existing numeric metric.
 
 Non-streaming requests use the same wait/retry loop minus heartbeats and pass
 the already-buffered JSON body to the same observation rules. An explicit deadline races the whole

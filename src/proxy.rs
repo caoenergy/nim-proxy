@@ -5,7 +5,7 @@
 //! request is measured on the way through (see README for the metric list).
 
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
@@ -21,8 +21,8 @@ use tokio_stream::wrappers::ReceiverStream;
 use crate::dispatch::Slot;
 use crate::governor::{self, ModelPermit};
 use crate::observation::{
-    observe_buffered, usage_observation_metrics, FinishReason, FinishResult, Observation,
-    ResponseObservations, SseObserver, StreamOutcome,
+    observe_buffered, usage_observation_metrics, FinishResult, Observation, ResponseObservations,
+    SseObserver, StreamOutcome,
 };
 use crate::{AppState, Config};
 
@@ -371,14 +371,7 @@ fn record_observations(
         counter!(
             "nimproxy_finish_reason_total",
             "model" => ctx.model.clone(),
-            "reason" => match reason {
-                FinishReason::ContentFilter => "content_filter",
-                FinishReason::FunctionCall => "function_call",
-                FinishReason::Length => "length",
-                FinishReason::Other => "other",
-                FinishReason::Stop => "stop",
-                FinishReason::ToolCalls => "tool_calls",
-            },
+            "reason" => reason.metric_label(),
         )
         .increment(1);
     }
@@ -395,6 +388,18 @@ fn record_observations(
         }
     }
     completion.map(|value| (value, source))
+}
+
+/// Take the one stream-owned observer, if upstream streaming began, and
+/// account it exactly once. The deadline arm and normal relay exits race for
+/// this ownership rather than duplicating observer state or metrics.
+fn finalize_sse_observer(
+    ctx: &Ctx,
+    observer: &Arc<Mutex<Option<SseObserver>>>,
+    outcome: StreamOutcome,
+) -> Option<(u64, &'static str)> {
+    let observations = observer.lock().unwrap().take()?.finish(outcome);
+    record_observations(ctx, &observations)
 }
 
 fn upstream_request(
@@ -737,6 +742,8 @@ fn streaming(
         gauge!("nimproxy_active_requests").increment(1.0);
         let deadline_tx = tx.clone();
         let deadline_ctx = ctx.clone();
+        let observer = Arc::new(Mutex::new(None));
+        let deadline_observer = observer.clone();
         let work = async move {
             let send = |b: &'static str| {
                 let tx = tx.clone();
@@ -853,7 +860,7 @@ fn streaming(
                     return;
                 }
 
-                let mut observer = SseObserver::default();
+                *observer.lock().unwrap() = Some(SseObserver::default());
                 let mut first_chunk: Option<Instant> = None;
                 let mut chunks = resp.bytes_stream();
                 loop {
@@ -872,14 +879,14 @@ fn streaming(
                     };
                     let next = tokio::select! {
                         _ = tx.closed() => {
-                            record_observations(&ctx, &observer.finish(StreamOutcome::Disconnected));
+                            finalize_sse_observer(&ctx, &observer, StreamOutcome::Disconnected);
                             record_request(&ctx, "disconnect");
                             return;
                         }
                         read = upstream_read => match read {
                             Ok(n) => n,
                             Err(_) => {
-                                record_observations(&ctx, &observer.finish(StreamOutcome::Truncated));
+                                finalize_sse_observer(&ctx, &observer, StreamOutcome::Truncated);
                                 tracing::warn!(model = %ctx.model, idle = ?cfg.stream_idle, "upstream stream stalled");
                                 record_request(&ctx, "stall");
                                 let _ = tx.send(Ok(sse_error("upstream stream stalled"))).await;
@@ -895,18 +902,20 @@ fn streaming(
                                 histogram!("nimproxy_ttft_seconds", "model" => ctx.model.clone())
                                     .record(sent_at.elapsed().as_secs_f64());
                             }
-                            observer.push(&b);
+                            observer
+                                .lock()
+                                .unwrap()
+                                .as_mut()
+                                .expect("stream observer initialized")
+                                .push(&b);
                             if tx.send(Ok(b)).await.is_err() {
-                                record_observations(
-                                    &ctx,
-                                    &observer.finish(StreamOutcome::Disconnected),
-                                );
+                                finalize_sse_observer(&ctx, &observer, StreamOutcome::Disconnected);
                                 record_request(&ctx, "disconnect");
                                 return; // client hung up
                             }
                         }
                         Err(e) => {
-                            record_observations(&ctx, &observer.finish(StreamOutcome::Truncated));
+                            finalize_sse_observer(&ctx, &observer, StreamOutcome::Truncated);
                             tracing::warn!(error = %e, "upstream stream broke mid-response");
                             record_request(&ctx, "stream_error");
                             let _ = tx.send(Ok(sse_error("upstream stream interrupted"))).await;
@@ -915,8 +924,7 @@ fn streaming(
                     }
                 }
 
-                let completion =
-                    record_observations(&ctx, &observer.finish(StreamOutcome::Completed));
+                let completion = finalize_sse_observer(&ctx, &observer, StreamOutcome::Completed);
                 if let (Some(first), Some((c, source))) = (first_chunk, completion) {
                     let gen_secs = first.elapsed().as_secs_f64();
                     if gen_secs > 0.1 && c > 0 {
@@ -938,6 +946,7 @@ fn streaming(
         if let Some(request_deadline) = request_deadline {
             tokio::select! {
                 _ = tokio::time::sleep_until(request_deadline.0.into()) => {
+                    finalize_sse_observer(&deadline_ctx, &deadline_observer, StreamOutcome::Deadline);
                     record_deadline(&deadline_ctx);
                     let _ = deadline_tx
                         .try_send(Ok(sse_error_with_code(

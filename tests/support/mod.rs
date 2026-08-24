@@ -39,6 +39,9 @@ pub enum Behavior {
     /// Stream a data event at this interval forever. Unlike `Hang`, this stays
     /// active often enough that an idle timeout must not be what stops it.
     ActiveStream(u64),
+    /// Emit one measured usage event, then remain active until the request
+    /// deadline owns stream finalization.
+    ActiveStreamWithEarlyUsage(u64),
     /// Write large chunks without pause until downstream backpressure fills
     /// the proxy's response channel.
     FloodStream,
@@ -196,6 +199,24 @@ async fn mock_chat(
                     )),
                     (),
                 ))
+            });
+            sse(Body::from_stream(stream))
+        }
+        Behavior::ActiveStreamWithEarlyUsage(ms) => {
+            let early = Some(Bytes::from(
+                "data: {\"choices\":[{\"index\":0,\"delta\":{}}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":3,\"total_tokens\":10}}\n\n",
+            ));
+            let stream = futures_util::stream::unfold(early, move |early| async move {
+                let bytes = match early {
+                    Some(bytes) => bytes,
+                    None => {
+                        tokio::time::sleep(Duration::from_millis(ms)).await;
+                        Bytes::from(
+                            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\n",
+                        )
+                    }
+                };
+                Some((Ok::<_, std::io::Error>(bytes), None))
             });
             sse(Body::from_stream(stream))
         }

@@ -16,11 +16,12 @@ quality telemetry.
 
 ## Field and completion rules
 
-The observer accepts only JSON integers in `0..=u64::MAX`. Missing or null
-`usage` is unavailable; present malformed values are invalid. Repeated equal
-values collapse, while conflicts and valid/invalid mixtures invalidate just
-that field. Total is invalid on checked prompt-plus-completion overflow or when
-smaller than their measured sum. Cached/reasoning require measured bounded
+The observer accepts only JSON integers in `0..=u64::MAX`. Missing or explicit
+null `usage`, scalar usage fields, and usage-detail objects are unavailable;
+present non-null malformed values are invalid. Repeated equal values collapse,
+while conflicts and valid/invalid mixtures invalidate just that field. Total
+is invalid on checked prompt-plus-completion overflow or when smaller than
+their measured sum. Cached/reasoning require measured bounded
 prompt/completion parents. Unrelated measured siblings survive an invalid
 relationship.
 
@@ -58,11 +59,13 @@ Every finalized response also emits exactly five
 only classification-to-counter boundary, so it neither reparses response bytes
 nor repeats an SSE event. Its maximum cardinality is 20 series and it carries
 no request, model, client, provider, or upstream-content label. Successful
-buffered and completed streams use their final typed values; disconnect,
-truncation, idle cutoff, and unterminated completed SSE all finalize five
-unavailable outcomes before the proxy preserves their existing request/error
-behavior. Rejected/retried responses and failed buffered body reads have no
-final observed body and emit none. See the [streaming pipeline](streaming-pipeline.md),
+buffered and completed streams use their final typed values. A stream deadline
+takes the bounded observer exactly once and preserves already-measured usage
+while leaving missing fields unavailable; it never estimates a partial stream.
+Disconnect, truncation, idle cutoff, and unterminated completed SSE all
+finalize five unavailable outcomes before the proxy preserves their existing
+request/error behavior. Rejected/retried responses and failed buffered body
+reads have no final observed body and emit none. See the [streaming pipeline](streaming-pipeline.md),
 [metrics history](metrics-history.md), [usage injection decision](../decisions/usage-injection-auto-fallback.md),
 [capture runbook](../ops/nim-response-capture.md), and
 [test strategy](../testing/test-strategy.md).

@@ -260,6 +260,7 @@ function renderModels(c) {
   /* how responses end */
   // enum key (persisted, never translated) · label · severity class
   const FINISH = [['stop', catalogMessage('dashboard.models.finish.completed'), ''],
+    ['function_call', catalogMessage('dashboard.models.finish.function_call'), ''],
     ['length', catalogMessage('dashboard.models.col.truncated'), 'critc'],
     ['tool_calls', catalogMessage('dashboard.models.finish.tool_call'), ''],
     ['content_filter', catalogMessage('dashboard.models.finish.filtered'), 'warnc'],

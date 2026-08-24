@@ -571,6 +571,10 @@
       "desc": "Finish reason. Stopped by the upstream content filter.",
       "hash": "0ba993b3"
     },
+    "dashboard.models.finish.function_call": {
+      "en": "Function call",
+      "hash": "4d6ea58d"
+    },
     "dashboard.models.finish.heading": {
       "en": "How responses end",
       "hash": "9aef0990"

@@ -103,6 +103,46 @@
         },
         {
           "labels": {
+            "model": "fixture/alpha",
+            "reason": "function_call"
+          },
+          "metric": "nimproxy_finish_reason_total",
+          "value": 2.0
+        },
+        {
+          "labels": {
+            "model": "fixture/alpha",
+            "reason": "length"
+          },
+          "metric": "nimproxy_finish_reason_total",
+          "value": 2.0
+        },
+        {
+          "labels": {
+            "model": "fixture/alpha",
+            "reason": "tool_calls"
+          },
+          "metric": "nimproxy_finish_reason_total",
+          "value": 2.0
+        },
+        {
+          "labels": {
+            "model": "fixture/alpha",
+            "reason": "content_filter"
+          },
+          "metric": "nimproxy_finish_reason_total",
+          "value": 2.0
+        },
+        {
+          "labels": {
+            "model": "fixture/alpha",
+            "reason": "other"
+          },
+          "metric": "nimproxy_finish_reason_total",
+          "value": 2.0
+        },
+        {
+          "labels": {
             "client": "fixture-client",
             "stream": "true"
           },
@@ -813,6 +853,46 @@
         },
         {
           "labels": {
+            "model": "fixture/alpha",
+            "reason": "function_call"
+          },
+          "metric": "nimproxy_finish_reason_total",
+          "value": 3.0
+        },
+        {
+          "labels": {
+            "model": "fixture/alpha",
+            "reason": "length"
+          },
+          "metric": "nimproxy_finish_reason_total",
+          "value": 3.0
+        },
+        {
+          "labels": {
+            "model": "fixture/alpha",
+            "reason": "tool_calls"
+          },
+          "metric": "nimproxy_finish_reason_total",
+          "value": 3.0
+        },
+        {
+          "labels": {
+            "model": "fixture/alpha",
+            "reason": "content_filter"
+          },
+          "metric": "nimproxy_finish_reason_total",
+          "value": 3.0
+        },
+        {
+          "labels": {
+            "model": "fixture/alpha",
+            "reason": "other"
+          },
+          "metric": "nimproxy_finish_reason_total",
+          "value": 3.0
+        },
+        {
+          "labels": {
             "client": "fixture-client",
             "stream": "true"
           },
@@ -1510,6 +1590,46 @@
       },
       "metric": "nimproxy_finish_reason_total",
       "value": 25.0
+    },
+    {
+      "labels": {
+        "model": "fixture/alpha",
+        "reason": "function_call"
+      },
+      "metric": "nimproxy_finish_reason_total",
+      "value": 5.0
+    },
+    {
+      "labels": {
+        "model": "fixture/alpha",
+        "reason": "length"
+      },
+      "metric": "nimproxy_finish_reason_total",
+      "value": 5.0
+    },
+    {
+      "labels": {
+        "model": "fixture/alpha",
+        "reason": "tool_calls"
+      },
+      "metric": "nimproxy_finish_reason_total",
+      "value": 5.0
+    },
+    {
+      "labels": {
+        "model": "fixture/alpha",
+        "reason": "content_filter"
+      },
+      "metric": "nimproxy_finish_reason_total",
+      "value": 5.0
+    },
+    {
+      "labels": {
+        "model": "fixture/alpha",
+        "reason": "other"
+      },
+      "metric": "nimproxy_finish_reason_total",
+      "value": 5.0
     },
     {
       "labels": {

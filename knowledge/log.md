@@ -6,6 +6,19 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-08-24] component — deadline-owned SSE observation finalization
+
+The absolute streaming-deadline arm now takes the one bounded observer and
+records it exactly once before emitting the established terminal
+`deadline_exceeded` SSE error. It retains usage measured before expiry, marks
+missing and explicit-null usage fields/details unavailable, and does not
+estimate a partial stream. The finish-reason dashboard fixture and browser
+contract enumerate the same six bounded labels as the observer metric mapper,
+including `function_call`; their displayed shares sum to 100% for the complete
+fixture. See [NIM observations](architecture/nim-observations.md), the
+[streaming pipeline](architecture/streaming-pipeline.md), and the
+[test strategy](testing/test-strategy.md).
+
 ## [2026-08-24] lint — make standard vocabulary executable end to end
 
 The Capacity dashboard count is the number of enabled NIM API keys, not the

@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   style keys remain bounded, publisher/client identity maps reject inherited
   keys, and stacked-chart tooltips resolve catalog series ids like their
   legends.
+- Streaming deadlines now finalize the bounded observer exactly once. Usage
+  measured before expiry remains measured; missing or explicit-null fields are
+  unavailable rather than invalid.
+- The Models finish-reason table includes the emitted `function_call` category,
+  so all six bounded finish-reason shares are represented.
 
 ## [0.6.6] - 2026-08-01
 
