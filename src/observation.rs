@@ -99,6 +99,7 @@ pub(crate) enum StreamOutcome {
 use std::collections::{BTreeMap, BTreeSet};
 
 const MAX_EVENT_BYTES: usize = 1_048_576;
+const MAX_INDEXED_STREAM_OBSERVATIONS: usize = 128;
 
 #[derive(Clone, Copy, Default)]
 enum SeenNumber {
@@ -262,6 +263,7 @@ impl SeenFinish {
 #[derive(Default)]
 struct ObservationState {
     finishes: BTreeMap<u64, SeenFinish>,
+    finishes_overflowed: bool,
     buffered_tool_calls: u64,
     observed_stream: bool,
     tools_invalid: bool,
@@ -271,6 +273,27 @@ struct ObservationState {
 }
 
 impl ObservationState {
+    fn finish_for(&mut self, index: u64) -> Option<&mut SeenFinish> {
+        if self.finishes.contains_key(&index)
+            || self.finishes.len() < MAX_INDEXED_STREAM_OBSERVATIONS
+        {
+            Some(self.finishes.entry(index).or_default())
+        } else {
+            self.finishes_overflowed = true;
+            None
+        }
+    }
+
+    fn remember_tool_pair(&mut self, pair: (u64, u64)) {
+        if self.tool_pairs.contains(&pair)
+            || self.tool_pairs.len() < MAX_INDEXED_STREAM_OBSERVATIONS
+        {
+            self.tool_pairs.insert(pair);
+        } else {
+            self.tools_invalid = true;
+        }
+    }
+
     fn observe_buffered(&mut self, value: &serde_json::Value) {
         self.usage.observe(value.get("usage"));
         let Some(choices) = value.get("choices") else {
@@ -291,10 +314,9 @@ impl ObservationState {
                 self.tools_invalid = true;
                 continue;
             };
-            self.finishes
-                .entry(index)
-                .or_default()
-                .observe(choice.get("finish_reason"));
+            if let Some(seen_finish) = self.finish_for(index) {
+                seen_finish.observe(choice.get("finish_reason"));
+            }
             match choice.get("message") {
                 None => {}
                 Some(serde_json::Value::Object(message)) => match message.get("tool_calls") {
@@ -338,7 +360,9 @@ impl ObservationState {
                 continue;
             };
             let finish = choice.get("finish_reason");
-            self.finishes.entry(index).or_default().observe(finish);
+            if let Some(seen_finish) = self.finish_for(index) {
+                seen_finish.observe(finish);
+            }
             if !finish.is_none_or(serde_json::Value::is_null) {
                 countable = false;
             }
@@ -358,7 +382,7 @@ impl ObservationState {
                                 self.tools_invalid = true;
                                 continue;
                             };
-                            self.tool_pairs.insert((index, tool_index));
+                            self.remember_tool_pair((index, tool_index));
                         }
                     }
                     Some(_) => self.tools_invalid = true,
@@ -379,7 +403,7 @@ impl ObservationState {
                 .and_then(|choice| choice.get("index"))
                 .and_then(serde_json::Value::as_u64)
             {
-                self.finishes.entry(index).or_default();
+                let _ = self.finish_for(index);
             }
         }
     }
@@ -401,13 +425,20 @@ impl ObservationState {
         } else {
             Observation::Measured(self.buffered_tool_calls)
         };
+        let finishes_overflowed = self.finishes_overflowed;
         ResponseObservations {
             finish_reasons: self
                 .finishes
                 .into_iter()
                 .map(|(choice_index, result)| FinishObservation {
                     choice_index,
-                    result: result.result(incomplete),
+                    result: if incomplete {
+                        result.result(true)
+                    } else if finishes_overflowed {
+                        FinishResult::Invalid
+                    } else {
+                        result.result(false)
+                    },
                 })
                 .collect(),
             tool_calls,
@@ -569,8 +600,8 @@ fn unavailable_usage() -> UsageObservations {
 mod tests {
     use super::{
         observe_buffered, usage_observation_metrics, FinishObservation, FinishReason, FinishResult,
-        Observation, ResponseObservations, SseObserver, StreamOutcome, UsageObservationMetric,
-        UsageObservations,
+        Observation, ObservationState, ResponseObservations, SseObserver, StreamOutcome,
+        UsageObservationMetric, UsageObservations, MAX_INDEXED_STREAM_OBSERVATIONS,
     };
 
     #[test]
@@ -1080,6 +1111,146 @@ mod tests {
                 "malformed streamed choices must not fabricate finish observations"
             );
         }
+    }
+
+    #[test]
+    fn stream_observer_bounds_and_explicitly_classifies_upstream_index_overflow() {
+        // Mutation caught: retaining an entry for every upstream-controlled
+        // choice or tool index makes per-stream observer state grow without
+        // bound. An in-budget repeated choice must still aggregate normally.
+        let mut bounded = SseObserver::default();
+        let mut sparse_indexes: Vec<u64> = (0..MAX_INDEXED_STREAM_OBSERVATIONS as u64)
+            .map(|index| 17 + index * 1_000_003)
+            .collect();
+        *sparse_indexes.last_mut().expect("nonempty fixed budget") = u64::MAX;
+        for &index in &sparse_indexes {
+            bounded.push(
+                format!(
+                    "data: {{\"choices\":[{{\"index\":{index},\"delta\":{{\"tool_calls\":[{{\"index\":{index}}}]}},\"finish_reason\":null}}]}}\n\n"
+                )
+                .as_bytes(),
+            );
+        }
+        bounded.push(
+            b"data: {\"choices\":[{\"index\":17,\"delta\":{\"tool_calls\":[{\"index\":17}]},\"finish_reason\":\"stop\"}]}\n\n",
+        );
+        let bounded = bounded.finish(StreamOutcome::Completed);
+        assert_eq!(
+            bounded.finish_reasons.first(),
+            Some(&FinishObservation {
+                choice_index: 17,
+                result: FinishResult::Measured(FinishReason::Stop),
+            }),
+            "a repeated retained choice continues to aggregate correctly"
+        );
+        assert_eq!(
+            bounded.tool_calls,
+            Observation::Measured(MAX_INDEXED_STREAM_OBSERVATIONS as u64)
+        );
+
+        let mut overflowed = SseObserver::default();
+        for index in 0..=MAX_INDEXED_STREAM_OBSERVATIONS as u64 {
+            overflowed.push(
+                format!(
+                    "data: {{\"choices\":[{{\"index\":{index},\"delta\":{{\"tool_calls\":[{{\"index\":{index}}}]}},\"finish_reason\":null}}]}}\n\n"
+                )
+                .as_bytes(),
+            );
+        }
+
+        assert_eq!(
+            overflowed.state.finishes.len(),
+            MAX_INDEXED_STREAM_OBSERVATIONS,
+            "ever-new choice indexes must not grow retained finish state"
+        );
+        assert_eq!(
+            overflowed.state.tool_pairs.len(),
+            MAX_INDEXED_STREAM_OBSERVATIONS,
+            "ever-new tool indexes must not grow retained deduplication state"
+        );
+
+        let overflowed = overflowed.finish(StreamOutcome::Completed);
+        assert_eq!(
+            overflowed.finish_reasons.len(),
+            MAX_INDEXED_STREAM_OBSERVATIONS
+        );
+        assert!(
+            overflowed
+                .finish_reasons
+                .iter()
+                .all(|finish| finish.result == FinishResult::Invalid),
+            "overflow must be explicit rather than silently omitting excess choices"
+        );
+        assert_eq!(overflowed.tool_calls, Observation::Invalid);
+    }
+
+    #[test]
+    fn buffered_observer_bounds_and_explicitly_classifies_upstream_index_overflow() {
+        // Buffered bodies are still wholly upstream-controlled. They use the
+        // same choice-index admission rule as SSE rather than retaining one
+        // finish state per choice in an arbitrarily large response.
+        let choices: Vec<_> = (0..=MAX_INDEXED_STREAM_OBSERVATIONS as u64)
+            .map(|index| {
+                serde_json::json!({
+                    "index": index * 1_000_003,
+                    "message": {},
+                    "finish_reason": "stop",
+                })
+            })
+            .collect();
+        let value = serde_json::json!({"choices": choices});
+        let mut state = ObservationState::default();
+        state.observe_buffered(&value);
+
+        assert_eq!(
+            state.finishes.len(),
+            MAX_INDEXED_STREAM_OBSERVATIONS,
+            "distinct buffered choice indexes must not grow retained finish state"
+        );
+        assert!(
+            !state
+                .finishes
+                .contains_key(&(MAX_INDEXED_STREAM_OBSERVATIONS as u64 * 1_000_003)),
+            "an overflowed buffered choice must not create per-index state"
+        );
+        assert!(state.finishes_overflowed);
+
+        let actual = state.finish(false, None);
+        assert_eq!(actual.finish_reasons.len(), MAX_INDEXED_STREAM_OBSERVATIONS);
+        assert!(
+            actual
+                .finish_reasons
+                .iter()
+                .all(|finish| finish.result == FinishResult::Invalid),
+            "buffered overflow must use the established explicit invalid classification"
+        );
+    }
+
+    #[test]
+    fn completed_unterminated_event_bounds_sparse_remembered_choice_indexes() {
+        // The completed-but-unterminated path parses a final valid data line
+        // only to remember its choice indexes before classifying the stream as
+        // incomplete. It must use the same fixed admission path as ordinary
+        // delimited events, including for sparse upstream-controlled indexes.
+        let choices: Vec<_> = (0..=MAX_INDEXED_STREAM_OBSERVATIONS as u64)
+            .map(|index| serde_json::json!({"index": 29 + index * 1_000_003}))
+            .collect();
+        let mut observer = SseObserver::default();
+        observer.push(format!("data: {}", serde_json::json!({"choices": choices})).as_bytes());
+
+        let actual = observer.finish(StreamOutcome::Completed);
+        assert_eq!(
+            actual.finish_reasons.len(),
+            MAX_INDEXED_STREAM_OBSERVATIONS,
+            "unterminated sparse indexes must remain bounded"
+        );
+        assert!(
+            actual
+                .finish_reasons
+                .iter()
+                .all(|finish| finish.result == FinishResult::Unavailable),
+            "an unterminated final event keeps the incomplete-stream contract"
+        );
     }
 
     #[test]
