@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Settings retains the validated-model confirmation after successfully adding a
+  NIM API key. History diagnostics now report actual inferred counter resets.
+
 ## [0.6.6] - 2026-08-01
 
 > **Breaking upgrade:** v0.6.6 intentionally starts dashboard history over,

@@ -198,8 +198,8 @@ function renderAccess() {
     try {
       const v = await sPost('/api/settings/validate-key', { key });
       const count = Array.isArray(v.models) ? v.models.length : +v.models;
-      noteMessage('nk-err', validatedModelsId(count), { n: NUM_GROUPED.format(count) }, true);
       await addKey();
+      noteMessage('nk-err', validatedModelsId(count), { n: NUM_GROUPED.format(count) }, true);
       return;
     } catch (e) {
       note('nk-err', e.message);

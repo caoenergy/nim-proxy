@@ -387,7 +387,6 @@ pub async fn require_session(
 /// The authenticated username, inserted by [`require_session`] for the
 /// settings handlers' role and ownership checks.
 #[derive(Clone)]
-#[allow(dead_code)] // read by the settings API (next phase)
 pub struct Identity(pub String);
 
 fn wants_html(headers: &HeaderMap) -> bool {

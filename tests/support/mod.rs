@@ -520,12 +520,20 @@ fn base_cmd(port: u16, data_dir: &std::path::Path) -> std::process::Command {
 /// non-zero without ever becoming healthy — used for boot-posture tests
 /// (corrupt store, future version, unwritable DATA_DIR).
 pub async fn expect_refuses_to_start(data_dir: std::path::PathBuf) {
-    let store_path = data_dir.join("config.json");
-    let store_before = if data_dir.is_absolute() && store_path.is_file() {
-        Some(std::fs::read(&store_path).expect("read startup-refusal store snapshot"))
-    } else {
-        None
-    };
+    let store_snapshot = startup_refusal_store_snapshot(&data_dir);
+    expect_refuses_to_start_with_store_snapshot(data_dir, store_snapshot).await;
+}
+
+/// Assert the startup posture for a deliberately invalid DATA_DIR that cannot
+/// contain a config store, without claiming retained-store coverage.
+pub async fn expect_refuses_to_start_without_store_retention(data_dir: std::path::PathBuf) {
+    expect_refuses_to_start_with_store_snapshot(data_dir, None).await;
+}
+
+async fn expect_refuses_to_start_with_store_snapshot(
+    data_dir: std::path::PathBuf,
+    store_snapshot: Option<(std::path::PathBuf, Vec<u8>)>,
+) {
     let port = {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         l.local_addr().unwrap().port()
@@ -539,11 +547,11 @@ pub async fn expect_refuses_to_start(data_dir: std::path::PathBuf) {
                 !status.success(),
                 "proxy should exit non-zero, got {status:?}"
             );
-            if let Some(before) = store_before {
+            if let Some((store_path, store_before)) = store_snapshot {
                 assert_eq!(
                     std::fs::read(&store_path)
                         .expect("startup refusal must retain the existing config store"),
-                    before,
+                    store_before,
                     "failed startup changed config.json bytes"
                 );
             }
@@ -566,6 +574,32 @@ pub async fn expect_refuses_to_start(data_dir: std::path::PathBuf) {
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+fn startup_refusal_store_snapshot(
+    data_dir: &std::path::Path,
+) -> Option<(std::path::PathBuf, Vec<u8>)> {
+    assert!(
+        data_dir.is_absolute(),
+        "startup-refusal tests require an absolute DATA_DIR: {}",
+        data_dir.display()
+    );
+    let store_path = data_dir.join("config.json");
+    store_path.is_file().then(|| {
+        let store_before = std::fs::read(&store_path).expect("read startup-refusal store snapshot");
+        (store_path, store_before)
+    })
+}
+
+#[test]
+fn startup_refusal_store_snapshot_rejects_relative_data_dir() {
+    let result = std::panic::catch_unwind(|| {
+        startup_refusal_store_snapshot(std::path::Path::new("relative-data-dir"));
+    });
+    assert!(
+        result.is_err(),
+        "relative DATA_DIR must fail before a store check can be skipped"
+    );
 }
 
 /// A tempdir for boot-posture tests that pre-write store contents.

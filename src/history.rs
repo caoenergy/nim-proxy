@@ -14,9 +14,6 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-// Task 10 establishes this public-to-history boundary before Task 11 connects
-// it to storage; until then no runtime caller constructs canonical records.
-#[allow(dead_code)]
 pub mod codec;
 pub mod store;
 
@@ -357,6 +354,7 @@ fn ingest_canonical_sample(
         inner.last_parsed.is_some() && inner.last_sample_boot.as_deref() != Some(boot_id.as_str());
     let normalized = normalize(inner.last_parsed.as_ref(), &current, reset);
     inner.diagnostics.valid_samples += 1;
+    inner.diagnostics.inferred_resets += usize::from(normalized.inferred_reset);
     inner.diagnostics.normalized_series += normalized.deltas.len() + normalized.gauges.len();
     if cutoff.is_none_or(|cutoff| timestamp >= cutoff) {
         inner.points.push(IndexedPoint {
@@ -408,6 +406,7 @@ struct HistoryInner {
 pub struct HistoryDiagnostics {
     pub excluded_epochs: usize,
     pub excluded_records: usize,
+    pub inferred_resets: usize,
     pub normalized_series: usize,
     pub skipped_metric_lines: usize,
     pub valid_checkpoints: usize,
@@ -431,6 +430,7 @@ fn diagnostics_at(inner: &HistoryInner, to: u64) -> HistoryDiagnostics {
         .fold(HistoryDiagnostics::default(), |mut total, event| {
             total.excluded_epochs += event.diagnostics.excluded_epochs;
             total.excluded_records += event.diagnostics.excluded_records;
+            total.inferred_resets += event.diagnostics.inferred_resets;
             total.normalized_series += event.diagnostics.normalized_series;
             total.skipped_metric_lines += event.diagnostics.skipped_metric_lines;
             total.valid_checkpoints += event.diagnostics.valid_checkpoints;
@@ -614,8 +614,18 @@ impl History {
             );
         }
         let mut history = Self::load(None, days, initial_capacity);
-        let replay = canonical.take_replay();
-        history.load_canonical(&replay.records, cutoff);
+        let mut replay = canonical.take_replay();
+        let inferred_resets = history.load_canonical(&replay.records, cutoff);
+        for (timestamp, count) in inferred_resets {
+            replay.diagnostic_events.push(store::DiagnosticEvent {
+                at: timestamp,
+                diagnostics: HistoryDiagnostics {
+                    inferred_resets: count,
+                    ..HistoryDiagnostics::default()
+                },
+            });
+            replay.diagnostics.inferred_resets += count;
+        }
         {
             let mut inner = history.inner.lock().unwrap();
             inner.diagnostics = replay.diagnostics;
@@ -647,9 +657,14 @@ impl History {
         }
     }
 
-    fn load_canonical(&mut self, records: &[codec::Record], cutoff: Option<u64>) {
+    fn load_canonical(
+        &mut self,
+        records: &[codec::Record],
+        cutoff: Option<u64>,
+    ) -> BTreeMap<u64, usize> {
         let mut current_boot = None;
         let mut current_state = None;
+        let mut inferred_resets = BTreeMap::new();
         let mut inner = self.inner.lock().unwrap();
 
         for record in records {
@@ -660,6 +675,7 @@ impl History {
                 }
                 codec::Record::Sample(sample) => {
                     let parsed = parsed_canonical_state(&sample.state);
+                    let prior_resets = inner.diagnostics.inferred_resets;
                     ingest_canonical_sample(
                         &mut inner,
                         sample.timestamp,
@@ -668,6 +684,8 @@ impl History {
                         parsed,
                         cutoff,
                     );
+                    *inferred_resets.entry(sample.timestamp).or_default() +=
+                        inner.diagnostics.inferred_resets - prior_resets;
                     current_boot = Some(sample.boot_id.clone());
                     current_state = Some(sample.state.clone());
                 }
@@ -676,6 +694,7 @@ impl History {
                 {
                     if let Some(state) = &current_state {
                         let parsed = parsed_canonical_state(state);
+                        let prior_resets = inner.diagnostics.inferred_resets;
                         ingest_canonical_sample(
                             &mut inner,
                             checkpoint.timestamp,
@@ -684,6 +703,8 @@ impl History {
                             parsed,
                             cutoff,
                         );
+                        *inferred_resets.entry(checkpoint.timestamp).or_default() +=
+                            inner.diagnostics.inferred_resets - prior_resets;
                     }
                 }
                 codec::Record::Checkpoint(_) => {}
@@ -691,6 +712,7 @@ impl History {
         }
         inner.available_from = inner.points.first().map(|point| point.t);
         inner.available_to = inner.points.last().map(|point| point.t);
+        inferred_resets
     }
 
     pub fn load(dir: Option<PathBuf>, days: u64, initial_capacity: CapacitySnapshot) -> Self {
@@ -765,6 +787,7 @@ impl History {
                 normalized.inferred_reset = true;
             }
             diagnostics.valid_samples += 1;
+            diagnostics.inferred_resets += usize::from(normalized.inferred_reset);
             diagnostics.skipped_metric_lines += current.skipped_lines;
             diagnostics.normalized_series += normalized.deltas.len() + normalized.gauges.len();
             let retained = cutoff.is_none_or(|cutoff| point.t >= cutoff);
@@ -828,7 +851,7 @@ impl History {
             inner.diagnostics.excluded_records,
             inner.diagnostics.skipped_metric_lines,
             inner.diagnostics.normalized_series,
-            inner.diagnostics.excluded_epochs,
+            inner.diagnostics.inferred_resets,
             started.elapsed(),
             if days == 0 {
                 "infinite".to_owned()
@@ -935,12 +958,14 @@ impl History {
             && inner.last_sample_boot.as_deref() != Some(self.boot_id.as_str());
         let normalized = normalize(inner.last_parsed.as_ref(), &current, explicit_reset);
         let diagnostics = HistoryDiagnostics {
+            inferred_resets: usize::from(normalized.inferred_reset),
             normalized_series: normalized.deltas.len() + normalized.gauges.len(),
             skipped_metric_lines: current.skipped_lines,
             valid_samples: 1,
             ..HistoryDiagnostics::default()
         };
         inner.diagnostics.valid_samples += diagnostics.valid_samples;
+        inner.diagnostics.inferred_resets += diagnostics.inferred_resets;
         inner.diagnostics.skipped_metric_lines += diagnostics.skipped_metric_lines;
         inner.diagnostics.normalized_series += diagnostics.normalized_series;
         if inner.recovery_events_complete {
@@ -2616,6 +2641,7 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
             .sum::<f64>();
         assert_eq!(total, 7.0);
         assert_eq!(inner.diagnostics.excluded_epochs, 0);
+        assert_eq!(inner.diagnostics.inferred_resets, 1);
     }
 
     fn history_with_points() -> Arc<History> {

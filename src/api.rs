@@ -1134,6 +1134,7 @@ mod tests {
                 HistoryDiagnostics {
                     excluded_epochs: 1,
                     excluded_records: 3,
+                    inferred_resets: 0,
                     normalized_series: 1,
                     skipped_metric_lines: 0,
                     valid_checkpoints: 0,
@@ -1143,6 +1144,7 @@ mod tests {
                 HistoryDiagnostics {
                     excluded_epochs: usize::from(partial),
                     excluded_records: usize::from(partial),
+                    inferred_resets: 0,
                     normalized_series: usize::from(!empty),
                     skipped_metric_lines: usize::from(partial),
                     valid_checkpoints: 0,
@@ -1814,6 +1816,7 @@ mod tests {
             HistoryDiagnostics {
                 excluded_epochs: 1,
                 excluded_records: 3,
+                inferred_resets: 0,
                 normalized_series: 1,
                 skipped_metric_lines: 0,
                 valid_checkpoints: 0,

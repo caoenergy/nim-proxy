@@ -242,6 +242,12 @@ rejection fallback and kill switch, stalled-stream cutoff, metrics accuracy
 (exact token counts), history persistence across restart, SIGTERM, and
 dashboard/config routes.
 
+Startup-refusal fixtures with a pre-existing store use an absolute `DATA_DIR`
+and compare the original `config.json` bytes after refusal. Deliberately
+invalid relative or empty-path fixtures use the separate no-store-retention
+helper; its unit control fails if a relative path could silently skip that
+comparison.
+
 ### The wire-format guards
 
 Two tests exist purely so the JSON contract cannot move by accident (see

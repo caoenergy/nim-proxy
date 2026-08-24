@@ -82,6 +82,8 @@ file; startup neither truncates nor repairs them.
 Recovery records bounded gaps and query-timestamped diagnostic events rather
 than raw rows. `excluded_epochs` counts invalidated or boot-only candidate
 epochs; `excluded_records` counts their physical records and damaging records.
+`inferred_resets` counts counter-decrease or legacy empty-to-populated reset
+boundaries detected while normalizing accepted samples.
 `valid_samples` and `valid_checkpoints` count accepted record kinds through the
 query end, while `normalized_series` counts the state entries normalized by
 those accepted samples/checkpoints. `skipped_metric_lines` remains separate

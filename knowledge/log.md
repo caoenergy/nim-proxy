@@ -38,6 +38,15 @@ settings after either result and distinguishes a post-success refresh failure
 from a rejected save. The original upstream and limits endpoints remain
 documented single-purpose operations. See the [trust-boundary map](architecture/http-trust-boundary-map.md), [typed API decision](decisions/typed-responses-and-generated-openapi.md), and [test strategy](testing/test-strategy.md).
 
+## [2026-08-24] maintenance — make history-reset diagnostics observable
+
+Issue #149 gives `HistoryDiagnostics.inferred_resets` a truthful, cumulative
+count at the existing normalization boundary. Legacy loads, canonical startup
+replay, and live samples attach the count to the accepted sample timestamp, so
+query diagnostics do not report a later reset early. See
+[metrics history](architecture/metrics-history.md) and the
+[changelog](../CHANGELOG.md).
+
 ## [2026-08-01] maintenance — publish the v0.6.6 upgrade boundary
 
 Task 17 reconciles the user-facing release documents with the completed

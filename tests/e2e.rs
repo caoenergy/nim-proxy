@@ -3664,6 +3664,7 @@ async fn dashboard_history_reports_completeness() {
         &[
             "excluded_epochs",
             "excluded_records",
+            "inferred_resets",
             "normalized_series",
             "skipped_metric_lines",
             "valid_checkpoints",
@@ -3677,6 +3678,7 @@ async fn dashboard_history_reports_completeness() {
         serde_json::json!({
             "excluded_epochs": 0,
             "excluded_records": 0,
+            "inferred_resets": 0,
             "normalized_series": 1,
             "skipped_metric_lines": 0,
             "valid_checkpoints": 0,
@@ -3705,6 +3707,7 @@ async fn dashboard_history_reports_completeness() {
         serde_json::json!({
             "excluded_epochs": 1,
             "excluded_records": 3,
+            "inferred_resets": 0,
             "normalized_series": 1,
             "skipped_metric_lines": 0,
             "valid_checkpoints": 0,
@@ -3808,6 +3811,7 @@ async fn experimental_legacy_history_is_ignored_without_mutation() {
         serde_json::json!({
             "excluded_epochs": 0,
             "excluded_records": 0,
+            "inferred_resets": 0,
             "normalized_series": 0,
             "skipped_metric_lines": 0,
             "valid_checkpoints": 0,
@@ -8436,7 +8440,7 @@ async fn setup_rejects_an_invalid_config_on_commit() {
 /// real writable directory.
 #[tokio::test]
 async fn boot_refuses_an_empty_data_dir() {
-    support::expect_refuses_to_start(std::path::PathBuf::from("")).await;
+    support::expect_refuses_to_start_without_store_retention(std::path::PathBuf::from("")).await;
 }
 
 /// `nim-proxy --health` probes /health on $PORT and exits 0 (healthy) or 1

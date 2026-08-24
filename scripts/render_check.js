@@ -1466,6 +1466,9 @@ const DOM_CONTRACTS = {
   ],
   'mutation-nim-key-create': [
     domContract('added-key-present', `!!document.querySelector('[data-ksfp="f17e0001"]')`, true),
+    domContract('validated-model-count-retained',
+      `document.querySelector('#nk-err')?.textContent.trim() ?? null`,
+      '✓ 3 models found. Adding NIM API key…'),
   ],
   'mutation-nim-key-rpm': [
     domContract('rpm-value', `document.querySelector('[data-rpm="0"]')?.value ?? null`, '41'),

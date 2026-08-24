@@ -3,6 +3,7 @@
   "diagnostics": {
     "excluded_epochs": 0,
     "excluded_records": 0,
+    "inferred_resets": 0,
     "normalized_series": 0,
     "skipped_metric_lines": 0,
     "valid_checkpoints": 0,

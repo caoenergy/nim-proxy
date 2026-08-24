@@ -772,6 +772,7 @@ fn advance_ordering_bound(replay: &mut Replay, timestamp: u64) {
 fn add_diagnostics(total: &mut HistoryDiagnostics, delta: &HistoryDiagnostics) {
     total.excluded_epochs += delta.excluded_epochs;
     total.excluded_records += delta.excluded_records;
+    total.inferred_resets += delta.inferred_resets;
     total.normalized_series += delta.normalized_series;
     total.skipped_metric_lines += delta.skipped_metric_lines;
     total.valid_checkpoints += delta.valid_checkpoints;
@@ -2003,6 +2004,39 @@ mod tests {
         assert_eq!(after_damage.excluded_epochs, 1);
         assert_eq!(after_damage.excluded_records, 3);
         assert_eq!(after_damage.valid_samples, 1);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn canonical_reload_counts_inferred_resets_at_the_reset_sample() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let t = now.saturating_sub(100);
+        let dir = test_dir("canonical-inferred-reset-diagnostics");
+        fs::write(
+            dir.join("history-v1.jsonl"),
+            format!(
+                "{}{}{}",
+                boot(t, "boot-a"),
+                sample(t + 1, "boot-a", 9.0),
+                sample(t + 2, "boot-a", 2.0),
+            ),
+        )
+        .unwrap();
+
+        let history = History::open(dir.clone(), 0, history_capacity()).unwrap();
+        assert_eq!(
+            history.rollup(t, t + 1, 1000).diagnostics.inferred_resets,
+            0,
+            "the later reset is not reported before its sample"
+        );
+        assert_eq!(
+            history.rollup(t, t + 2, 1000).diagnostics.inferred_resets,
+            1,
+            "the counter decrease is reported at its accepted sample"
+        );
         let _ = fs::remove_dir_all(dir);
     }
 
