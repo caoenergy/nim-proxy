@@ -924,6 +924,15 @@ pub async fn users(
     Extension(Identity(username)): Extension<Identity>,
     ApiJson(req): ApiJson<UsersReq>,
 ) -> Response {
+    {
+        let guard = state.store.lock().unwrap();
+        match role_of(&guard, &username) {
+            Some(r) if r.is_admin() => {}
+            Some(_) => return forbidden("user management requires an admin"),
+            None => return stale_session(),
+        }
+    }
+
     // Hash outside the store lock (PBKDF2 is deliberately slow).
     let new_hash = match (&req.add, &req.reset_password) {
         (Some(a), None) => {
@@ -960,6 +969,9 @@ pub async fn users(
     };
 
     let mut guard = state.store.lock().unwrap();
+    // A concurrent administrator may have changed the caller's role while
+    // PBKDF2 ran without the store lock. Keep authorization live through the
+    // mutation while the first check above keeps rejected callers out of it.
     match role_of(&guard, &username) {
         Some(r) if r.is_admin() => {}
         Some(_) => return forbidden("user management requires an admin"),
@@ -1493,6 +1505,31 @@ mod tests {
         assert_eq!(
             apply_password_change(&mut sc, "ghost", "h", "n"),
             Err(PasswordChangeErr::UserGone)
+        );
+    }
+
+    #[test]
+    fn users_authorizes_before_password_hashing() {
+        let source = include_str!("settings.rs");
+        let users = source
+            .split_once("pub async fn users(")
+            .expect("users handler")
+            .1
+            .split_once("pub(crate) struct AccountPasswordReq")
+            .expect("users handler boundary")
+            .0;
+        let authorization = users
+            .find("match role_of(&guard, &username)")
+            .expect("users authorization");
+        let password_hashes: Vec<_> = users
+            .match_indices("auth::hash_password")
+            .map(|(offset, _)| offset)
+            .collect();
+
+        assert_eq!(password_hashes.len(), 2, "add and reset password hashes");
+        assert!(
+            password_hashes.iter().all(|offset| authorization < *offset),
+            "users authorization must precede every PBKDF2 password hash"
         );
     }
 }

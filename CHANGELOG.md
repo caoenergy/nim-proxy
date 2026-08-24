@@ -118,6 +118,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- User-management requests now reject non-admin and stale sessions before
+  starting requested-password PBKDF2 work, while rechecking authorization
+  before committing the change.
 - A 2xx status is classified consistently across availability, charts, and
   error taxonomy instead of treating only literal HTTP 200 as success.
 - Dashboard catalog values no longer double-escape, and setup/runtime catalog
