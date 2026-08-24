@@ -60,7 +60,10 @@ IP-level limiting.
 - Safe to expose by default; the three deployment patterns are documented in
   [deploy-docker](../ops/deploy-docker.md) and [sharing-with-friends](../ops/sharing-with-friends.md).
 - **No built-in TLS** — credentials must ride HTTPS, so TLS terminates at a
-  reverse proxy / platform edge; `TRUST_PROXY=true` marks the cookie `Secure`.
+  reverse proxy / platform edge. Set `TRUST_PROXY=true` only when the
+  application is reachable exclusively through a trusted proxy that overwrites
+  `X-Forwarded-Proto`; a direct client must not be able to supply that header.
+  Trusted HTTPS requests then receive a `Secure` session cookie.
 - Compose now publishes `127.0.0.1:8000:8000` by default (loopback), so a bare
   `docker compose up` can't accidentally expose an open instance.
 - Session-cookie state is per-boot; a restart logs dashboard users out (API

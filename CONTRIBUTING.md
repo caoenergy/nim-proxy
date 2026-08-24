@@ -15,10 +15,10 @@ By participating you agree to abide by our
   Start at [`knowledge/index.md`](knowledge/index.md). The reasoning that
   constrains your change is very likely already recorded there (rate-limit
   window math, dispatcher fairness, auth posture, sanitizing, etc.).
-- **Read [`AGENTS.md`](AGENTS.md).** It is the source of truth for build/test/lint
-  commands and for the knowledge-base maintenance rules, and it maps the source
-  layout (`src/main.rs`, `proxy.rs`, `pool.rs`, `dispatch.rs`, `history.rs`,
-  `auth.rs`, `dashboard.html`).
+- **Read [`AGENTS.md`](AGENTS.md).** It is the stable operating contract for
+  build/test/lint commands, repository operations, and knowledge-base
+  maintenance. Use the linked knowledge and test-strategy pages for the
+  current source layout and proof routes.
 - For anything beyond a small fix, **open an issue first** so we can agree on the
   approach before you write code.
 
@@ -47,7 +47,7 @@ the dashboard, not env vars ([config store](knowledge/decisions/ui-managed-confi
 These three must be clean before you open a PR — run them locally:
 
 ```sh
-cargo test                                   # 69 unit + 53 end-to-end tests
+cargo test                                   # full unit, end-to-end, and contract suite
 cargo fmt                                     # (CI runs `cargo fmt --check`)
 cargo clippy --all-targets -- -D warnings    # zero warnings — warnings are errors
 ```
@@ -124,10 +124,15 @@ cargo +nightly fuzz run sse_scan -- -max_total_time=60
 
 ### The dashboard
 
-The dashboard is **one embedded file**, `src/dashboard.html` — no build step and
-no external assets (optional CDN logos have an offline fallback). Edit the HTML
-directly. CI checks the embedded `<script>` block with `node --check`; every
-dynamic value written into `innerHTML` must go through the `esc()` escaper.
+The presentation layer is embedded from `src/web/` with no frontend build step
+or network dependency. Keep markup, scripts, styles, icons, and locale catalogs
+in their existing same-origin asset groups. Run `node --check` on changed
+JavaScript and the render checks routed by
+[`knowledge/testing/test-strategy.md`](knowledge/testing/test-strategy.md).
+Catalog text and machine data must use the context-owning DOM/HTML sinks
+documented in the
+[`message-catalog-and-escaping` decision](knowledge/decisions/message-catalog-and-escaping.md);
+do not add a general-purpose escaping shortcut.
 
 ## Keep the knowledge base in lockstep
 

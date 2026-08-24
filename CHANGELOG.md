@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dashboard history rollups now release the config-store mutex after taking
   their small configuration snapshot. Sampler append/fsync work runs on the
   Tokio blocking pool and is joined before the next sample or shutdown.
+- Contributor and knowledge documentation now match the split presentation
+  layer, current locale/plural guards, and trusted-proxy boundary. The guide
+  checker validates local links across maintained repository documentation.
 
 ## [0.6.6] - 2026-08-01
 
@@ -62,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **A complete canonical English presentation source.** The 446-message
+- **A complete canonical English presentation source.** The 450-message
   `src/web/locales/en-US.json` catalog owns repository text across the
   dashboard, Settings, setup, login, dialogs, validation, empty/error states,
   and accessibility labels. Model ids, client names, publisher names, API
@@ -75,10 +78,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contract while `Intl` owns numbers, dates, durations, sorting, and plural
   categories. Validators enforce id parity, source freshness, placeholders,
   markup boundaries, frozen protocol tokens, and retired vocabulary.
-- **A generated OpenAPI 3.1 contract.** `openapi.json` describes 16
-  operations: 14 `/api/*` operations and the two setup POST operations.
+- **A generated OpenAPI 3.1 contract.** `openapi.json` describes 17
+  operations: 15 `/api/*` operations and the two setup POST operations.
   Locale bootstrap and both setup operations explicitly waive the
-  document-level authentication requirement; the other 13 `/api/*`
+  document-level authentication requirement; the other 14 `/api/*`
   operations require operator authentication. The upstream-owned `/v1`
   surface, browser pages/assets, login forms, health, and Prometheus exposition
   remain deliberately outside this spec.
@@ -93,7 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   binary, and are served from same-origin routes. Browser startup fails closed
   until bootstrap, authenticated config where required, and the selected
   catalog have resolved.
-- **Committed browser and layout gates.** Rust-owned response fixtures drive 69
+- **Committed browser and layout gates.** Rust-owned response fixtures drive 72
   named interaction states across all pages and Settings surfaces. Semantic,
   keyboard/focus, hostile-catalog, pseudolocale, responsive, cleanup, and
   full-document visual checks now run against bytes served by the real binary.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the stable AGENTS.md contract and its repository-local links."""
+"""Validate the stable guide contract and current repository-local links."""
 
 import argparse
 import pathlib
@@ -81,6 +81,12 @@ CASES = {
     "missing-local-link": (
         "local-link", "AGENTS.md", "knowledge/index.md", "knowledge/missing.md"
     ),
+    "missing-knowledge-link": (
+        "local-link",
+        "knowledge/testing/test-strategy.md",
+        "../index.md",
+        "missing.md",
+    ),
     "missing-start": ("contract:start", "AGENTS.md", "## Start here", "## Begin"),
     "missing-invariant": (
         "contract:invariants",
@@ -149,22 +155,40 @@ def contract_problems(text: str) -> list[Problem]:
 
 
 def local_link_problems(
-    root: pathlib.Path, guide: pathlib.Path, text: str
+    root: pathlib.Path, document: pathlib.Path, text: str
 ) -> list[Problem]:
     problems = []
+    label = document.relative_to(root).as_posix()
     for raw in LINK.findall(text):
         target = raw.strip().strip("<>").split("#", 1)[0]
         if not target or urllib.parse.urlparse(target).scheme:
             continue
-        resolved = (guide.parent / urllib.parse.unquote(target)).resolve()
+        resolved = (document.parent / urllib.parse.unquote(target)).resolve()
         try:
             resolved.relative_to(root.resolve())
         except ValueError:
-            problems.append(Problem("local-link", f"AGENTS.md: {target} leaves repository"))
+            problems.append(Problem("local-link", f"{label}: {target} leaves repository"))
             continue
         if not resolved.exists():
-            problems.append(Problem("local-link", f"AGENTS.md: {target} does not exist"))
+            problems.append(Problem("local-link", f"{label}: {target} does not exist"))
     return problems
+
+
+def current_markdown(root: pathlib.Path, guide: pathlib.Path) -> list[pathlib.Path]:
+    """Return maintained docs, excluding historical execution plans."""
+    documents = [guide]
+    documents.extend(
+        path
+        for path in (
+            root / name
+            for name in ("README.md", "SECURITY.md", "CONTRIBUTING.md")
+        )
+        if path.exists()
+    )
+    for directory in (root / "knowledge", root / "tests/fixtures/locales"):
+        if directory.exists():
+            documents.extend(directory.rglob("*.md"))
+    return sorted(set(documents))
 
 
 def proof_route_problems(root: pathlib.Path) -> list[Problem]:
@@ -179,11 +203,12 @@ def proof_route_problems(root: pathlib.Path) -> list[Problem]:
 
 def validate(root: pathlib.Path, guide: pathlib.Path) -> list[Problem]:
     text = guide.read_text(encoding="utf-8")
-    return (
-        contract_problems(text)
-        + proof_route_problems(root)
-        + local_link_problems(root, guide, text)
-    )
+    problems = contract_problems(text) + proof_route_problems(root)
+    for document in current_markdown(root, guide):
+        problems.extend(
+            local_link_problems(root, document, document.read_text(encoding="utf-8"))
+        )
+    return problems
 
 
 def selftest() -> int:
@@ -214,7 +239,7 @@ def selftest() -> int:
         )
         guide.write_text(f"{markers}\n{links}\n", encoding="utf-8")
         strategy = root / "knowledge/testing/test-strategy.md"
-        strategy.write_text("## Proof routing\n", encoding="utf-8")
+        strategy.write_text("## Proof routing\n[fixture](../index.md)\n", encoding="utf-8")
 
         fixtures = {
             path.relative_to(root): path.read_text(encoding="utf-8")
@@ -266,7 +291,7 @@ def main(argv: list[str] | None = None) -> int:
         for problem in problems:
             print(f"[{problem.check}] {problem.detail}")
         return 1
-    print("agent guide OK — stable contracts present; local links resolve")
+    print("agent guide OK — stable contracts present; current local links resolve")
     return 0
 
 

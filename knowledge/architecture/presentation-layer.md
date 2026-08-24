@@ -96,7 +96,7 @@ the probe flow to read and record the binary's page and catalog response
 bodies.
 Normal browser mode starts the current binary, requests its real page and
 asset routes, fails any missing/error/external initial resource, and fulfills
-only Rust-generated `tests/fixtures/ui/` API responses through CDP. The 69-row
+only Rust-generated `tests/fixtures/ui/` API responses through CDP. The 72-row
 `--all-states` matrix names file or `scenarios.json#scenario` consumption,
 exact ordered requests, DOM observations, and clean browser observations; its
 loading row holds the real bootstrap response. It covers these interactions,

@@ -157,7 +157,9 @@ retired `rpm total` run.
   window, `lane` for metric labels, and `Open`/`bench` have unrelated
   legitimate senses. Banning a word that is both a retired label and a live
   domain term is precisely the mistake that renamed a rate-limit counter during
-  the label sweep — see the trap list in [AGENTS.md](../../AGENTS.md).
+  the label sweep. A single word belongs in `RETIRED` only when every
+  user-visible occurrence has the same obsolete meaning; otherwise enforce the
+  distinctive multi-word label and review ambiguous occurrences in context.
 - **The `frozen` check found a defect immediately.**
   `gen_pseudolocale.py` was accenting the frozen tokens, so `en-XA` rendered
   `NÎM` and `ŦŦƑŦ` — a string no real locale would produce, in the one locale

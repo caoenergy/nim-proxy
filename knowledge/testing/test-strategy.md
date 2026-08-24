@@ -130,7 +130,7 @@ that proof.
   or `scenarios.json#scenario`, never a JavaScript wire body. Two explicitly
   named resilience rows apply an in-memory transform to a generated body: one
   removes an API error message and one raises Settings integers above 10,000.
-  `--all-states` runs 69 named rows against the served application: exact ordered requests,
+  `--all-states` runs 72 named rows against the served application: exact ordered requests,
   DOM observations, and clean page-error, console-error, promise-rejection,
   asset, unexpected-request, and fixture-consumption observations. Its loading
   row holds the real bootstrap response until the hidden-state assertion.
@@ -220,7 +220,9 @@ regression gate.
 PR CI runs both agent-guide modes: `python3 scripts/check_agent_guide.py
 --selftest` proves each contract check can reject its fixture, and `python3
 scripts/check_agent_guide.py` rejects a missing stable contract or unresolved
-repository-local guide link.
+repository-local link in the root guide, contributor/security/readme pages,
+the knowledge base, or locale-fixture documentation. Historical execution
+plans are intentionally outside this current-document link inventory.
 
 ## 1. Unit — `cargo test` (in `src/`)
 
@@ -377,7 +379,7 @@ Dashboard changes get two more checks.
 **Automated — `node scripts/render_check.js`.** Starts the real binary, loads
 its served page/assets, and fulfills the 35 Rust-generated typed JSON
 fixtures in `tests/fixtures/ui/` at the API boundary. `--all-states` walks the
-69 named request/DOM/clean-run interactions (including loading via a held
+72 named request/DOM/clean-run interactions (including loading via a held
 bootstrap response), every dashboard tab, and chart hovers; it is not a layout
 test or a claim that every application path is covered. Regenerate deliberately
 with `UPDATE_UI_FIXTURES=1 cargo test api::tests::ui_fixtures --lib`, then

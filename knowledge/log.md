@@ -6,6 +6,17 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-08-24] maintenance — reconcile governing documentation
+
+Contributor guidance now describes the split embedded presentation layer and
+current proof routes. The locale remainder inventory records no known
+repository-owned English leak after the short/lowercase lint expansion; the
+plural decision records both the shipped suffix guard and its regex boundary.
+Local Markdown links across the guide and knowledge base are now checked. The
+historical v0.6.0 governor entry again says `benches the lane`, preserving what
+that release called the state; the later cooldown decision remains the dated
+record of the rename.
+
 ## [2026-08-24] fix — catalog registry, cached pages, and native public forms
 
 The installed-locale definition now owns bootstrap advertisement, catalog
@@ -1266,7 +1277,7 @@ v0.6.0 amendment.
 - **Model-pressure governor** (new component page
   [governor](architecture/governor.md)): classifies NIM's per-model
   worker-exhaustion error apart from 429s and backs off the **model** (never
-  cools down the lane); adaptive AIMD (engage at half in-flight, +1/stable-min,
+  benches the lane); adaptive AIMD (engage at half in-flight, +1/stable-min,
   dissolve after 30 clean min) with optional pinned caps. New metrics
   `nimproxy_worker_exhausted_total` / `nimproxy_model_inflight` /
   `nimproxy_model_limit`; a Reliability "Model pressure" card appears once

@@ -149,6 +149,14 @@ catalog-backed absent/zero/dominance/tie/live-tail quality states without
 changing the gate's Rust-serialization or served-byte boundaries. The Task 8
 and Task 12 totals above remain dated provenance rather than current counts.
 
+### Supersession — v0.6.6 stabilization (2026-08-24)
+
+The current served-app authority is 72 named rows. Stabilization adds explicit
+render-failure isolation, dynamic-style batch recovery, and aggregate
+bidirectional coverage for every rendered sortable header. The fixture count
+remains 35 and visual applicability remains 284 surfaces; the Task 16 total
+above is dated provenance.
+
 - Two CI steps in the existing `check` job, so the required-status-check list
   in [release.md](../ops/release.md) does not change.
 - `scripts/mock_nim.py` honors `max_tokens` so a capped request finishes with

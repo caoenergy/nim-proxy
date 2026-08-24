@@ -13,9 +13,8 @@ timestamp: 2026-07-29T00:00:00Z
 
 ## Context
 
-Six labels pluralized themselves inline. Two are converted here; the other four
-are still doing it, and that is stated below rather than left to be discovered.
-The two converted:
+Six labels originally pluralized themselves inline. The first two converted by
+this decision were:
 
 ```js
 `${cfg.lanes} enabled key${cfg.lanes === 1 ? '' : 's'}`
@@ -89,34 +88,14 @@ unreferenced, and the check would then demand their deletion. Writing
   keep in mind if a counted label ever *can* reach those magnitudes:
   `select(n)` reads the raw number while the surface shows `10K`, and there are
   locales whose category depends on the surface form.
-- **Four ternaries of this shape are still live**, found by an adversarial
-  review reading the file rather than by any check:
-
-  | Site | Phrase |
-  |---|---|
-  | `dashboard.html:1437` | `${cfg.lanes} key${… ? '' : 's'}` — Overview ring gauge |
-  | `dashboard.html:1484` | `${models.length} model${… ? '' : 's'}` — Models KPI |
-  | `dashboard.html:1529` | same phrase — finish-reason count |
-  | `dashboard.html:1602` | same phrase — model-table count |
-
-  They are **not** converted here, deliberately. Each sits inside a composite
-  run that is still English end to end — `0 / 24 rpm · 3 keys`, `3 models · click
-  a column to sort` — and is listed under "composite runs built by
-  concatenation" in
-  [REMAINING.md](../../tests/fixtures/locales/REMAINING.md). Converting only the
-  plural half would mint six catalog ids per phrase while the words around them
-  stayed hardcoded, which buys nothing a translator can use. They convert when
-  their whole run does.
-
-  Note that `:1437` is the *same quantity* as the converted
-  `enabled_keys` set — the Capacity hero renders the plural set while the
-  Overview ring renders the ternary. That inconsistency is the cost of the
-  boundary above, and it is visible in the gate's en-XA output as
-  `[overview] "0 / 24 rpm · 3 keys"`.
-
-- The untagged-string lint cannot see a ternary of this shape at all: the
-  English is the *absence* of a character in one branch, not a string. Nothing
-  will complain about a seventh. Recorded rather than solved, because a lint for
-  "English grammar expressed as control flow" is not a lint anyone here knows
-  how to write — which is exactly why four of these survived a pass that was
-  looking for them.
+- The four composite dashboard runs that were deferred by the initial decision
+  now use complete catalog messages and `PLURALS.select()`; no English suffix
+  ternary remains in `src/web/`. The current pseudolocale inventory is
+  [REMAINING.md](../../tests/fixtures/locales/REMAINING.md).
+- `check_i18n.py` now has a deliberately narrow `PLURAL_SUFFIX` guard. It
+  rejects the historical `.length` and `lanes === 1 ? '' : 's'` shapes and its
+  mutation fixture proves that check can fail. It is not a JavaScript grammar
+  analyzer: a differently spelled count expression or grammar encoded through
+  other control flow can still evade the regex. Reviewers therefore keep
+  checking counted UI messages for explicit catalog variants even when the
+  lint is green.

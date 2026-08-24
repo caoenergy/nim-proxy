@@ -154,7 +154,7 @@ The browser fixture authority is the 35 stable JSON files in
 production response types. Dashboard metric fixtures derive histogram bounds
 from the same `HISTOGRAM_BUCKETS` registry the recorder uses, with concrete
 samples producing their bucket counts and sums; the browser does not maintain
-another metric model. The 69-row served-app matrix consumes those files or
+another metric model. The 72-row served-app matrix consumes those files or
 `scenarios.json#scenario` at the HTTP boundary and records exact requests,
 DOM results, and clean-run observations. Its rows include Settings dialogs,
 validation/toast transitions, raw API errors, the catalog-owned status fallback,

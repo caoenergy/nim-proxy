@@ -27,6 +27,17 @@ The owner approved a one-way replacement while the application is pre-1.0.
 Runtime, both pages, validators, browser probes, guide invariant, and this
 decision move atomically.
 
+## Options
+
+1. Keep separate escaped and plain catalog lookups and require each caller to
+   choose correctly. Rejected: the representation does not identify its sink,
+   so both double escaping and markup interpretation remain caller mistakes.
+2. Expose a general `message()` lookup and infer the eventual sink with source
+   heuristics. Rejected after adversarial review found spoofed helper names,
+   aliases, ASI boundaries, and script/style/SVG paths that fail open.
+3. Pass catalog ids to context-owning DOM helpers and branded descriptors to
+   the fixed-markup HTML sink. This is the selected one-way flow.
+
 ## Choice
 
 Page code does not exchange ambiguous “catalog strings.” It uses two explicit
