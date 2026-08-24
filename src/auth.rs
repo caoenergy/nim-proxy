@@ -205,11 +205,7 @@ impl Admin {
     /// Record a failed attempt; returns true if the caller is now throttled.
     pub fn note_failure(&self) -> bool {
         let mut t = self.throttle.lock().unwrap();
-        let n = now();
-        if n.saturating_sub(t.window_start) >= THROTTLE_WINDOW_SECS {
-            t.window_start = n;
-            t.failures = 0;
-        }
+        reset_throttle_window(&mut t);
         t.failures += 1;
         t.failures > THROTTLE_MAX_FAILURES
     }
@@ -218,6 +214,25 @@ impl Admin {
         let t = self.throttle.lock().unwrap();
         now().saturating_sub(t.window_start) < THROTTLE_WINDOW_SECS
             && t.failures > THROTTLE_MAX_FAILURES
+    }
+
+    /// Atomically account for a pre-auth attempt before it can begin costly
+    /// work. The first eleven attempts retain the existing throttle behavior;
+    /// later attempts are rejected while holding the same limiter lock.
+    pub fn admit_pre_auth_attempt(&self) -> bool {
+        let mut t = self.throttle.lock().unwrap();
+        reset_throttle_window(&mut t);
+        if t.failures > THROTTLE_MAX_FAILURES {
+            return false;
+        }
+        t.failures += 1;
+        true
+    }
+
+    /// Admit a pre-auth unit of costly work. A rejected attempt never invokes
+    /// `work`, so callers can put blocking-pool admission inside the closure.
+    pub fn admit_pre_auth_work<T>(&self, work: impl FnOnce() -> T) -> Option<T> {
+        self.admit_pre_auth_attempt().then(work)
     }
 
     /// Forget the memoized scraper credential. Call on any change to users
@@ -248,6 +263,14 @@ impl Admin {
         format!(
             "{COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}{secure_attr}"
         )
+    }
+}
+
+fn reset_throttle_window(throttle: &mut Throttle) {
+    let n = now();
+    if n.saturating_sub(throttle.window_start) >= THROTTLE_WINDOW_SECS {
+        throttle.window_start = n;
+        throttle.failures = 0;
     }
 }
 
@@ -699,6 +722,33 @@ mod tests {
         // The rolled-over window resets the counter, so one fresh failure is
         // well under the limit.
         assert!(!a.note_failure());
+    }
+
+    #[test]
+    fn pre_auth_admission_counts_before_rejecting_excess_attempts() {
+        let a = admin();
+        for _ in 0..=THROTTLE_MAX_FAILURES {
+            assert!(a.admit_pre_auth_attempt());
+        }
+        assert!(!a.admit_pre_auth_attempt());
+    }
+
+    #[test]
+    fn pre_auth_admission_rejects_before_running_costly_work() {
+        let a = admin();
+        for _ in 0..=THROTTLE_MAX_FAILURES {
+            assert!(a.admit_pre_auth_attempt());
+        }
+        let ran = std::sync::atomic::AtomicBool::new(false);
+        assert!(a
+            .admit_pre_auth_work(|| {
+                ran.store(true, std::sync::atomic::Ordering::SeqCst);
+            })
+            .is_none());
+        assert!(
+            !ran.load(std::sync::atomic::Ordering::SeqCst),
+            "a throttled pre-auth request must not enter its costly work"
+        );
     }
 
     #[test]

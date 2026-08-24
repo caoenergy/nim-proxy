@@ -8135,6 +8135,51 @@ async fn setup_validate_key_throttles_after_repeated_probes() {
     assert_eq!(last, 429, "the throttle trips after repeated failed probes");
 }
 
+/// A saturated pre-claim throttle rejects setup without claiming the proxy.
+/// The `auth` unit proof verifies that this same admission refuses to enter
+/// the blocking-hash closure.
+#[tokio::test]
+async fn setup_claim_is_throttled_before_password_hashing() {
+    let proxy = start_proxy_fresh().await;
+    let probe = serde_json::json!({"key": "x", "base_url": "http://127.0.0.1:1"});
+    for _ in 0..11 {
+        let response = client()
+            .post(proxy.url("/setup/validate-key"))
+            .json(&probe)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            200,
+            "the shared pre-auth budget must admit this validation request"
+        );
+    }
+
+    let response = client()
+        .post(proxy.url("/setup"))
+        .json(&serde_json::json!({
+            "username": "admin",
+            "password": "hunter2hunter2",
+            "base_url": "http://127.0.0.1:9999",
+            "nim_keys": [{"key": "nvapi-x", "rpm": 40}],
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_exact_api_error(
+        response,
+        reqwest::StatusCode::TOO_MANY_REQUESTS,
+        "throttled",
+        "too many validation attempts, try again shortly",
+    )
+    .await;
+    assert!(
+        !proxy.data_dir.join("config.json").exists(),
+        "a throttled setup attempt must not claim the proxy"
+    );
+}
+
 /// A reachable upstream that 404s the models route is a key rejection, not a
 /// connection failure (probe_key's non-success branch).
 #[tokio::test]

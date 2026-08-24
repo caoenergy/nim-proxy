@@ -938,6 +938,16 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Setup throttle (shared with validation-key and login)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         },
         "security": []

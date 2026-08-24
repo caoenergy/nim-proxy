@@ -158,6 +158,8 @@ impl From<NoScriptSetupForm> for SetupReq {
         (status = 400, description = "Weak password or a config the store rejects", body = ApiError),
         (status = 409, description = "Setup is already complete or another caller claimed the \
             proxy first", body = ApiError),
+        (status = 429, description = "Setup throttle (shared with validation-key and login)",
+            body = ApiError),
     ),
 )]
 pub async fn setup_submit(State(state): State<Arc<AppState>>, req: Request) -> Response {
@@ -188,9 +190,19 @@ pub async fn setup_submit(State(state): State<Arc<AppState>>, req: Request) -> R
         );
     }
     let password = req.password.clone();
-    let hash = tokio::task::spawn_blocking(move || auth::hash_password(&password))
-        .await
-        .expect("hashing task");
+    // Account for each valid pre-claim request before it can enqueue the
+    // 600,000-iteration PBKDF2 job. Rejected requests never invoke the
+    // closure, so they cannot consume a blocking-pool worker.
+    let Some(hash) = state.admin.admit_pre_auth_work(move || {
+        tokio::task::spawn_blocking(move || auth::hash_password(&password))
+    }) else {
+        return json_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "throttled",
+            "too many validation attempts, try again shortly",
+        );
+    };
+    let hash = hash.await.expect("hashing task");
 
     let mut minted: Option<(String, String)> = None; // (name, secret)
     let result = {
@@ -310,14 +322,13 @@ pub async fn setup_validate_key(State(state): State<Arc<AppState>>, req: Request
         Ok(req) => req,
         Err(response) => return response,
     };
-    if state.admin.is_throttled() {
+    if !state.admin.admit_pre_auth_attempt() {
         return json_error(
             StatusCode::TOO_MANY_REQUESTS,
             "throttled",
             "too many validation attempts, try again shortly",
         );
     }
-    state.admin.note_failure(); // every pre-auth probe burns throttle budget
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let base = req
         .base_url
@@ -1649,6 +1660,42 @@ mod tests {
         assert!(
             password_hashes.iter().all(|offset| authorization < *offset),
             "users authorization must precede every PBKDF2 password hash"
+        );
+    }
+
+    #[test]
+    fn setup_claim_admits_hashing_only_through_pre_auth_limiter() {
+        let source = include_str!("settings.rs");
+        let setup = source
+            .split_once("pub async fn setup_submit")
+            .expect("setup handler")
+            .1
+            .split_once("#[derive(Deserialize, ToSchema)]\npub struct ValidateKeyReq")
+            .expect("setup handler boundary")
+            .0;
+        let phase_gate = setup
+            .find("if !state.setup_required.load(Ordering::SeqCst)")
+            .expect("phase gate");
+        let admission = setup
+            .find("state.admin.admit_pre_auth_work(move ||")
+            .expect("pre-hash admission");
+        let password_hashes: Vec<_> = setup
+            .match_indices("tokio::task::spawn_blocking(move || auth::hash_password")
+            .map(|(offset, _)| offset)
+            .collect();
+
+        assert!(
+            phase_gate < admission,
+            "closed setup must retain its phase gate"
+        );
+        assert_eq!(
+            password_hashes.len(),
+            1,
+            "setup must have one PBKDF2 blocking admission path"
+        );
+        assert!(
+            admission < password_hashes[0],
+            "PBKDF2 blocking work must be admitted only by the pre-auth limiter"
         );
     }
 }

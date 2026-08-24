@@ -146,6 +146,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Initial setup now shares the pre-authentication attempt budget with login
+  and key validation, rejecting excess claims before scheduling the 600,000-
+  iteration PBKDF2 password hash.
 - User-management requests now reject non-admin and stale sessions before
   starting requested-password PBKDF2 work, while rechecking authorization
   before committing the change.
