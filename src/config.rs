@@ -552,10 +552,8 @@ fn validate_stored_locale(label: &str, locale: &str) -> Result<(), String> {
         Ok(canonical) if canonical != locale => Err(format!(
             "{label} must use canonical locale spelling {canonical}"
         )),
-        Ok(canonical) if !crate::presentation::INSTALLED_LOCALES.contains(&canonical.as_str()) => {
-            Err(format!("{label} locale {canonical} is not installed"))
-        }
-        Ok(_) => Ok(()),
+        Ok(canonical) if crate::presentation::installed_locale(&canonical).is_ok() => Ok(()),
+        Ok(canonical) => Err(format!("{label} locale {canonical} is not installed")),
         Err(_) => Err(format!("{label} is not a valid locale")),
     }
 }

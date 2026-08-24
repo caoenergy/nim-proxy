@@ -185,12 +185,12 @@ mod locale_bootstrap {
     }
 
     impl LocaleBootstrap {
-        pub(super) fn from_config(stored: &StoredConfig, installed: &[&str]) -> Self {
+        pub(super) fn from_config(
+            stored: &StoredConfig,
+            installed: impl IntoIterator<Item = &'static str>,
+        ) -> Self {
             Self {
-                installed_locales: installed
-                    .iter()
-                    .map(|locale| (*locale).to_owned())
-                    .collect(),
+                installed_locales: installed.into_iter().map(str::to_owned).collect(),
                 server_default: stored.default_locale.clone(),
             }
         }
@@ -220,7 +220,7 @@ pub(crate) async fn locale_bootstrap(
         [(header::CACHE_CONTROL, "no-store")],
         axum::Json(LocaleBootstrap::from_config(
             &stored,
-            &crate::presentation::INSTALLED_LOCALES,
+            crate::presentation::installed_locale_ids(),
         )),
     )
 }
@@ -2198,7 +2198,7 @@ mod tests {
             ),
             (
                 "locale-bootstrap.json",
-                serde_json::to_value(LocaleBootstrap::from_config(&stored, &["en-US"])).unwrap(),
+                serde_json::to_value(LocaleBootstrap::from_config(&stored, ["en-US"])).unwrap(),
             ),
             ("ok.json", serde_json::to_value(OkResponse::new()).unwrap()),
             (
@@ -2342,7 +2342,7 @@ mod tests {
         sorted("OkResponse", &OkResponse::new());
         sorted(
             "LocaleBootstrap",
-            &LocaleBootstrap::from_config(&crate::config::StoredConfig::default(), &["en-US"]),
+            &LocaleBootstrap::from_config(&crate::config::StoredConfig::default(), ["en-US"]),
         );
         sorted(
             "ClientsResponse",
@@ -2620,7 +2620,7 @@ mod tests {
         let stored: crate::config::StoredConfig =
             serde_json::from_value(serde_json::json!({"default_locale": "fr-FR"}))
                 .expect("locale-bootstrap: distinct StoredConfig");
-        let bootstrap = LocaleBootstrap::from_config(&stored, &["en-US", "fr-FR"]);
+        let bootstrap = LocaleBootstrap::from_config(&stored, ["en-US", "fr-FR"]);
         assert_eq!(
             serde_json::to_string(&bootstrap).unwrap(),
             r#"{"installed_locales":["en-US","fr-FR"],"server_default":"fr-FR"}"#,

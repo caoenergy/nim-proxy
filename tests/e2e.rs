@@ -422,6 +422,25 @@ async fn route_contract_behavior_matrix() {
                 contract_expectation(200, None),
             ],
             method: "GET",
+            name: "asset-public-noscript-css",
+            phase: ContractPhase::Always,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("text/css; charset=utf-8"),
+            success_status: 200,
+            path: "/assets/public/noscript.css",
+        },
+        RouteBehavior {
+            access: ContractAccess::Public,
+            accept_html: false,
+            expectations: [
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+                contract_expectation(200, None),
+            ],
+            method: "GET",
             name: "asset-public-setup-js",
             phase: ContractPhase::Always,
             request: ContractRequest::None,
@@ -924,7 +943,7 @@ async fn route_contract_behavior_matrix() {
         },
     ];
 
-    assert_eq!(rows.len(), 35, "route-contract:inventory");
+    assert_eq!(rows.len(), 36, "route-contract:inventory");
 
     let mock = start_mock().await;
     let before_setup = start_proxy_fresh().await;
@@ -4431,6 +4450,38 @@ async fn fresh_boot_enters_setup_mode() {
     assert!(setup.text().await.unwrap().contains("setup"));
 }
 
+/// Native setup fallback uses the same atomic claim as the JavaScript wizard
+/// and redirects with the newly minted session instead of exposing JSON.
+#[tokio::test]
+async fn noscript_setup_form_claims_the_proxy() {
+    let proxy = start_proxy_fresh().await;
+    let response = no_redirect_client()
+        .post(proxy.url("/setup"))
+        .form(&[
+            ("username", "noscript-admin"),
+            ("password", "noscript-password"),
+            ("nim_key", "noscript-nim-key"),
+            ("nim_rpm", "40"),
+            ("create_client_key", "default"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 303);
+    assert_eq!(response.headers()["location"], "/");
+    assert!(response.headers().contains_key("set-cookie"));
+    assert_eq!(
+        client()
+            .get(proxy.url("/setup"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404,
+        "native setup claim closes the setup phase"
+    );
+}
+
 /// A corrupt or future-version store is a hard boot error, never a silent
 /// fall-through to setup mode (which would discard credentials and keys).
 #[tokio::test]
@@ -5493,6 +5544,11 @@ async fn presentation_assets_are_gated() {
             statuses: [200, 200, 200],
         },
         PresentationRoute {
+            content_type: Some("text/css; charset=utf-8"),
+            path: "/assets/public/noscript.css",
+            statuses: [200, 200, 200],
+        },
+        PresentationRoute {
             content_type: Some("text/javascript; charset=utf-8"),
             path: "/assets/public/setup.js",
             statuses: [200, 200, 200],
@@ -5651,7 +5707,17 @@ async fn locale_catalog_routes_are_gated() {
         },
         PresentationRoute {
             content_type: Some("application/json"),
+            path: "/assets/public/locales/en-us.json",
+            statuses: [200, 200, 200],
+        },
+        PresentationRoute {
+            content_type: Some("application/json"),
             path: "/assets/operator/locales/en-US.json",
+            statuses: [503, 401, 200],
+        },
+        PresentationRoute {
+            content_type: Some("application/json"),
+            path: "/assets/operator/locales/EN-us.json",
             statuses: [503, 401, 200],
         },
         PresentationRoute {

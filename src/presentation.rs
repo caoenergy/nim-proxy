@@ -16,6 +16,11 @@ pub struct Asset {
     pub content_type: &'static str,
 }
 
+struct InstalledLocale {
+    id: &'static str,
+    source: &'static str,
+}
+
 const DASHBOARD: &str = include_str!("web/dashboard.html");
 const LOGIN: &str = include_str!("web/login.html");
 const SETUP: &str = include_str!("web/setup.html");
@@ -23,7 +28,12 @@ const NIM_PROXY_ICON: &str = include_str!("web/icons/nim-proxy.svg");
 const EN_US_SOURCE: &str = include_str!("web/locales/en-US.json");
 
 pub const DEFAULT_LOCALE: &str = "en-US";
-pub const INSTALLED_LOCALES: [&str; 1] = [DEFAULT_LOCALE];
+/// The one source of truth for advertised, accepted, and embedded locales.
+/// Add a locale here only with its embedded authoring catalog.
+const INSTALLED_LOCALES: &[InstalledLocale] = &[InstalledLocale {
+    id: DEFAULT_LOCALE,
+    source: EN_US_SOURCE,
+}];
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LocaleError {
@@ -78,11 +88,18 @@ pub fn canonical_locale(locale: &str) -> Result<String, LocaleError> {
 
 pub fn installed_locale(locale: &str) -> Result<String, LocaleError> {
     let canonical = canonical_locale(locale)?;
-    if INSTALLED_LOCALES.contains(&canonical.as_str()) {
+    if INSTALLED_LOCALES
+        .iter()
+        .any(|installed| installed.id == canonical)
+    {
         Ok(canonical)
     } else {
         Err(LocaleError::NotInstalled(canonical))
     }
+}
+
+pub fn installed_locale_ids() -> impl Iterator<Item = &'static str> {
+    INSTALLED_LOCALES.iter().map(|installed| installed.id)
 }
 
 #[derive(Deserialize)]
@@ -103,6 +120,10 @@ struct WireCatalog<'a> {
 }
 
 struct CatalogRegistry {
+    catalogs: BTreeMap<&'static str, Catalog>,
+}
+
+struct Catalog {
     operator: Box<[u8]>,
     public: Box<[u8]>,
 }
@@ -111,56 +132,78 @@ static CATALOGS: OnceLock<CatalogRegistry> = OnceLock::new();
 
 fn catalogs() -> &'static CatalogRegistry {
     CATALOGS.get_or_init(|| {
-        let source: AuthoringCatalog =
-            serde_json::from_str(EN_US_SOURCE).expect("embedded en-US catalog is valid");
-        assert_eq!(
-            source.locale, DEFAULT_LOCALE,
-            "embedded catalog locale matches the compiled default"
-        );
-
-        let messages: BTreeMap<String, String> = source
-            .messages
-            .into_iter()
-            .map(|(id, message)| (id, message.en))
-            .collect();
-        let public_messages: BTreeMap<String, String> = messages
+        let catalogs = INSTALLED_LOCALES
             .iter()
-            .filter(|(id, _)| {
-                id.as_str() == "common.app_name"
-                    || id.starts_with("login.")
-                    || id.starts_with("setup.")
+            .map(|installed| {
+                let source: AuthoringCatalog =
+                    serde_json::from_str(installed.source).expect("embedded catalog is valid");
+                assert_eq!(
+                    source.locale, installed.id,
+                    "embedded catalog locale matches its installed spelling"
+                );
+                let messages: BTreeMap<String, String> = source
+                    .messages
+                    .into_iter()
+                    .map(|(id, message)| (id, message.en))
+                    .collect();
+                let public_messages: BTreeMap<String, String> = messages
+                    .iter()
+                    .filter(|(id, _)| {
+                        id.as_str() == "common.app_name"
+                            || id.starts_with("login.")
+                            || id.starts_with("setup.")
+                    })
+                    .map(|(id, message)| (id.clone(), message.clone()))
+                    .collect();
+                (
+                    installed.id,
+                    Catalog {
+                        operator: serde_json::to_vec(&WireCatalog {
+                            locale: installed.id,
+                            messages: &messages,
+                        })
+                        .expect("embedded operator catalog serializes")
+                        .into_boxed_slice(),
+                        public: serde_json::to_vec(&WireCatalog {
+                            locale: installed.id,
+                            messages: &public_messages,
+                        })
+                        .expect("embedded public catalog serializes")
+                        .into_boxed_slice(),
+                    },
+                )
             })
-            .map(|(id, message)| (id.clone(), message.clone()))
             .collect();
-
-        CatalogRegistry {
-            operator: serde_json::to_vec(&WireCatalog {
-                locale: DEFAULT_LOCALE,
-                messages: &messages,
-            })
-            .expect("embedded operator catalog serializes")
-            .into_boxed_slice(),
-            public: serde_json::to_vec(&WireCatalog {
-                locale: DEFAULT_LOCALE,
-                messages: &public_messages,
-            })
-            .expect("embedded public catalog serializes")
-            .into_boxed_slice(),
-        }
+        CatalogRegistry { catalogs }
     })
 }
 
-pub fn page(page: Page) -> String {
+struct Pages {
+    dashboard: String,
+    login: String,
+    login_invalid_credentials: String,
+    setup: String,
+}
+
+static PAGES: OnceLock<Pages> = OnceLock::new();
+
+fn pages() -> &'static Pages {
+    PAGES.get_or_init(|| Pages {
+        dashboard: DASHBOARD.replace("<!-- nim-proxy-icon -->", NIM_PROXY_ICON),
+        login: LOGIN.replace("{{error_code}}", ""),
+        login_invalid_credentials: LOGIN.replace("{{error_code}}", "invalid_credentials"),
+        setup: SETUP.to_owned(),
+    })
+}
+
+pub fn page(page: Page) -> &'static str {
     match page {
-        Page::Dashboard => DASHBOARD.replace("<!-- nim-proxy-icon -->", NIM_PROXY_ICON),
-        Page::Login { error_code } => {
-            let code = match error_code {
-                Some("invalid_credentials") => "invalid_credentials",
-                _ => "",
-            };
-            LOGIN.replace("{{error_code}}", code)
-        }
-        Page::Setup => SETUP.to_owned(),
+        Page::Dashboard => &pages().dashboard,
+        Page::Login {
+            error_code: Some("invalid_credentials"),
+        } => &pages().login_invalid_credentials,
+        Page::Login { .. } => &pages().login,
+        Page::Setup => &pages().setup,
     }
 }
 
@@ -168,6 +211,10 @@ pub fn public_asset(path: &str) -> Option<Asset> {
     match path {
         "/assets/public/public.css" => Some(Asset {
             body: include_bytes!("web/public.css"),
+            content_type: "text/css; charset=utf-8",
+        }),
+        "/assets/public/noscript.css" => Some(Asset {
+            body: include_bytes!("web/noscript.css"),
             content_type: "text/css; charset=utf-8",
         }),
         "/assets/public/setup.js" => Some(Asset {
@@ -205,15 +252,19 @@ pub fn operator_asset(path: &str) -> Option<Asset> {
 }
 
 pub fn public_catalog(locale: &str) -> Option<Asset> {
-    (locale == DEFAULT_LOCALE).then(|| Asset {
-        body: &catalogs().public,
+    let locale = installed_locale(locale).ok()?;
+    let catalog = catalogs().catalogs.get(locale.as_str())?;
+    Some(Asset {
+        body: &catalog.public,
         content_type: "application/json",
     })
 }
 
 pub fn operator_catalog(locale: &str) -> Option<Asset> {
-    (locale == DEFAULT_LOCALE).then(|| Asset {
-        body: &catalogs().operator,
+    let locale = installed_locale(locale).ok()?;
+    let catalog = catalogs().catalogs.get(locale.as_str())?;
+    Some(Asset {
+        body: &catalog.operator,
         content_type: "application/json",
     })
 }
@@ -234,5 +285,27 @@ mod tests {
         });
         assert!(unknown.contains(r#"data-error-code="""#));
         assert!(!unknown.contains("<b>not trusted</b>"));
+    }
+
+    #[test]
+    fn installed_locales_are_advertised_and_servable_with_canonical_spellings() {
+        for locale in installed_locale_ids() {
+            assert_eq!(installed_locale(locale), Ok(locale.to_owned()));
+            assert!(public_catalog(locale).is_some(), "public {locale}");
+            assert!(operator_catalog(locale).is_some(), "operator {locale}");
+        }
+        assert!(public_catalog("en-us").is_some());
+        assert!(operator_catalog("EN-us").is_some());
+        assert!(public_catalog("en-XA").is_none());
+        assert!(operator_catalog("fr-FR").is_none());
+    }
+
+    #[test]
+    fn invariant_pages_are_assembled_once() {
+        let first = page(Page::Dashboard);
+        let second = page(Page::Dashboard);
+        assert!(std::ptr::eq(first.as_ptr(), second.as_ptr()));
+        assert!(first.contains(NIM_PROXY_ICON));
+        assert!(!first.contains("<!-- nim-proxy-icon -->"));
     }
 }

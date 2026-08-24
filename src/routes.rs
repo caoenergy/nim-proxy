@@ -8,6 +8,7 @@ pub const ROOT: &str = "/";
 pub const DASH: &str = "/dash";
 pub const METRICS: &str = "/metrics";
 pub const ASSET_PUBLIC_CSS: &str = "/assets/public/public.css";
+pub const ASSET_PUBLIC_NOSCRIPT_CSS: &str = "/assets/public/noscript.css";
 pub const ASSET_PUBLIC_SETUP_JS: &str = "/assets/public/setup.js";
 pub const ASSET_PUBLIC_LOGIN_JS: &str = "/assets/public/login.js";
 // Axum does not support a parameter plus a suffix in one segment; the handler
@@ -82,6 +83,14 @@ const ROUTES: &[RouteContract] = &[
         path: ASSET_PUBLIC_CSS,
         phase: Phase::Always,
         probe_path: ASSET_PUBLIC_CSS,
+    },
+    RouteContract {
+        access: Access::Public,
+        method: "GET",
+        openapi: false,
+        path: ASSET_PUBLIC_NOSCRIPT_CSS,
+        phase: Phase::Always,
+        probe_path: ASSET_PUBLIC_NOSCRIPT_CSS,
     },
     RouteContract {
         access: Access::Public,
@@ -411,13 +420,13 @@ mod tests {
             serde_json::from_str(&crate::api::openapi_json()).expect("generated OpenAPI JSON");
         let paths = spec["paths"].as_object().expect("OpenAPI paths");
 
-        assert_eq!(ROUTES.len(), 35, "route-contract:inventory");
+        assert_eq!(ROUTES.len(), 36, "route-contract:inventory");
         assert_eq!(
             ROUTES
                 .iter()
                 .filter(|route| route.path.starts_with("/assets/"))
                 .count(),
-            9,
+            10,
             "route-contract:assets"
         );
         assert_registered_api_paths(&REGISTERED_API_PATHS);
@@ -442,7 +451,7 @@ mod tests {
                 .iter()
                 .filter(|route| route.phase == Phase::Always)
                 .count(),
-            9,
+            10,
             "route-contract:phase: health, both login methods, logout, bootstrap, and public assets are phase-independent"
         );
         assert_eq!(

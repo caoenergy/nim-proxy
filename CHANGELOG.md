@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Installed locale definitions now jointly drive locale bootstrap, public and
+  operator catalog bytes, and route acceptance. Catalog URLs accept valid
+  canonicalizable spellings such as `en-us`; `en-XA` remains test-only.
+- Embedded invariant pages are assembled once per process. Login and setup
+  retain their catalog gate for JavaScript clients while exposing their native
+  server forms when JavaScript is unavailable.
 - Settings retains the validated-model confirmation after successfully adding a
   NIM API key. History diagnostics now report actual inferred counter resets.
 - Dashboard polling now distinguishes a render failure from a lost proxy

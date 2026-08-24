@@ -6,6 +6,16 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-08-24] fix — catalog registry, cached pages, and native public forms
+
+The installed-locale definition now owns bootstrap advertisement, catalog
+construction, lookup, and canonicalizable catalog URLs. Invariant embedded
+pages are assembled through process-local `OnceLock` caches. JavaScript clients
+remain catalog-gated, while Login and Setup reveal their existing native forms
+under `<noscript>`; Setup maps that form to the existing atomic claim and
+session redirect. See the [presentation component](architecture/presentation-layer.md)
+and [test strategy](testing/test-strategy.md).
+
 ## [2026-08-24] component — deadline-owned SSE observation finalization
 
 The absolute streaming-deadline arm now takes the one bounded observer and

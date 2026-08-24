@@ -29,6 +29,10 @@ ASCII-sorted plain-string public and operator wire catalogs from it.
   gate runs before locale lookup.
 - `GET /api/locale-bootstrap` is public and returns exactly the compiled
   production registry (`en-US`) plus the validated persisted server default.
+  That registry is the same embedded definition that supplies both public and
+  operator catalog bytes and catalog-route lookup; accepted URL spellings are
+  first canonicalized, so `en-us` serves `en-US` while uninstalled locales do
+  not become servable.
   Public pages then fetch the public catalog
   projection—every `setup.*`, every `login.*`, and only
   `common.app_name`—while the operator page fetches the complete catalog.
@@ -62,7 +66,7 @@ Login accepts only the fixed `invalid_credentials` error code.
 repository-owned text and writes it with `textContent`. GET/POST statuses,
 redirects, and cookies remain owned by `auth.rs`.
 
-Every page begins hidden and renders only after bootstrap and catalog schema
+Every JavaScript page begins hidden and renders only after bootstrap and catalog schema
 validation. Operator startup resolves bootstrap → authenticated `/api/config`
 → current-user override or server default or `en-US` → exactly one installed
 operator catalog. It does not inspect browser languages or request headers.
@@ -70,14 +74,17 @@ Public setup/login remain on the server default. Dashboard application assets
 and API polling start only after the operator catalog resolves. Once boot code
 is running, bootstrap, config, catalog, or application-asset failure reveals only
 `NIM Proxy interface failed to load.`, logs no response body, and starts no
-later application request.
+later application request. Login and setup have a `<noscript>` reveal for the
+existing server forms only: Login continues its form POST, while Setup submits
+its existing fields through the same atomic claim path and receives its session
+redirect. The dashboard has no such fallback and remains session-gated.
 
 ## Proof
 
 `presentation_assets_are_gated` sends real requests in pre-setup, anonymous
 configured, and authenticated states and pins status, content type, CSP,
-`no-store`, public-byte stability, and private-sentinel absence. The 35-row
-route inventory and real behavior matrix cover the nine asset routes.
+`no-store`, public-byte stability, and private-sentinel absence. The 36-row
+route inventory and real behavior matrix cover the ten asset routes.
 
 `render_check.js --assets-only` rejects external origins and inline
 active/style contexts with tag/attribute and CSS-context parsing rather than

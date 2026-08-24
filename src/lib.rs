@@ -697,6 +697,7 @@ pub async fn run() {
         .merge(protected)
         .route(routes::HEALTH, get(|| async { "ok" }))
         .route(routes::ASSET_PUBLIC_CSS, get(public_asset))
+        .route(routes::ASSET_PUBLIC_NOSCRIPT_CSS, get(public_asset))
         .route(routes::ASSET_PUBLIC_SETUP_JS, get(public_asset))
         .route(routes::ASSET_PUBLIC_LOGIN_JS, get(public_asset))
         .route(routes::ASSET_PUBLIC_LOCALE, get(public_catalog))

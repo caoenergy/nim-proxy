@@ -6,10 +6,11 @@
 <link rel="icon" href="data:,">
 <title data-i18n-text="setup.document.title">NIM Proxy — First-time setup</title>
 <link id="presentation-stylesheet" rel="stylesheet" href="/assets/public/public.css">
+<noscript><link rel="stylesheet" href="/assets/public/noscript.css"></noscript>
 </head>
 <body hidden>
 <main>
-<form class="card" id="wiz" autocomplete="off">
+<form class="card" id="wiz" action="/setup" method="post" autocomplete="off">
   <h1><span class="brand">NIM</span> PROXY <span data-i18n="setup.header.title">— First-time setup</span></h1>
   <p class="sub" data-i18n="setup.header.subtitle">Complete setup: create the superuser account and add at least one NIM API key.</p>
   <div class="steps"><span id="s1" class="on" data-n="1" data-i18n="setup.stepper.step1">Create account</span><span id="s2" data-n="2" data-i18n="setup.stepper.step2">Add NIM API keys</span><span id="s3" data-n="3" data-i18n="setup.stepper.step3">Review &amp; finish</span></div>
@@ -29,13 +30,16 @@
   <section id="step2" hidden>
     <ul class="keys" id="keylist"></ul>
     <div class="addrow">
-      <input class="key" id="newkey" type="password" placeholder="nvapi-…" data-i18n-attr="aria-label:setup.step2.key_label">
-      <input class="rpm" id="newrpm" type="number" value="40" min="1" max="10000" title="requests/min" data-i18n-attr="aria-label:setup.step2.rpm_label">
+      <label class="noscript-fallback" for="newkey" hidden data-i18n="setup.step2.key_label">NIM API key</label>
+      <input class="key" id="newkey" name="nim_key" type="password" placeholder="nvapi-…" data-i18n-attr="aria-label:setup.step2.key_label">
+      <label class="noscript-fallback" for="newrpm" hidden data-i18n="setup.step2.rpm_label">Requests per minute</label>
+      <input class="rpm" id="newrpm" name="nim_rpm" type="number" value="40" min="1" max="10000" title="requests/min" data-i18n-attr="aria-label:setup.step2.rpm_label">
       <button type="button" class="ghost" id="addkey" data-i18n="setup.step2.addkey">Validate &amp; add</button>
     </div>
     <details>
       <summary data-i18n="setup.step2.advanced">Advanced — upstream base URL</summary>
-      <input id="baseurl" placeholder="https://integrate.api.nvidia.com" data-i18n-attr="aria-label:setup.step2.base_url">
+      <label class="noscript-fallback" for="baseurl" hidden data-i18n="setup.step2.base_url">Upstream base URL</label>
+      <input id="baseurl" name="base_url" placeholder="https://integrate.api.nvidia.com" data-i18n-attr="aria-label:setup.step2.base_url">
     </details>
     <div class="row">
       <button type="button" class="ghost" id="back1" data-i18n="setup.wizard.back">Back</button>
@@ -46,8 +50,8 @@
 
   <section id="step3" hidden>
     <div class="review" id="review"></div>
-    <label class="opt"><input type="checkbox" id="mintkey" checked>
-      <span id="mintkey-label"></span></label>
+    <label class="opt"><input type="checkbox" id="mintkey" name="create_client_key" value="default" checked>
+      <span id="mintkey-label"><span class="noscript-fallback" hidden data-i18n="setup.step3.mintkey_noscript">Create client API key</span></span></label>
     <p class="warn" id="mintwarn" hidden></p>
     <div class="row">
       <button type="button" class="ghost" id="back2" data-i18n="setup.wizard.back">Back</button>

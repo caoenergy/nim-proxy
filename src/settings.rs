@@ -6,7 +6,7 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use axum::extract::{FromRequest, Request, State};
+use axum::extract::{Form, FromRequest, Request, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::de::{self, IgnoredAny, MapAccess, Visitor};
@@ -105,6 +105,44 @@ pub struct SetupKey {
     rpm: Option<usize>,
 }
 
+/// The native form uses the same atomic claim as the JavaScript wizard. It is
+/// intentionally a tiny projection of that form's existing fields, not a
+/// second setup flow.
+#[derive(Deserialize)]
+struct NoScriptSetupForm {
+    username: String,
+    password: String,
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    nim_key: Option<String>,
+    #[serde(default)]
+    nim_rpm: Option<usize>,
+    #[serde(default)]
+    create_client_key: Option<String>,
+}
+
+impl From<NoScriptSetupForm> for SetupReq {
+    fn from(form: NoScriptSetupForm) -> Self {
+        let nim_keys = form
+            .nim_key
+            .filter(|key| !key.trim().is_empty())
+            .map(|key| SetupKey {
+                key,
+                rpm: form.nim_rpm,
+            })
+            .into_iter()
+            .collect();
+        Self {
+            username: form.username,
+            password: form.password,
+            base_url: form.base_url,
+            nim_keys,
+            create_client_key: form.create_client_key.map(|name| CreateClientKey { name }),
+        }
+    }
+}
+
 /// `POST /setup` — one atomic claim: create the superuser, record the
 /// initial NIM keys, persist, and mint a session. No half-configured server
 /// state exists at any point; an abandoned wizard leaves nothing behind.
@@ -127,9 +165,20 @@ pub async fn setup_submit(State(state): State<Arc<AppState>>, req: Request) -> R
         return setup_complete();
     }
     let headers = req.headers().clone();
-    let ApiJson(req) = match ApiJson::<SetupReq>::from_request(req, &state).await {
-        Ok(req) => req,
-        Err(response) => return response,
+    let form_submit = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("application/x-www-form-urlencoded"));
+    let req = if form_submit {
+        match Form::<NoScriptSetupForm>::from_request(req, &state).await {
+            Ok(Form(form)) => form.into(),
+            Err(_) => return json_error(StatusCode::BAD_REQUEST, "invalid_form", "invalid form"),
+        }
+    } else {
+        match ApiJson::<SetupReq>::from_request(req, &state).await {
+            Ok(ApiJson(req)) => req,
+            Err(response) => return response,
+        }
     };
     if req.password.len() < 10 {
         return json_error(
@@ -203,12 +252,23 @@ pub async fn setup_submit(State(state): State<Arc<AppState>>, req: Request) -> R
                 client_key: minted.map(|(name, secret)| MintedClientKey { name, secret }),
                 ok: true,
             };
-            (
-                StatusCode::OK,
-                [(header::SET_COOKIE, cookie)],
-                axum::Json(body),
-            )
-                .into_response()
+            if form_submit {
+                (
+                    StatusCode::SEE_OTHER,
+                    [
+                        (header::SET_COOKIE, cookie),
+                        (header::LOCATION, "/".to_owned()),
+                    ],
+                )
+                    .into_response()
+            } else {
+                (
+                    StatusCode::OK,
+                    [(header::SET_COOKIE, cookie)],
+                    axum::Json(body),
+                )
+                    .into_response()
+            }
         }
         Err(e) => json_error(StatusCode::BAD_REQUEST, "invalid_config", e),
     }

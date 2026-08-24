@@ -107,6 +107,11 @@ that proof.
   catalog modes mutate only the verified catalog-route response.
   `--catalog-startup-selftest` rejects inline-HTML mutation and requires the
   response-stage catalog hook plus a stylesheet-before-bootstrap guard.
+  `node scripts/render_check.js --page login --noscript` and `--page setup
+  --noscript` disable script execution in real Chromium and require the
+  corresponding visible native form and its original POST action; the setup
+  E2E form-claim test then proves the form uses the same atomic setup
+  transition and session redirect.
   Startup probes cover bootstrap/catalog failure, malformed schema, delayed
   catalog resolution, request-stage stylesheet loss on all three pages, and a
   later operator application-script loss. They require failed CSS to leave the
@@ -265,9 +270,9 @@ Two tests exist purely so the JSON contract cannot move by accident (see
   asserts the document is consumable — 17 operations, each tagged with a
   documented 200, the 14 protected `/api/*` operations inheriting the auth
   requirement, and public bootstrap plus `/setup` explicitly waiving it.
-- `routes::tests::inventory_agrees_with_generated_openapi` owns the 35-row
+- `routes::tests::inventory_agrees_with_generated_openapi` owns the 36-row
   compiled method/path inventory, including explicit OpenAPI omissions, the
-  `/v1/{*path}` template versus concrete probe, all nine presentation assets,
+  `/v1/{*path}` template versus concrete probe, all ten presentation assets,
   and zero superuser-exclusive routes. `route_contract_behavior_matrix` sends the
   five-state matrix through the real binary and asserts request/success
   content types, stable boundary errors, side effects, and `config.json`

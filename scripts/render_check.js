@@ -3662,6 +3662,10 @@ if (!['dashboard', 'setup', 'login'].includes(pageArg)) {
 const IS_SETUP = pageArg === 'setup';
 const IS_LOGIN = pageArg === 'login';
 const IS_DASHBOARD = pageArg === 'dashboard';
+const noScript = args.includes('--noscript');
+if (noScript && !IS_SETUP && !IS_LOGIN) {
+  throw new Error('--noscript only supports setup or login');
+}
 const allStates = args.includes('--all-states');
 const visualMatrix = args.includes('--visual-matrix');
 const semanticSelftest = args.includes('--semantic-selftest');
@@ -6131,6 +6135,7 @@ async function main() {
   await browser.send('Page.enable', {}, S);
   await browser.send('DOM.enable', {}, S);
   await browser.send('Network.enable', {}, S);
+  if (noScript) await browser.send('Emulation.setScriptExecutionDisabled', { value: true }, S);
   const fetchPatterns = [{ urlPattern: '*', requestStage: 'Request' }];
   if (escapeProbe || localeArg || startupProbe) {
     fetchPatterns.push({
@@ -6191,6 +6196,41 @@ async function main() {
   if (state !== 'complete') {
     console.error(`FAIL — page never finished loading (readyState=${state}).`);
     throw reportedFailure();
+  }
+  if (noScript) {
+    const fallback = JSON.parse(await evaluateRaw(browser, S, `JSON.stringify({
+      visible: getComputedStyle(document.body).display !== "none",
+      form: document.querySelector('form'),
+      method: document.querySelector('form')?.method,
+      action: new URL(document.querySelector('form')?.action || location.href).pathname,
+      username: !!document.querySelector('input[name="username"]'),
+      password: !!document.querySelector('input[name="password"]'),
+      key: !!document.querySelector('input[name="nim_key"]'),
+      submit: !!document.querySelector('button[type="submit"]'),
+      hiddenSteps: [...document.querySelectorAll('#step2, #step3')].filter((step) =>
+        getComputedStyle(step).display === 'none'
+      ).length,
+      unnamed: [...document.querySelectorAll('input[name]')].filter((input) =>
+        !input.labels?.length && !input.getAttribute('aria-label') && !input.getAttribute('aria-labelledby')
+      ).map((input) => input.name),
+    })`));
+    const problems = [];
+    if (!fallback.visible || !fallback.form) problems.push('server form stayed hidden');
+    if (fallback.method !== 'post' || fallback.action !== (IS_SETUP ? '/setup' : '/login'))
+      problems.push('server form action or method is incorrect');
+    if (!fallback.username || !fallback.password || !fallback.submit)
+      problems.push('server form is missing credentials or submit control');
+    if (IS_SETUP && !fallback.key) problems.push('setup form is missing the NIM key control');
+    if (IS_SETUP && fallback.hiddenSteps) problems.push('setup form retains hidden required sections');
+    if (fallback.unnamed.length) problems.push(`server form has unnamed controls: ${fallback.unnamed.join(', ')}`);
+    await cleanupRun();
+    if (problems.length) {
+      console.error(`FAIL — JavaScript-disabled ${pageArg} fallback violated its contract`);
+      for (const problem of problems) console.error(`  ${problem}`);
+      throw reportedFailure();
+    }
+    console.log(`noscript ${pageArg} fallback ok — visible native form with existing action`);
+    return;
   }
   // let the first poll land and paint
   await sleep(1500);
