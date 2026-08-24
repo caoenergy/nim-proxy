@@ -60,7 +60,10 @@ IP-level limiting.
 - Safe to expose by default; the three deployment patterns are documented in
   [deploy-docker](../ops/deploy-docker.md) and [sharing-with-friends](../ops/sharing-with-friends.md).
 - **No built-in TLS** — credentials must ride HTTPS, so TLS terminates at a
-  reverse proxy / platform edge; `TRUST_PROXY=true` marks the cookie `Secure`.
+  reverse proxy / platform edge. Set `TRUST_PROXY=true` only when the
+  application is reachable exclusively through a trusted proxy that overwrites
+  `X-Forwarded-Proto`; a direct client must not be able to supply that header.
+  Trusted HTTPS requests then receive a `Secure` session cookie.
 - Compose now publishes `127.0.0.1:8000:8000` by default (loopback), so a bare
   `docker compose up` can't accidentally expose an open instance.
 - Session-cookie state is per-boot; a restart logs dashboard users out (API
@@ -82,6 +85,10 @@ three specifics:
   `/setup`) are reachable. The later reset-aware history change removed
   `/api/history`; the same gate covers `/api/dashboard` and
   `/api/dashboard/now`.
+- **Authentication is not telemetry tenancy.** After that gate, every role
+  receives the same shared-pool `/metrics`, `/api/dashboard`, and
+  `/api/dashboard/now` payload scope. The separate `GET /api/config` response
+  remains filtered by role and key/client ownership before serialization.
 - **The single `ADMIN_PASSWORD` becomes multi-user.** Users live in the store
   (`{username, password_hash, role}`); login is username + password. Passwords
   are **PBKDF2-HMAC-SHA256, 600k iterations**, the iteration count encoded in

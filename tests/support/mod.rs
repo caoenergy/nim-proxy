@@ -16,14 +16,14 @@ use futures_util::StreamExt;
 
 /// One scripted response for the next chat-completions request. The queue is
 /// consumed front-to-back; when empty, `Ok` is the default.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Behavior {
     /// Respond normally (stream or JSON per the request's `stream` flag).
     Ok,
     /// 429 with this Retry-After (seconds).
     RateLimited(u64),
     /// 429 carrying NIM's worker-exhaustion signature — model-scoped, so the
-    /// proxy must back off the model (governor), never bench the lane.
+    /// proxy must back off the model (governor), never cool down the lane.
     WorkerExhausted,
     /// A retryable server error.
     ServerError(u16),
@@ -39,12 +39,17 @@ pub enum Behavior {
     /// Stream a data event at this interval forever. Unlike `Hang`, this stays
     /// active often enough that an idle timeout must not be what stops it.
     ActiveStream(u64),
+    /// Emit one measured usage event, then remain active until the request
+    /// deadline owns stream finalization.
+    ActiveStreamWithEarlyUsage(u64),
     /// Write large chunks without pause until downstream backpressure fills
     /// the proxy's response channel.
     FloodStream,
     /// Buffered response with an unknown `finish_reason` — exercises the
     /// server-side clamp that collapses odd values to `other`.
     OddFinish,
+    /// A fixed upstream response for an exact proxy-boundary assertion.
+    ExactResponse { content_type: String, body: String },
 }
 
 pub struct Hit {
@@ -164,6 +169,11 @@ async fn mock_chat(
             "usage": {"prompt_tokens": 11, "completion_tokens": 2}
         }))
         .into_response(),
+        Behavior::ExactResponse { content_type, body } => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, content_type)
+            .body(Body::from(body))
+            .unwrap(),
         Behavior::Hang => {
             let stream = futures_util::stream::once(async {
                 Ok::<_, std::io::Error>(Bytes::from("data: {\"choices\":[]}\n\n"))
@@ -192,6 +202,24 @@ async fn mock_chat(
             });
             sse(Body::from_stream(stream))
         }
+        Behavior::ActiveStreamWithEarlyUsage(ms) => {
+            let early = Some(Bytes::from(
+                "data: {\"choices\":[{\"index\":0,\"delta\":{}}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":3,\"total_tokens\":10}}\n\n",
+            ));
+            let stream = futures_util::stream::unfold(early, move |early| async move {
+                let bytes = match early {
+                    Some(bytes) => bytes,
+                    None => {
+                        tokio::time::sleep(Duration::from_millis(ms)).await;
+                        Bytes::from(
+                            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\n",
+                        )
+                    }
+                };
+                Some((Ok::<_, std::io::Error>(bytes), None))
+            });
+            sse(Body::from_stream(stream))
+        }
         Behavior::FloodStream => {
             let chunk = Bytes::from(vec![b'x'; 1024 * 1024]);
             let stream = futures_util::stream::unfold(chunk, |chunk| async move {
@@ -204,7 +232,7 @@ async fn mock_chat(
             // a request that offers tools gets a tool_calls response, otherwise
             // a normal stop. Usage always carries reasoning-token details.
             let offers_tools = parsed.get("tools").is_some();
-            let usage = "\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":2,\"completion_tokens_details\":{\"reasoning_tokens\":3}}";
+            let usage = "\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":2,\"completion_tokens_details\":{\"reasoning_tokens\":2}}";
             if wants_stream {
                 let mut chunks: Vec<Result<Bytes, std::io::Error>> = Vec::new();
                 if offers_tools {
@@ -233,14 +261,14 @@ async fn mock_chat(
                     "choices": [{"index": 0, "message": {"role": "assistant", "tool_calls": [
                         {"index": 0, "id": "c1", "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}
                     ]}, "finish_reason": "tool_calls"}],
-                    "usage": {"prompt_tokens": 11, "completion_tokens": 2, "completion_tokens_details": {"reasoning_tokens": 3}}
+                    "usage": {"prompt_tokens": 11, "completion_tokens": 2, "completion_tokens_details": {"reasoning_tokens": 2}}
                 }))
                 .into_response()
             } else {
                 axum::Json(serde_json::json!({
                     "id": "mock-1", "object": "chat.completion",
                     "choices": [{"index": 0, "message": {"role": "assistant", "content": "hello world"}, "finish_reason": "stop"}],
-                    "usage": {"prompt_tokens": 11, "completion_tokens": 2, "completion_tokens_details": {"reasoning_tokens": 3}}
+                    "usage": {"prompt_tokens": 11, "completion_tokens": 2, "completion_tokens_details": {"reasoning_tokens": 2}}
                 }))
                 .into_response()
             }
@@ -513,6 +541,20 @@ fn base_cmd(port: u16, data_dir: &std::path::Path) -> std::process::Command {
 /// non-zero without ever becoming healthy — used for boot-posture tests
 /// (corrupt store, future version, unwritable DATA_DIR).
 pub async fn expect_refuses_to_start(data_dir: std::path::PathBuf) {
+    let store_snapshot = startup_refusal_store_snapshot(&data_dir);
+    expect_refuses_to_start_with_store_snapshot(data_dir, store_snapshot).await;
+}
+
+/// Assert the startup posture for a deliberately invalid DATA_DIR that cannot
+/// contain a config store, without claiming retained-store coverage.
+pub async fn expect_refuses_to_start_without_store_retention(data_dir: std::path::PathBuf) {
+    expect_refuses_to_start_with_store_snapshot(data_dir, None).await;
+}
+
+async fn expect_refuses_to_start_with_store_snapshot(
+    data_dir: std::path::PathBuf,
+    store_snapshot: Option<(std::path::PathBuf, Vec<u8>)>,
+) {
     let port = {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         l.local_addr().unwrap().port()
@@ -526,6 +568,14 @@ pub async fn expect_refuses_to_start(data_dir: std::path::PathBuf) {
                 !status.success(),
                 "proxy should exit non-zero, got {status:?}"
             );
+            if let Some((store_path, store_before)) = store_snapshot {
+                assert_eq!(
+                    std::fs::read(&store_path)
+                        .expect("startup refusal must retain the existing config store"),
+                    store_before,
+                    "failed startup changed config.json bytes"
+                );
+            }
             let _ = std::fs::remove_dir_all(&data_dir);
             return;
         }
@@ -545,6 +595,32 @@ pub async fn expect_refuses_to_start(data_dir: std::path::PathBuf) {
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+fn startup_refusal_store_snapshot(
+    data_dir: &std::path::Path,
+) -> Option<(std::path::PathBuf, Vec<u8>)> {
+    assert!(
+        data_dir.is_absolute(),
+        "startup-refusal tests require an absolute DATA_DIR: {}",
+        data_dir.display()
+    );
+    let store_path = data_dir.join("config.json");
+    store_path.is_file().then(|| {
+        let store_before = std::fs::read(&store_path).expect("read startup-refusal store snapshot");
+        (store_path, store_before)
+    })
+}
+
+#[test]
+fn startup_refusal_store_snapshot_rejects_relative_data_dir() {
+    let result = std::panic::catch_unwind(|| {
+        startup_refusal_store_snapshot(std::path::Path::new("relative-data-dir"));
+    });
+    assert!(
+        result.is_err(),
+        "relative DATA_DIR must fail before a store check can be skipped"
+    );
 }
 
 /// A tempdir for boot-posture tests that pre-write store contents.
