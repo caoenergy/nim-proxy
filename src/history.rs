@@ -615,16 +615,10 @@ impl History {
         }
         let mut history = Self::load(None, days, initial_capacity);
         let mut replay = canonical.take_replay();
-        let inferred_resets = history.load_canonical(&replay.records, cutoff);
-        for (timestamp, count) in inferred_resets {
-            replay.diagnostic_events.push(store::DiagnosticEvent {
-                at: timestamp,
-                diagnostics: HistoryDiagnostics {
-                    inferred_resets: count,
-                    ..HistoryDiagnostics::default()
-                },
-            });
-            replay.diagnostics.inferred_resets += count;
+        let records = replay.records.clone();
+        {
+            let mut inner = history.inner.lock().unwrap();
+            Self::enrich_canonical_replay(&mut replay, &mut inner, &records, cutoff);
         }
         {
             let mut inner = history.inner.lock().unwrap();
@@ -657,15 +651,19 @@ impl History {
         }
     }
 
-    fn load_canonical(
-        &mut self,
+    /// Rebuild the canonical-normalization diagnostics alongside the store's
+    /// validation diagnostics. `inner` may be a throwaway index after a
+    /// compaction replacement, so replay installation never duplicates live
+    /// points while still retaining counter-reset evidence.
+    fn enrich_canonical_replay(
+        replay: &mut store::Replay,
+        inner: &mut HistoryInner,
         records: &[codec::Record],
         cutoff: Option<u64>,
-    ) -> BTreeMap<u64, usize> {
+    ) {
         let mut current_boot = None;
         let mut current_state = None;
         let mut inferred_resets = BTreeMap::new();
-        let mut inner = self.inner.lock().unwrap();
 
         for record in records {
             match record {
@@ -677,15 +675,17 @@ impl History {
                     let parsed = parsed_canonical_state(&sample.state);
                     let prior_resets = inner.diagnostics.inferred_resets;
                     ingest_canonical_sample(
-                        &mut inner,
+                        inner,
                         sample.timestamp,
                         sample.boot_id.clone(),
                         sample.capacity.clone(),
                         parsed,
                         cutoff,
                     );
-                    *inferred_resets.entry(sample.timestamp).or_default() +=
-                        inner.diagnostics.inferred_resets - prior_resets;
+                    let count = inner.diagnostics.inferred_resets - prior_resets;
+                    if count > 0 {
+                        *inferred_resets.entry(sample.timestamp).or_default() += count;
+                    }
                     current_boot = Some(sample.boot_id.clone());
                     current_state = Some(sample.state.clone());
                 }
@@ -696,15 +696,17 @@ impl History {
                         let parsed = parsed_canonical_state(state);
                         let prior_resets = inner.diagnostics.inferred_resets;
                         ingest_canonical_sample(
-                            &mut inner,
+                            inner,
                             checkpoint.timestamp,
                             checkpoint.boot_id.clone(),
                             checkpoint.capacity.clone(),
                             parsed,
                             cutoff,
                         );
-                        *inferred_resets.entry(checkpoint.timestamp).or_default() +=
-                            inner.diagnostics.inferred_resets - prior_resets;
+                        let count = inner.diagnostics.inferred_resets - prior_resets;
+                        if count > 0 {
+                            *inferred_resets.entry(checkpoint.timestamp).or_default() += count;
+                        }
                     }
                 }
                 codec::Record::Checkpoint(_) => {}
@@ -712,7 +714,16 @@ impl History {
         }
         inner.available_from = inner.points.first().map(|point| point.t);
         inner.available_to = inner.points.last().map(|point| point.t);
-        inferred_resets
+        for (timestamp, count) in inferred_resets {
+            replay.diagnostic_events.push(store::DiagnosticEvent {
+                at: timestamp,
+                diagnostics: HistoryDiagnostics {
+                    inferred_resets: count,
+                    ..HistoryDiagnostics::default()
+                },
+            });
+            replay.diagnostics.inferred_resets += count;
+        }
     }
 
     pub fn load(dir: Option<PathBuf>, days: u64, initial_capacity: CapacitySnapshot) -> Self {
@@ -1273,6 +1284,7 @@ impl History {
                         history.install_canonical_replay_if_unchanged(
                             replay.expect("committed canonical replacement has replay"),
                             inner_revision,
+                            Some(cutoff),
                         );
                         durable = true;
                         let mut dropped = history.dropped_since_compact.lock().unwrap();
@@ -1304,6 +1316,7 @@ impl History {
                         history.install_canonical_replay_if_unchanged(
                             replay.expect("committed canonical replacement has replay"),
                             inner_revision,
+                            Some(cutoff),
                         );
                         tracing::warn!(
                             "canonical history compaction was atomically renamed, but directory sync failed; \
@@ -1370,11 +1383,22 @@ impl History {
         });
     }
 
-    fn install_canonical_replay_if_unchanged(&self, replay: store::Replay, expected_revision: u64) {
+    fn install_canonical_replay_if_unchanged(
+        &self,
+        mut replay: store::Replay,
+        expected_revision: u64,
+        cutoff: Option<u64>,
+    ) {
         let mut inner = self.inner.lock().unwrap();
         if inner.revision != expected_revision {
             return;
         }
+        // The compacted record stream includes its hidden baseline. Replay it
+        // through the same normalization path as startup, but into a separate
+        // index so the already-live points are not appended a second time.
+        let records = replay.records.clone();
+        let mut replay_index = HistoryInner::default();
+        Self::enrich_canonical_replay(&mut replay, &mut replay_index, &records, cutoff);
         inner.diagnostics = replay.diagnostics;
         inner.recovery_gaps = replay.gaps;
         inner.recovery_events = replay.diagnostic_events;
@@ -2120,6 +2144,88 @@ nimproxy_ttft_seconds_count{model="z-ai/glm-5.2"} 4
             "restart keeps canonical bytes valid"
         );
         assert!(!legacy.exists(), "restart never creates legacy history");
+    }
+
+    #[tokio::test]
+    async fn canonical_compaction_replays_inferred_resets_at_their_sample_timestamp() {
+        let now = unix_now();
+        let day = 86_400_u64;
+        let cutoff = now.saturating_sub(day);
+        let capacity = canonical_capacity(&[40]);
+        let initial = canonical_snapshot(&capacity);
+        let reset_sample = cutoff.saturating_add(60);
+        let records = [
+            canonical_boot(cutoff.saturating_sub(500), "boot-a", &capacity),
+            canonical_sample(cutoff.saturating_sub(100), "boot-a", &capacity, 10.0, 1.0),
+            canonical_sample(reset_sample, "boot-a", &capacity, 5.0, 2.0),
+        ];
+        let (_dir, history) = open_canonical_equivalence_history(&records, 1, initial.clone());
+
+        assert_eq!(
+            history
+                .rollup(cutoff, reset_sample.saturating_sub(1), 100)
+                .diagnostics
+                .inferred_resets,
+            0,
+            "the reset diagnostic is not reported before its retained sample"
+        );
+        assert_eq!(
+            history
+                .rollup(cutoff, history.boot_t, 100)
+                .diagnostics
+                .inferred_resets,
+            1,
+            "startup replay records the retained counter decrease"
+        );
+
+        history.append(
+            history.boot_t,
+            "# TYPE nimproxy_requests_total counter\n\
+             nimproxy_requests_total{client=\"equivalence\"} 10\n\
+             # TYPE nimproxy_active_requests gauge\n\
+             nimproxy_active_requests{client=\"equivalence\"} 3\n",
+            initial,
+        );
+        wait_for_canonical_compaction_idle(&history, "inferred reset replay").await;
+
+        assert_eq!(
+            history
+                .rollup(cutoff, reset_sample.saturating_sub(1), 100)
+                .diagnostics
+                .inferred_resets,
+            0,
+            "compaction keeps the reset diagnostic out of earlier windows"
+        );
+        assert_eq!(
+            history
+                .rollup(cutoff, history.boot_t, 100)
+                .diagnostics
+                .inferred_resets,
+            1,
+            "post-compaction replay retains the reset diagnostic at and after the sample"
+        );
+    }
+
+    #[test]
+    fn canonical_replay_without_a_reset_creates_no_empty_reset_event() {
+        let capacity = canonical_capacity(&[40]);
+        let initial = canonical_snapshot(&capacity);
+        let records = [
+            canonical_boot(100, "boot-a", &capacity),
+            canonical_sample(110, "boot-a", &capacity, 10.0, 1.0),
+            canonical_sample(120, "boot-a", &capacity, 15.0, 2.0),
+        ];
+        let (_dir, history) = open_canonical_equivalence_history(&records, 0, initial);
+        let inner = history.inner.lock().unwrap();
+
+        assert_eq!(inner.diagnostics.inferred_resets, 0);
+        assert!(
+            inner
+                .recovery_events
+                .iter()
+                .all(|event| event.diagnostics != HistoryDiagnostics::default()),
+            "a replay without a reset does not create an empty inferred-reset event"
+        );
     }
 
     #[tokio::test]
