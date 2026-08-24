@@ -6480,6 +6480,8 @@ async function main() {
     const renderIsolationFailure = await evaluate(`
       (async () => {
         const problems = [];
+        const disconnectedText = message('dashboard.nav.live.disconnected');
+        const renderFailedText = message('dashboard.nav.live.render_failed');
         const styleRoot = document.createElement('div');
         styleRoot.innerHTML = '<i data-style="not-an-allowed-property:1px"></i>'
           + '<i data-style="width:17px"></i>';
@@ -6527,8 +6529,8 @@ async function main() {
             json: async () => { throw new Error('parse isolation probe'); },
           });
           await pollNow();
-          if ($('liveText').textContent.trim() !== 'Disconnected')
-            problems.push('response parse failure was reported as ' + $('liveText').textContent.trim() + ' instead of Disconnected');
+          if ($('liveText').textContent.trim() !== disconnectedText)
+            problems.push('response parse failure was reported as ' + $('liveText').textContent.trim() + ' instead of ' + disconnectedText);
         } finally {
           window.fetch = savedFetch;
         }
@@ -6545,8 +6547,8 @@ async function main() {
             throw new Error('unexpected range-failure probe request: ' + url);
           };
           await pollNow();
-          if ($('liveText').textContent.trim() !== 'Disconnected')
-            problems.push('range fetch failure was reported as ' + $('liveText').textContent.trim() + ' instead of Disconnected');
+          if ($('liveText').textContent.trim() !== disconnectedText)
+            problems.push('range fetch failure was reported as ' + $('liveText').textContent.trim() + ' instead of ' + disconnectedText);
         } finally {
           rangeData = savedRange;
           window.fetch = savedFetch;
@@ -6558,8 +6560,8 @@ async function main() {
         try {
           render = () => { throw new Error('render isolation probe'); };
           await pollNow();
-          if ($('liveText').textContent.trim() !== 'Render failed')
-            problems.push('render exception was reported as ' + $('liveText').textContent.trim() + ' instead of Render failed');
+          if ($('liveText').textContent.trim() !== renderFailedText)
+            problems.push('render exception was reported as ' + $('liveText').textContent.trim() + ' instead of ' + renderFailedText);
         } finally {
           render = savedRender;
           render();
