@@ -39,6 +39,11 @@ consumption (per-client metrics) both stay visible on the dashboard, which is
 identical for every role. Deleting a user pulls their NIM keys from the pool and
 revokes their client keys — their harnesses stop, which is the point.
 
+This visibility is shared observability, not shared configuration: every
+authenticated role receives the same `/metrics`, `/api/dashboard`, and
+`/api/dashboard/now` metric scope, while `/api/config` omits other owners'
+keys and the user role's admin-only sections.
+
 ## Fairness & capacity
 
 The [FIFO dispatcher](../decisions/global-fifo-dispatcher.md) guarantees no

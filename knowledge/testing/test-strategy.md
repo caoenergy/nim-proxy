@@ -74,6 +74,12 @@ that proof.
   route_contract_ -- --nocapture` proves real phase/auth/role behavior,
   request and success content types, side effects, ownership, and durable
   bytes. Neither table is a router.
+  `cargo test --test e2e
+  shared_observability_is_identical_across_roles_while_config_stays_scoped
+  -- --exact` adds a two-owner payload proof: traffic from another owner's
+  named client appears in both role sessions' `/metrics`, `/api/dashboard`, and
+  `/api/dashboard/now` telemetry, while that user's `/api/config` body stays
+  role/owner filtered. It never logs or persists a minted client secret.
 - **Embedded presentation:** `node scripts/render_check.js --asset-selftest`
   proves the four external-origin classes across nine adversarial forms,
   including protocol-relative URLs, reordered/unquoted attributes, `srcset`,

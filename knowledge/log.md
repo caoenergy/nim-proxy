@@ -16,6 +16,16 @@ existing i18n checker reads that mapping table to reject any linter retirement
 the decision calls standard. Its positive and inverted self-tests preserve the
 authority boundary without adding a second vocabulary source.
 
+## [2026-08-24] component — shared observability boundary regression proof
+
+Authenticated roles deliberately share the pool's bounded telemetry payload:
+`/metrics`, `/api/dashboard`, and `/api/dashboard/now` expose the same metric
+scope after traffic from another owner's named client. `GET /api/config` remains the
+separate role/ownership-filtered configuration boundary. The focused two-owner
+E2E proof never prints or commits its minted client secret. See the [HTTP
+trust-boundary map](architecture/http-trust-boundary-map.md), [dashboard](architecture/dashboard.md),
+[sharing runbook](ops/sharing-with-friends.md), and [test strategy](testing/test-strategy.md).
+
 ## [2026-08-01] maintenance — publish the v0.6.6 upgrade boundary
 
 Task 17 reconciles the user-facing release documents with the completed

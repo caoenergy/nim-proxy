@@ -100,6 +100,13 @@ durable byte changes. Upstream-only probes must change no config bytes. The
 data-plane scheduling, response, and observation details remain in the
 [streaming pipeline](streaming-pipeline.md).
 
+Authentication is the telemetry boundary, not a tenancy filter: every
+authenticated role receives the same established pool payload from `/metrics`,
+`/api/dashboard`, and `/api/dashboard/now`, including bounded metric labels.
+`GET /api/config` is the deliberate exception: it filters foreign owned keys
+and admin-only sections before serialization. The focused multi-user E2E proof
+is `shared_observability_is_identical_across_roles_while_config_stays_scoped`.
+
 Generated OpenAPI describes 14 `/api` operations and two setup POST
 operations. The locale bootstrap is public with explicit `security: []`; the
 other 13 `/api` operations inherit operator authentication. HTML/form,

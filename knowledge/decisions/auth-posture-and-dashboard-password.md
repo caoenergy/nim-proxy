@@ -82,6 +82,10 @@ three specifics:
   `/setup`) are reachable. The later reset-aware history change removed
   `/api/history`; the same gate covers `/api/dashboard` and
   `/api/dashboard/now`.
+- **Authentication is not telemetry tenancy.** After that gate, every role
+  receives the same shared-pool `/metrics`, `/api/dashboard`, and
+  `/api/dashboard/now` payload scope. The separate `GET /api/config` response
+  remains filtered by role and key/client ownership before serialization.
 - **The single `ADMIN_PASSWORD` becomes multi-user.** Users live in the store
   (`{username, password_hash, role}`); login is username + password. Passwords
   are **PBKDF2-HMAC-SHA256, 600k iterations**, the iteration count encoded in

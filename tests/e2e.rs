@@ -6620,6 +6620,170 @@ async fn api_config_is_filtered_by_role_before_serialization() {
     assert_eq!(user_view["pool"]["enabled"], 3);
 }
 
+/// The shared pool deliberately shares observability, not configuration
+/// ownership. Another owner's named client must therefore be visible in a
+/// user's authenticated telemetry payload while that user's config body still
+/// omits the other owner's keys and admin-only sections.
+#[tokio::test]
+async fn shared_observability_is_identical_across_roles_while_config_stays_scoped() {
+    let mock = start_mock().await;
+    let proxy = start_proxy_with(
+        &mock.url,
+        support::StoreOpts {
+            open: false,
+            extra_users: vec![
+                ("shared-admin".into(), "admin".into()),
+                ("shared-user".into(), "user".into()),
+            ],
+            ..Default::default()
+        },
+        &[("HISTORY_SAMPLE_SECS", "1")],
+    )
+    .await;
+    let admin = support::login_as(&proxy, "shared-admin").await;
+    let user = support::login_as(&proxy, "shared-user").await;
+
+    let (status, _) = post_json(
+        &proxy,
+        &user,
+        "/api/settings/nim-keys",
+        serde_json::json!({"add": {"key": "shared-user-nim-key", "rpm": 40}}),
+    )
+    .await;
+    assert_eq!(status, 200, "user-owned key fixture must be accepted");
+    let (status, _) = post_json(
+        &proxy,
+        &user,
+        "/api/settings/clients",
+        serde_json::json!({"add": {"name": "shared-user-client"}}),
+    )
+    .await;
+    assert_eq!(status, 200, "user-owned client fixture must be accepted");
+    let (status, _) = post_json(
+        &proxy,
+        &admin,
+        "/api/settings/nim-keys",
+        serde_json::json!({"add": {"key": "shared-admin-nim-key", "rpm": 40}}),
+    )
+    .await;
+    assert_eq!(status, 200, "admin-owned key fixture must be accepted");
+    let (status, minted) = post_json(
+        &proxy,
+        &admin,
+        "/api/settings/clients",
+        serde_json::json!({"add": {"name": "shared-admin-client"}}),
+    )
+    .await;
+    assert_eq!(status, 200, "admin-owned client fixture must be accepted");
+    let admin_client_key = minted["secret"]
+        .as_str()
+        .expect("minted client key is available only to this request");
+
+    let response = client()
+        .post(proxy.url("/v1/chat/completions"))
+        .bearer_auth(admin_client_key)
+        .json(&chat_body("shared-observability", false))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let admin_now = dashboard_now(&proxy, &admin).await;
+    let user_now = dashboard_now(&proxy, &user).await;
+    let named_client = |payload: &serde_json::Value| {
+        payload["metrics"].as_array().unwrap().iter().any(|metric| {
+            metric["metric"] == "nimproxy_requests_total"
+                && metric["labels"]["client"] == "shared-admin-client"
+                && metric["labels"]["path"] == "/v1/chat/completions"
+                && metric["labels"]["status"] == "200"
+        })
+    };
+    assert!(
+        named_client(&admin_now),
+        "admin sees its named-client metric"
+    );
+    assert!(
+        named_client(&user_now),
+        "user sees the other owner's shared named-client metric"
+    );
+    assert_eq!(
+        admin_now["metrics"], user_now["metrics"],
+        "dashboard now metric scope is role-independent"
+    );
+
+    let history_revision = admin_now["history_revision"].as_u64().unwrap();
+    let admin_range = wait_for_persisted_chat_total(&proxy, &admin, history_revision, 1.0).await;
+    let user_range = dashboard_range(&proxy, &user, 1, 4_102_444_800, 1000).await;
+    assert!(user_range["totals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|metric| {
+            metric["metric"] == "nimproxy_requests_total"
+                && metric["labels"]["client"] == "shared-admin-client"
+                && metric["labels"]["path"] == "/v1/chat/completions"
+                && metric["labels"]["status"] == "200"
+        }));
+    assert_eq!(
+        admin_range["totals"], user_range["totals"],
+        "dashboard history metric scope is role-independent"
+    );
+
+    let mut telemetry_payloads = Vec::new();
+    for username in ["shared-admin", "shared-user"] {
+        let telemetry = client()
+            .get(proxy.url("/metrics"))
+            .header(
+                "authorization",
+                format!("Bearer {username}:{TEST_PASSWORD}"),
+            )
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(telemetry.status(), 200);
+        let payload = telemetry.text().await.unwrap();
+        assert!(
+            payload.contains("client=\"shared-admin-client\""),
+            "authenticated scraper sees the shared named-client label"
+        );
+        let mut lines: Vec<_> = payload
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect();
+        lines.sort_unstable();
+        telemetry_payloads.push(lines);
+    }
+    assert_eq!(
+        telemetry_payloads[0], telemetry_payloads[1],
+        "Prometheus metric scope is role-independent"
+    );
+
+    let admin_config = api_config(&proxy, &admin).await;
+    let user_config = api_config(&proxy, &user).await;
+    assert!(admin_config["server"].is_object());
+    assert!(admin_config["users"].is_array());
+    assert_eq!(admin_config["nim_keys"].as_array().unwrap().len(), 5);
+    assert_eq!(admin_config["client_keys"].as_array().unwrap().len(), 2);
+    assert!(user_config.get("server").is_none());
+    assert!(user_config.get("users").is_none());
+    assert_eq!(user_config["role"], "user");
+    assert_eq!(user_config["nim_keys"].as_array().unwrap().len(), 1);
+    assert_eq!(user_config["client_keys"].as_array().unwrap().len(), 1);
+    assert_eq!(user_config["nim_keys"][0]["owner"], "shared-user");
+    assert_eq!(user_config["client_keys"][0]["name"], "shared-user-client");
+    assert!(user_config["nim_keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|key| key["owner"] != "shared-admin"));
+    assert!(user_config["client_keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|key| key["name"] != "shared-admin-client"));
+}
+
 #[tokio::test]
 async fn user_role_is_denied_server_settings_and_foreign_keys() {
     let mock = start_mock().await;
