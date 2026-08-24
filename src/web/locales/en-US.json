@@ -1232,6 +1232,10 @@
       "en": "Could not load Settings. Reload the page and sign in again.",
       "hash": "caed8f2c"
     },
+    "settings.error.refresh_after_save": {
+      "en": "Settings were saved, but refreshing them failed.",
+      "hash": "ce204725"
+    },
     "settings.error.request_failed": {
       "en": "Request failed (HTTP {status}).",
       "hash": "3692891d"

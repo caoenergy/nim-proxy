@@ -256,10 +256,10 @@ Two tests exist purely so the JSON contract cannot move by accident (see
   from the committed file. Regenerate with
   `UPDATE_OPENAPI=1 cargo test --test openapi`; CI's `check` job runs that and
   then `git diff --exit-code -- openapi.json`. `spec_is_usable` additionally
-  asserts the document is consumable — 16 operations, each tagged with a
-  documented 200, the 13 protected `/api/*` operations inheriting the auth
+  asserts the document is consumable — 17 operations, each tagged with a
+  documented 200, the 14 protected `/api/*` operations inheriting the auth
   requirement, and public bootstrap plus `/setup` explicitly waiving it.
-- `routes::tests::inventory_agrees_with_generated_openapi` owns the 34-row
+- `routes::tests::inventory_agrees_with_generated_openapi` owns the 35-row
   compiled method/path inventory, including explicit OpenAPI omissions, the
   `/v1/{*path}` template versus concrete probe, all nine presentation assets,
   and zero superuser-exclusive routes. `route_contract_behavior_matrix` sends the

@@ -26,6 +26,18 @@ E2E proof never prints or commits its minted client secret. See the [HTTP
 trust-boundary map](architecture/http-trust-boundary-map.md), [dashboard](architecture/dashboard.md),
 [sharing runbook](ops/sharing-with-friends.md), and [test strategy](testing/test-strategy.md).
 
+## [2026-08-24] component — atomic Server settings save
+
+The Settings Server form now sends one complete upstream-and-limits payload to
+`POST /api/settings/server`. The handler reuses the config store's serialized
+candidate → validate → persist → publish transaction, so rejection leaves
+durable and runtime settings unchanged. It clears the model catalog and
+no-inject memory only after a committed changed upstream; limits-only saves do
+not invalidate those upstream-owned caches. The browser reloads authoritative
+settings after either result and distinguishes a post-success refresh failure
+from a rejected save. The original upstream and limits endpoints remain
+documented single-purpose operations. See the [trust-boundary map](architecture/http-trust-boundary-map.md), [typed API decision](decisions/typed-responses-and-generated-openapi.md), and [test strategy](testing/test-strategy.md).
+
 ## [2026-08-01] maintenance — publish the v0.6.6 upgrade boundary
 
 Task 17 reconciles the user-facing release documents with the completed

@@ -23,13 +23,18 @@ const noteMessage = (id, messageId, params = {}, ok = false) => {
   el.classList.toggle('ok', ok);
 };
 
-async function loadSettings() {
+async function loadSettings(afterSave = false) {
   try {
     const j = await (await fetch('/api/config')).json();
     if (!j.nim_keys) throw 0;
     SET = j;
-  } catch { $('setbody').innerHTML = `<div class="empty">${escapeHtml(catalogMessage('settings.error.load'))}</div>`; return; }
+  } catch {
+    const error = afterSave ? 'settings.error.refresh_after_save' : 'settings.error.load';
+    $('setbody').innerHTML = `<div class="empty">${escapeHtml(catalogMessage(error))}</div>`;
+    return false;
+  }
   renderSettings();
+  return true;
 }
 
 const TRASH = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2.5 4h11M6.5 4V2.5h3V4M4 4l.8 9.5h6.4L12 4M6.5 7v4M9.5 7v4"/></svg>';
@@ -327,11 +332,11 @@ function renderServer() {
       limits[field] = n;
     }
     try {
-      if (base !== sv.base_url) await sPost('/api/settings/upstream', { base_url: base });
-      await sPost('/api/settings/limits', limits);
-      await loadSettings();
-      noteMessage('limits-err', 'settings.validation.saved', {}, true);
-    } catch (e) { note('limits-err', e.message); }
+      await sPost('/api/settings/server', { base_url: base, ...limits });
+      if (await loadSettings(true)) noteMessage('limits-err', 'settings.validation.saved', {}, true);
+    } catch (e) {
+      if (await loadSettings()) note('limits-err', e.message);
+    }
   });
   $('gov-tog').addEventListener('click', async () => {
     try { await sPost('/api/settings/governor', { enabled: !sv.governor.enabled }); await loadSettings(); }

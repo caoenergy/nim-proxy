@@ -452,34 +452,27 @@ const INTERACTION_ROWS = [
     id: 'mutation-server-limits',
     category: 'edit',
     state: 'mutation-success',
-    action: 'change the upstream base URL and activate Save in Upstream and limits',
+    action: 'change the upstream base URL and activate Save in Server settings',
     visible: 'the saved limit values remain visible',
     dom: [
       { selector: '#sv-base', property: 'value', equals: 'https://fixture.invalid/v1' },
       { selector: '#limits-err', property: 'textContent', equals: 'Saved.' },
     ],
-    requests: [
-      {
-        method: 'POST',
-        path: '/api/settings/upstream',
-        query: {},
-        body: { base_url: 'https://fixture.invalid/v1' },
+    request: {
+      method: 'POST',
+      path: '/api/settings/server',
+      query: {},
+      body: {
+        base_url: 'https://fixture.invalid/v1',
+        heartbeat_secs: 10,
+        max_inflight: 512,
+        max_wait_secs: 900,
+        models_ttl_secs: 600,
+        request_timeout_secs: 300,
+        stream_idle_secs: 300,
+        strict_passthrough: false,
       },
-      {
-        method: 'POST',
-        path: '/api/settings/limits',
-        query: {},
-        body: {
-          heartbeat_secs: 10,
-          max_inflight: 512,
-          max_wait_secs: 900,
-          models_ttl_secs: 600,
-          request_timeout_secs: 300,
-          stream_idle_secs: 300,
-          strict_passthrough: false,
-        },
-      },
-    ],
+    },
   },
   {
     id: 'mutation-server-history',
@@ -694,16 +687,21 @@ const INTERACTION_ROWS = [
     id: 'error-settings-mutation',
     category: 'error',
     state: 'mutation-error',
-    action: 'submit locally valid history settings and fulfill with ApiError',
-    visible: 'the typed API error message is visible beside the triggering control',
-    dom: [{ selector: '#history-err', property: 'textContent', equals: 'invalid history fixture' }],
+    action: 'submit a rejected combined Server save and reload authoritative settings',
+    visible: 'the typed API error is visible and the rejected Server values are not retained',
+    dom: [{ selector: '#limits-err', property: 'textContent', equals: 'invalid history fixture' }],
     request: {
       method: 'POST',
-      path: '/api/settings/history',
+      path: '/api/settings/server',
       body: {
-        days: 30,
-        default_window_days: 7,
-        slo_target_percent: 99.9,
+        base_url: 'https://rejected.fixture.invalid/v1',
+        heartbeat_secs: 10,
+        max_inflight: 512,
+        max_wait_secs: 5,
+        models_ttl_secs: 600,
+        request_timeout_secs: 300,
+        stream_idle_secs: 300,
+        strict_passthrough: false,
       },
     },
   },
@@ -1598,7 +1596,10 @@ const DOM_CONTRACTS = {
       true),
   ],
   'error-settings-mutation': [
-    domContract('typed-api-error', `document.querySelector('#history-err')?.textContent.trim() ?? null`, 'invalid history fixture'),
+    domContract('typed-api-error', `document.querySelector('#limits-err')?.textContent.trim() ?? null`, 'invalid history fixture'),
+    domContract('rejected-server-values-reloaded',
+      `document.querySelector('#sv-base')?.value ?? null`,
+      'https://integrate.api.nvidia.com'),
   ],
   'error-settings-fallback': [
     domContract('catalog-request-fallback',
@@ -2147,7 +2148,7 @@ const FIXTURE_SCENARIOS = {
       after: 'scenarios.json#limits-after',
       before: 'scenarios.json#limits-before',
     },
-    response: ['ok.json', 'ok.json'],
+    response: 'ok.json',
   }),
   'mutation-server-history': dashboardRecipe({
     config: {
@@ -2231,7 +2232,10 @@ const FIXTURE_SCENARIOS = {
       before: 'config-superuser.json',
     },
   }),
-  'error-settings-mutation': dashboardRecipe({ response: 'api-error.json' }),
+  'error-settings-mutation': dashboardRecipe({
+    config: { action: 'config-superuser.json', before: 'config-superuser.json' },
+    response: 'api-error.json',
+  }),
   'error-settings-fallback': dashboardRecipe({ response: 'api-error.json' }),
   'error-nim-key-validation': dashboardRecipe({ response: 'validate-failure.json' }),
   'error-setup-key-validation': setupRecipe({ response: 'validate-failure.json' }),
@@ -2484,6 +2488,7 @@ const SETTINGS_MUTATIONS_THAT_RELOAD_CONFIG = new Set([
   'mutation-user-create',
   'mutation-user-role',
   'mutation-user-delete',
+  'error-settings-mutation',
 ]);
 for (const row of INTERACTION_ROWS) {
   if (!SETTINGS_MUTATIONS_THAT_RELOAD_CONFIG.has(row.id)) continue;
@@ -2791,8 +2796,8 @@ function interactionSelftest() {
   mutate('request body mutation', 'mutation-user-create', observation => {
     observation.requests[0].body.add.role = 'admin';
   });
-  mutate('request sequence mutation', 'mutation-server-limits', observation => {
-    observation.requests.reverse();
+  mutate('atomic request body mutation', 'mutation-server-limits', observation => {
+    observation.requests[0].body.max_wait_secs = 899;
   });
   mutate('startup request sequence mutation', 'startup-dashboard-healthy', observation => {
     [observation.requests[0], observation.requests[1]] =
@@ -4481,7 +4486,7 @@ function matrixActionExpression(id) {
     'error-dashboard-range': click('#ranges [data-range="3600"]'),
     'error-dashboard-now': `await pollNow()`,
     'error-settings-load': openSettings,
-    'error-settings-mutation': `${setValue('#sv-retention-days', '30')};${setValue('#sv-default-days', '7')};${setValue('#sv-slo', '99.9')};${click('#save-history')}`,
+    'error-settings-mutation': `${setValue('#sv-base', 'https://rejected.fixture.invalid/v1')};${setValue('#sv-maxwait', '5')};${setValue('#sv-heartbeat', '10')};${setValue('#sv-idle', '300')};${setValue('#sv-timeout', '300')};${setValue('#sv-ttl', '600')};${setValue('#sv-inflight', '512')};${click('#save-limits')}`,
     'error-settings-fallback': `${setValue('#sv-retention-days', '30')};${setValue('#sv-default-days', '7')};${setValue('#sv-slo', '99.9')};${click('#save-history')}`,
     'error-nim-key-validation': `${setValue('#nk-key', 'nvapi-invalid-fixture')};${click('#nk-add')}`,
     'error-setup-key-validation': `${setValue('#newkey', 'nvapi-invalid-fixture')};${click('#addkey')}`,

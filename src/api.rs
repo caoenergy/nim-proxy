@@ -506,6 +506,7 @@ impl Modify for SecurityAddon {
         crate::settings::clients,
         crate::settings::upstream,
         crate::settings::limits,
+        crate::settings::server,
         crate::settings::history,
         crate::settings::governor_cfg,
         crate::settings::users,

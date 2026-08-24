@@ -784,23 +784,82 @@ pub struct LimitsReq {
     strict_passthrough: bool,
 }
 
+fn replace_limits(cand: &mut StoredConfig, req: LimitsReq) {
+    cand.limits = crate::config::Limits {
+        heartbeat_secs: req.heartbeat_secs,
+        max_inflight: req.max_inflight,
+        max_wait_secs: req.max_wait_secs,
+        models_ttl_secs: req.models_ttl_secs,
+        request_timeout_secs: req.request_timeout_secs,
+        stream_idle_secs: req.stream_idle_secs,
+        strict_passthrough: req.strict_passthrough,
+    };
+}
+
+/// The Server form's one complete payload. It deliberately combines the
+/// upstream URL and all limits so browser saves cannot commit their first
+/// request before the second request is rejected.
+#[derive(Deserialize, ToSchema)]
+pub struct ServerReq {
+    /// `http(s)://host[:port]`; link-local addresses are refused (cloud
+    /// metadata endpoints have no legitimate NIM use).
+    base_url: String,
+    #[serde(flatten)]
+    limits: LimitsReq,
+}
+
+/// `POST /api/settings/server` (admin) — atomically applies the Server
+/// form's upstream URL and limits. Upstream-owned caches are flushed only
+/// after the single candidate has committed and only when that URL changed.
+#[utoipa::path(
+    post,
+    path = "/api/settings/server",
+    tag = "settings",
+    request_body = ServerReq,
+    responses(
+        (status = 200, description = "Applied as one candidate, persisted, and swapped into the live runtime config; upstream caches were flushed only if the URL changed", body = OkResponse),
+        (status = 400, description = "The complete candidate was rejected; no settings were applied", body = ApiError),
+        (status = 401, description = "No session, or the caller's user was deleted", body = ApiError),
+        (status = 403, description = "Server settings require an admin", body = ApiError),
+        (status = 422, description = "A field is missing or the wrong type — a partial body is never a silent reset", body = ApiError),
+    ),
+)]
+pub async fn server(
+    State(state): State<Arc<AppState>>,
+    Extension(Identity(username)): Extension<Identity>,
+    ApiJson(req): ApiJson<ServerReq>,
+) -> Response {
+    let result = {
+        let mut guard = state.store.lock().unwrap();
+        match role_of(&guard, &username) {
+            Some(r) if r.is_admin() => {}
+            Some(_) => return forbidden("server settings require an admin"),
+            None => return stale_session(),
+        }
+        let mut cand = guard.clone();
+        let upstream_changed = cand.upstream.base_url != req.base_url.trim().trim_end_matches('/');
+        cand.upstream.base_url = req.base_url.trim().trim_end_matches('/').to_owned();
+        replace_limits(&mut cand, req.limits);
+        commit(&state, &mut guard, cand).map(|()| upstream_changed)
+    };
+    match result {
+        Ok(true) => {
+            *state.models_cache.lock().await = None;
+            state.no_inject.lock().unwrap().clear();
+            ok_json()
+        }
+        Ok(false) => ok_json(),
+        Err(e) => bad_request(e),
+    }
+}
+
 admin_section!(
     limits,
     LimitsReq,
     "/api/settings/limits",
     "`POST /api/settings/limits` (admin) — patience, timeouts and the \
      in-flight cap. Every field is required.",
-    |cand: &mut StoredConfig, req: LimitsReq| {
-        cand.limits = crate::config::Limits {
-            heartbeat_secs: req.heartbeat_secs,
-            max_inflight: req.max_inflight,
-            max_wait_secs: req.max_wait_secs,
-            models_ttl_secs: req.models_ttl_secs,
-            request_timeout_secs: req.request_timeout_secs,
-            stream_idle_secs: req.stream_idle_secs,
-            strict_passthrough: req.strict_passthrough,
-        };
-    }
+    replace_limits
 );
 
 #[derive(Deserialize, ToSchema)]

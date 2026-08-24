@@ -76,7 +76,7 @@ later application request.
 
 `presentation_assets_are_gated` sends real requests in pre-setup, anonymous
 configured, and authenticated states and pins status, content type, CSP,
-`no-store`, public-byte stability, and private-sentinel absence. The 34-row
+`no-store`, public-byte stability, and private-sentinel absence. The 35-row
 route inventory and real behavior matrix cover the nine asset routes.
 
 `render_check.js --assets-only` rejects external origins and inline

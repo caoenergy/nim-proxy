@@ -657,6 +657,77 @@
         }
       }
     },
+    "/api/settings/server": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "`POST /api/settings/server` (admin) — atomically applies the Server\nform's upstream URL and limits. Upstream-owned caches are flushed only\nafter the single candidate has committed and only when that URL changed.",
+        "operationId": "server",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServerReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Applied as one candidate, persisted, and swapped into the live runtime config; upstream caches were flushed only if the URL changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The complete candidate was rejected; no settings were applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or the caller's user was deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Server settings require an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is missing or the wrong type — a partial body is never a silent reset",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/settings/upstream": {
       "post": {
         "tags": [
@@ -1966,6 +2037,26 @@
             }
           }
         }
+      },
+      "ServerReq": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/LimitsReq"
+          },
+          {
+            "type": "object",
+            "required": [
+              "base_url"
+            ],
+            "properties": {
+              "base_url": {
+                "type": "string",
+                "description": "`http(s)://host[:port]`; link-local addresses are refused (cloud\nmetadata endpoints have no legitimate NIM use)."
+              }
+            }
+          }
+        ],
+        "description": "The Server form's one complete payload. It deliberately combines the\nupstream URL and all limits so browser saves cannot commit their first\nrequest before the second request is rejected."
       },
       "ServerSettings": {
         "type": "object",

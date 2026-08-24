@@ -69,8 +69,8 @@ fn spec_is_usable() {
         .map(|item| item.as_object().expect("path item").len())
         .sum();
     assert_eq!(
-        operation_count, 16,
-        "14 /api/* operations + the 2 setup operations"
+        operation_count, 17,
+        "15 /api/* operations + the 2 setup operations"
     );
     assert_eq!(
         paths["/api/locale-bootstrap"]["get"]["security"]
@@ -192,6 +192,47 @@ fn locale_bootstrap_schema_is_typed() {
         "string"
     );
     assert_eq!(schema["properties"]["server_default"]["type"], "string");
+}
+
+#[test]
+fn server_settings_openapi_is_one_complete_request() {
+    let spec: serde_json::Value =
+        serde_json::from_str(&nim_proxy::openapi_json()).expect("the spec is JSON");
+    let operation = &spec["paths"]["/api/settings/server"]["post"];
+    assert!(
+        operation.is_object(),
+        "server-openapi: missing combined save"
+    );
+    assert!(
+        operation.get("security").is_none(),
+        "server-openapi: admin route must inherit operator authentication"
+    );
+    assert_eq!(
+        operation["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ServerReq"
+    );
+    let request = &spec["components"]["schemas"]["ServerReq"];
+    assert_eq!(
+        request["allOf"][0]["$ref"],
+        "#/components/schemas/LimitsReq"
+    );
+    assert_eq!(
+        request["allOf"][1]["required"],
+        serde_json::json!(["base_url"])
+    );
+    for (status, schema) in [
+        ("200", "OkResponse"),
+        ("400", "ApiError"),
+        ("401", "ApiError"),
+        ("403", "ApiError"),
+        ("422", "ApiError"),
+    ] {
+        assert_eq!(
+            operation["responses"][status]["content"]["application/json"]["schema"]["$ref"],
+            format!("#/components/schemas/{schema}"),
+            "server-openapi: POST /api/settings/server {status}"
+        );
+    }
 }
 
 fn resolve_schema<'a>(

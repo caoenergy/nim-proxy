@@ -15,7 +15,7 @@ module are test-only descriptive metadata and cannot dispatch a request.
 `probe_path` is a concrete fixture-backed request path. This distinction is
 load-bearing for `/v1/{*path}` and future parameterized routes.
 
-The current router has 34 method/path contracts, including nine presentation
+The current router has 35 method/path contracts, including nine presentation
 asset routes. A
 superuser has no exclusive route: it has admin endpoint power plus the
 undeletable/undemotable account invariant. `OperatorSuperuser` exists so a
@@ -67,6 +67,7 @@ not a second copy here.
 | `POST /api/settings/clients` | Browser/operator API | Private | Post-setup | Session/header credentials; own keys for user, any key/mode for admin | JSON | JSON | `setup_required`, `unauthorized`, `forbidden`, `invalid_config` | Success changes config bytes; rejection does not | Settings Access & keys | Yes | B, O, M |
 | `POST /api/settings/upstream` | Browser/operator API | Private | Post-setup | Session/header credentials; admin or superuser | JSON | JSON | `setup_required`, `unauthorized`, `forbidden`, `invalid_config` | Success changes config bytes; rejection does not | Settings Server | Yes | B, M |
 | `POST /api/settings/limits` | Browser/operator API | Private | Post-setup | Session/header credentials; admin or superuser | JSON | JSON | `setup_required`, `unauthorized`, `forbidden`, `invalid_config` | Success changes config bytes; rejection does not | Settings Server | Yes | B, M |
+| `POST /api/settings/server` | Browser/operator API | Private | Post-setup | Session/header credentials; admin or superuser | Complete upstream URL plus limits JSON | JSON | `setup_required`, `unauthorized`, `forbidden`, `invalid_config` | Atomically changes upstream and limits bytes; rejection changes neither; clears upstream-owned cache only after a changed upstream commits | Settings Server Save | Yes | B, M |
 | `POST /api/settings/history` | Browser/operator API | Private | Post-setup | Session/header credentials; admin or superuser | JSON | JSON | `setup_required`, `unauthorized`, `forbidden`, `invalid_config` | Success changes config bytes; rejection does not | Settings Server | Yes | B, M |
 | `POST /api/settings/governor` | Browser/operator API | Private | Post-setup | Session/header credentials; admin or superuser | JSON | JSON | `setup_required`, `unauthorized`, `forbidden`, `invalid_config` | Success changes config bytes; rejection does not | Settings Server | Yes | B, M |
 | `POST /api/settings/users` | Browser/operator API | Private | Post-setup | Session/header credentials; admin or superuser; superuser target protected | JSON | JSON | `setup_required`, `unauthorized`, `forbidden`, `weak_password`, `invalid_config` | Success changes config bytes; rejection does not | Settings Users | Yes | B, M |
@@ -107,9 +108,9 @@ authenticated role receives the same established pool payload from `/metrics`,
 and admin-only sections before serialization. The focused multi-user E2E proof
 is `shared_observability_is_identical_across_roles_while_config_stays_scoped`.
 
-Generated OpenAPI describes 14 `/api` operations and two setup POST
+Generated OpenAPI describes 15 `/api` operations and two setup POST
 operations. The locale bootstrap is public with explicit `security: []`; the
-other 13 `/api` operations inherit operator authentication. HTML/form,
+other 14 `/api` operations inherit operator authentication. HTML/form,
 presentation assets, health, metrics, and `/v1`
 omissions are explicit
 decisions. The generated-file authority and error schema remain in

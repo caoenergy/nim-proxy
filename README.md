@@ -255,10 +255,10 @@ scrape_configs:
 ### The dashboard API
 
 The routes the dashboard and the setup wizard call are described by
-[`openapi.json`](openapi.json) at the repo root — 16 operations covering 14
+[`openapi.json`](openapi.json) at the repo root — 17 operations covering 15
 `/api/*` routes plus the two unauthenticated `/setup` ones. The public
 `GET /api/locale-bootstrap` operation and both setup operations explicitly
-waive the document-level authentication requirement; the other 13 `/api/*`
+waive the document-level authentication requirement; the other 14 `/api/*`
 operations require operator authentication. The spec is
 **generated from the handlers** (`utoipa`) and CI fails on any drift, so it
 cannot describe a version of the API that no longer exists. Point any offline

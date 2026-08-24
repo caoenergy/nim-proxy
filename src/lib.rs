@@ -631,6 +631,7 @@ pub async fn run() {
         .route(routes::API_SETTINGS_CLIENTS, post(settings::clients))
         .route(routes::API_SETTINGS_UPSTREAM, post(settings::upstream))
         .route(routes::API_SETTINGS_LIMITS, post(settings::limits))
+        .route(routes::API_SETTINGS_SERVER, post(settings::server))
         .route(routes::API_SETTINGS_HISTORY, post(settings::history))
         .route(routes::API_SETTINGS_GOVERNOR, post(settings::governor_cfg))
         .route(routes::API_SETTINGS_USERS, post(settings::users))

@@ -274,6 +274,16 @@ fn contract_body(
             "stream_idle_secs": 300,
             "strict_passthrough": false
         }),
+        "api-settings-server" => serde_json::json!({
+            "base_url": format!("{}/matrix-{suffix}", mock.url),
+            "heartbeat_secs": 1,
+            "max_inflight": 640 + actor.ordinal(),
+            "max_wait_secs": 31,
+            "models_ttl_secs": 300,
+            "request_timeout_secs": 300,
+            "stream_idle_secs": 300,
+            "strict_passthrough": false
+        }),
         "api-settings-history" => serde_json::json!({
             "days": 60 + actor.ordinal(),
             "default_window_days": 30,
@@ -676,6 +686,19 @@ async fn route_contract_behavior_matrix() {
             accept_html: false,
             expectations: configured_contract_expectations(200, 403),
             method: "POST",
+            name: "api-settings-server",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::Json,
+            side_effect: ContractSideEffect::DurableConfig,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/api/settings/server",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAdmin,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 403),
+            method: "POST",
             name: "api-settings-history",
             phase: ContractPhase::PostSetup,
             request: ContractRequest::Json,
@@ -901,7 +924,7 @@ async fn route_contract_behavior_matrix() {
         },
     ];
 
-    assert_eq!(rows.len(), 34, "route-contract:inventory");
+    assert_eq!(rows.len(), 35, "route-contract:inventory");
 
     let mock = start_mock().await;
     let before_setup = start_proxy_fresh().await;
@@ -6794,6 +6817,7 @@ async fn user_role_is_denied_server_settings_and_foreign_keys() {
     let proxy = start_proxy_with(&mock.url, opts, &[]).await;
     let root = support::login(&proxy).await;
     let alice = support::login_as(&proxy, "alice").await;
+    let before = std::fs::read(proxy.data_dir.join("config.json")).unwrap();
 
     for (path, body) in [
         (
@@ -6822,6 +6846,14 @@ async fn user_role_is_denied_server_settings_and_foreign_keys() {
             }),
         ),
         (
+            "/api/settings/server",
+            serde_json::json!({
+                "base_url": "https://forbidden.invalid/v1", "max_wait_secs": 60,
+                "heartbeat_secs": 5, "models_ttl_secs": 600, "stream_idle_secs": 300,
+                "request_timeout_secs": 300, "max_inflight": 512, "strict_passthrough": false
+            }),
+        ),
+        (
             "/api/settings/governor",
             serde_json::json!({"enabled": false}),
         ),
@@ -6829,6 +6861,10 @@ async fn user_role_is_denied_server_settings_and_foreign_keys() {
         let (status, v) = post_json(&proxy, &alice, path, body).await;
         assert_eq!(status, 403, "{path} should be admin-only: {v}");
     }
+    assert_eq!(
+        std::fs::read(proxy.data_dir.join("config.json")).unwrap(),
+        before
+    );
 
     // Removing / disabling someone else's NIM key is also forbidden.
     let fp = api_config(&proxy, &root).await["nim_keys"][0]["fingerprint"]
@@ -7127,7 +7163,7 @@ async fn password_change_requires_current_and_rotates_other_sessions() {
 }
 
 #[tokio::test]
-async fn base_url_change_flushes_the_models_cache() {
+async fn combined_server_save_flushes_models_cache_only_for_upstream_change() {
     let mock_a = start_mock().await;
     let mock_b = start_mock().await;
     let proxy = start_proxy(&mock_a.url, &[]).await;
@@ -7152,8 +7188,17 @@ async fn base_url_change_flushes_the_models_cache() {
     let (status, v) = post_json(
         &proxy,
         &root,
-        "/api/settings/upstream",
-        serde_json::json!({"base_url": mock_b.url}),
+        "/api/settings/server",
+        serde_json::json!({
+            "base_url": mock_b.url,
+            "heartbeat_secs": 10,
+            "max_inflight": 512,
+            "max_wait_secs": 900,
+            "models_ttl_secs": 600,
+            "request_timeout_secs": 300,
+            "stream_idle_secs": 300,
+            "strict_passthrough": false,
+        }),
     )
     .await;
     assert_eq!(status, 200, "{v}");
@@ -7171,6 +7216,122 @@ async fn base_url_change_flushes_the_models_cache() {
             .load(std::sync::atomic::Ordering::SeqCst),
         1,
         "catalog refetches from the new upstream, not the stale cache"
+    );
+
+    let (status, v) = post_json(
+        &proxy,
+        &root,
+        "/api/settings/server",
+        serde_json::json!({
+            "base_url": mock_b.url,
+            "heartbeat_secs": 10,
+            "max_inflight": 512,
+            "max_wait_secs": 899,
+            "models_ttl_secs": 600,
+            "request_timeout_secs": 300,
+            "stream_idle_secs": 300,
+            "strict_passthrough": false,
+        }),
+    )
+    .await;
+    assert_eq!(status, 200, "limits-only combined save: {v}");
+    client()
+        .get(proxy.url("/v1/models"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    assert_eq!(
+        mock_b
+            .state
+            .models_hits
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "limits-only combined save preserves the upstream-owned catalog cache"
+    );
+}
+
+/// Rejection must not expose any upstream-owned side effect: cached models and
+/// a model's no-injection fallback both belong to the old committed upstream.
+#[tokio::test]
+async fn rejected_combined_server_save_preserves_upstream_owned_memory() {
+    let mock = start_mock().await;
+    mock.state.push(Behavior::BadRequestIfInjected);
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let root = support::login(&proxy).await;
+
+    // Prime the catalog cache, then teach the proxy that this model rejects
+    // stream_options. The first chat is retried without injection.
+    client()
+        .get(proxy.url("/v1/models"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let first = client()
+        .post(proxy.url("/v1/chat/completions"))
+        .json(&chat_body("first", true))
+        .send()
+        .await
+        .unwrap();
+    read_sse(first).await;
+
+    let before = std::fs::read(proxy.data_dir.join("config.json")).unwrap();
+    let (status, body) = post_json(
+        &proxy,
+        &root,
+        "/api/settings/server",
+        serde_json::json!({
+            "base_url": "https://rejected.invalid/v1",
+            "heartbeat_secs": 10,
+            "max_inflight": 512,
+            "max_wait_secs": 5,
+            "models_ttl_secs": 600,
+            "request_timeout_secs": 300,
+            "stream_idle_secs": 300,
+            "strict_passthrough": false,
+        }),
+    )
+    .await;
+    assert_eq!(status, 400, "rejected combined save: {body}");
+    assert_eq!(
+        std::fs::read(proxy.data_dir.join("config.json")).unwrap(),
+        before
+    );
+
+    client()
+        .get(proxy.url("/v1/models"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    assert_eq!(
+        mock.state.models_hits.load(Ordering::SeqCst),
+        1,
+        "rejected upstream candidate must not flush the old catalog cache"
+    );
+
+    let second = client()
+        .post(proxy.url("/v1/chat/completions"))
+        .json(&chat_body("second", true))
+        .send()
+        .await
+        .unwrap();
+    read_sse(second).await;
+    let hits = mock.state.hits.lock().unwrap();
+    assert_eq!(
+        hits.len(),
+        3,
+        "one injected retry and one remembered request"
+    );
+    assert!(hits[0].body.get("stream_options").is_some());
+    assert!(hits[1].body.get("stream_options").is_none());
+    assert!(
+        hits[2].body.get("stream_options").is_none(),
+        "rejected upstream candidate must not clear no-inject memory"
     );
 }
 
@@ -7487,6 +7648,110 @@ async fn history_settings_reflect_in_api_config() {
     assert_eq!(cfg["server"]["history"]["days"], 45);
     assert_eq!(cfg["server"]["dashboard"]["default_window_days"], 30);
     assert_eq!(cfg["server"]["dashboard"]["slo_target_percent"], 99.5);
+}
+
+/// The Server form changes the upstream and every limit in one transaction:
+/// neither half may publish when the other half is invalid.
+#[tokio::test]
+async fn server_settings_save_is_atomic() {
+    let mock = start_mock().await;
+    let proxy = start_proxy(&mock.url, &[]).await;
+    let root = support::login(&proxy).await;
+    let before_bytes = std::fs::read(proxy.data_dir.join("config.json")).unwrap();
+    let before = api_config(&proxy, &root).await["server"].clone();
+
+    let (status, v) = post_json(
+        &proxy,
+        &root,
+        "/api/settings/server",
+        serde_json::json!({
+            "base_url": "https://changed.invalid/v1", "max_wait_secs": 5,
+            "heartbeat_secs": 10, "models_ttl_secs": 600, "stream_idle_secs": 300,
+            "request_timeout_secs": 300, "max_inflight": 512, "strict_passthrough": false
+        }),
+    )
+    .await;
+    assert_eq!(status, 400, "valid upstream plus invalid limits: {v}");
+    assert_eq!(
+        std::fs::read(proxy.data_dir.join("config.json")).unwrap(),
+        before_bytes
+    );
+    assert_eq!(api_config(&proxy, &root).await["server"], before);
+
+    let (status, v) = post_json(
+        &proxy,
+        &root,
+        "/api/settings/server",
+        serde_json::json!({
+            "base_url": "gopher://invalid", "max_wait_secs": 900,
+            "heartbeat_secs": 10, "models_ttl_secs": 600, "stream_idle_secs": 300,
+            "request_timeout_secs": 300, "max_inflight": 512, "strict_passthrough": false
+        }),
+    )
+    .await;
+    assert_eq!(status, 400, "invalid upstream plus valid limits: {v}");
+    assert_eq!(
+        std::fs::read(proxy.data_dir.join("config.json")).unwrap(),
+        before_bytes
+    );
+    assert_eq!(api_config(&proxy, &root).await["server"], before);
+
+    // A file at the configured data-dir path makes `create_dir_all` fail for
+    // every uid (unlike chmod, which is vacuous when the suite runs as root).
+    // The running proxy has already loaded its config; restore the directory
+    // before asking it for the authoritative runtime view below.
+    let blocked_data_dir = proxy.data_dir.with_extension("blocked");
+    std::fs::rename(&proxy.data_dir, &blocked_data_dir).unwrap();
+    std::fs::write(&proxy.data_dir, b"not a directory").unwrap();
+    let (status, v) = post_json(
+        &proxy,
+        &root,
+        "/api/settings/server",
+        serde_json::json!({
+            "base_url": "https://changed.invalid/v1", "max_wait_secs": 900,
+            "heartbeat_secs": 10, "models_ttl_secs": 600, "stream_idle_secs": 300,
+            "request_timeout_secs": 300, "max_inflight": 512, "strict_passthrough": false
+        }),
+    )
+    .await;
+    std::fs::remove_file(&proxy.data_dir).unwrap();
+    std::fs::rename(&blocked_data_dir, &proxy.data_dir).unwrap();
+    assert_eq!(
+        status, 400,
+        "persistence failure must reject the whole candidate: {v}"
+    );
+    assert_eq!(
+        std::fs::read(proxy.data_dir.join("config.json")).unwrap(),
+        before_bytes
+    );
+    assert_eq!(api_config(&proxy, &root).await["server"], before);
+
+    let (status, v) = post_json(
+        &proxy,
+        &root,
+        "/api/settings/server",
+        serde_json::json!({
+            "base_url": "https://changed.invalid/v1", "max_wait_secs": 900,
+            "heartbeat_secs": 10, "models_ttl_secs": 600, "stream_idle_secs": 300,
+            "request_timeout_secs": 300, "max_inflight": 512, "strict_passthrough": false
+        }),
+    )
+    .await;
+    assert_eq!(status, 200, "combined server save: {v}");
+    let after = api_config(&proxy, &root).await;
+    assert_eq!(after["server"]["base_url"], "https://changed.invalid/v1");
+    assert_eq!(
+        after["server"]["limits"],
+        serde_json::json!({
+            "max_wait_secs": 900, "heartbeat_secs": 10, "models_ttl_secs": 600,
+            "stream_idle_secs": 300, "request_timeout_secs": 300,
+            "max_inflight": 512, "strict_passthrough": false
+        })
+    );
+    assert_ne!(
+        std::fs::read(proxy.data_dir.join("config.json")).unwrap(),
+        before_bytes
+    );
 }
 
 /// The limits endpoint enforces the shared rulebook (heartbeat < max_wait)
