@@ -259,6 +259,9 @@ def looks_like_prose(text: str) -> bool:
     return bool(re.match(r"^[A-Z][a-z]{2,}$", text))
 
 
+UI_TEXT_ELEMENTS = {"button", "label", "span", "summary"}
+
+
 def lint_runtime_helpers(name: str, raw: str) -> list:
     """Every i18n helper a page CALLS must be defined in that page.
 
@@ -566,6 +569,16 @@ def lint_untagged(name: str, raw: str) -> list:
         for m in QUOTED.finditer(line):
             text = m.group(1) if m.group(1) is not None else m.group(2)
             before = line[: m.start()]
+            if (
+                re.search(r"\.textContent\s*=\s*$", before)
+                and re.search(r"[A-Za-z]", text)
+                and not frozen(text)
+            ):
+                errors.append(unowned_ui_string(
+                    name, scanned, line_start + m.start(),
+                    f"textContent string {text!r} — route it through message()",
+                ))
+                continue
             # NOT_DISPLAY applies to the string it GOVERNS, not to the whole
             # line. Matching per line meant one `.toFixed(` anywhere suppressed
             # every string beside it — which is how 'met', 'missed' and
@@ -609,6 +622,10 @@ def lint_untagged(name: str, raw: str) -> list:
                     errors.append(unowned_ui_string(name, scanned, m.start(),
                         f"prose {piece!r} in template markup — route it through message()"))
 
+        # Native interactive labels include descendant text, so a direct-text
+        # regex would miss `<button><span>copy</span></button>`.
+        errors.extend(lint_ui_template_markup(name, scanned, lit, m.start()))
+
     # Localizable attributes carrying prose, with no data-i18n-attr beside them.
     markup = strip_scripts(raw)
     for m in re.finditer(r"<[^>]*\s(title|placeholder|aria-label)=\"([^\"]{2,})\"[^>]*>", markup):
@@ -641,10 +658,14 @@ class _MarkupTextOwnership(HTMLParser):
         "link", "meta", "param", "source", "track", "wbr",
     }
 
-    def __init__(self, name: str, source: str):
+    def __init__(self, name: str, source: str, markup: str = None,
+                 base_offset: int = 0, interactive_only: bool = False):
         super().__init__(convert_charrefs=True)
         self.name = name
         self.source = source
+        self.markup = source if markup is None else markup
+        self.base_offset = base_offset
+        self.interactive_only = interactive_only
         self.stack = []
         self.errors = []
 
@@ -663,12 +684,27 @@ class _MarkupTextOwnership(HTMLParser):
 
     def handle_data(self, data):
         text = data.strip()
-        if not text or not looks_like_prose(text):
+        if "\x00" in text or "${" in text:
+            return
+        interactive_label = (
+            any(tag in UI_TEXT_ELEMENTS for tag, _ in self.stack)
+            and not any(
+                tag in UI_TEXT_ELEMENTS and "data-urolepick" in attrs
+                for tag, attrs in self.stack
+            )
+            and not frozen(text)
+        )
+        relevant = interactive_label and not looks_like_prose(text)
+        if not text or (self.interactive_only and not relevant):
+            return
+        if not self.interactive_only and not (looks_like_prose(text) or relevant):
             return
         if any(any(key.startswith("data-i18n") for key in attrs) for _, attrs in self.stack):
             return
         line, column = self.getpos()
-        offset = sum(len(line) + 1 for line in self.source.splitlines()[:line - 1]) + column
+        offset = self.base_offset + sum(
+            len(line) + 1 for line in self.markup.splitlines()[:line - 1]
+        ) + column
         self.errors.append(unowned_ui_string(
             self.name, self.source, offset,
             f"markup text {text!r} — add a catalog-owned data-i18n sink",
@@ -678,6 +714,16 @@ class _MarkupTextOwnership(HTMLParser):
 def lint_untagged_markup(name: str, raw: str) -> list:
     parser = _MarkupTextOwnership(name, raw)
     parser.feed(strip_scripts(blank_comments(raw)))
+    return parser.errors
+
+
+def lint_ui_template_markup(name: str, source: str, markup: str,
+                            offset: int) -> list:
+    """Find lower-case or short visible labels in one template literal."""
+    parser = _MarkupTextOwnership(
+        name, source, markup, offset, interactive_only=True,
+    )
+    parser.feed(markup)
     return parser.errors
 
 
@@ -812,11 +858,15 @@ SELFTEST_CASES = [
     ("assignment-double", 'const zzq = "Some fresh label here";', "unowned-ui-string"),
     ("equality-compare", "if (x === 'Some fresh label here') {}", "unowned-ui-string"),
     ("textContent-sink", "el.textContent = 'Some fresh label here';", "unowned-ui-string"),
+    ("short-textContent-sink", "el.textContent = 'up ' + duration;", "unowned-ui-string"),
     ("innerHTML-sink", "el.innerHTML = 'Some fresh label here';", "unowned-ui-string"),
     ("adjacent-arg", "bar(v.toFixed(1), 'Some fresh label here');", "unowned-ui-string"),
     ("statement-boundary", "el.style.width = w; bar('Some fresh label here');", "unowned-ui-string"),
     ("colon-prefixed-prose", "const z = `<div>note: some fresh label</div>`;", "unowned-ui-string"),
     ("template-text-node", "const z = `<div><span>Some fresh label</span></div>`;", "unowned-ui-string"),
+    ("lowercase-template-text", "const z = `<span>total</span>`;", "unowned-ui-string"),
+    ("short-template-text", "const z = `<button>OK</button>`;", "unowned-ui-string"),
+    ("lowercase-nested-template-text", "const z = `<button><span>copy</span></button>`;", "unowned-ui-string"),
     ("display-call-arg", "prow('Some fresh label here', 1);", "unowned-ui-string"),
     ("retired-in-markup", "const z = `<div>Harness</div>`;", "retired"),
     # A real multi-word retired key, wrapped. NOT "Latency breakdown" — that is
@@ -833,6 +883,9 @@ SELFTEST_CASES = [
     ("class-field-display", "const state = { cls: 'kstate dim', label: 'Some fresh label here' };", "unowned-ui-string"),
     ("real-machinery", "document.querySelector('#tab-models');", None),
     ("frozen-unit", "const z = 'tok/s';", None),
+    ("template-frozen-unit", "const z = `<span>tok/s</span>`;", None),
+    ("template-status-code", "const z = `<span>429</span>`;", None),
+    ("template-machine-role", "const z = `<button data-urolepick=\"user\">user</button>`;", None),
     ("lowercase-token", "const z = 'sticky';", None),
 ]
 
@@ -855,6 +908,18 @@ SOURCE_CLASS_SELFTESTS = [
      '\n<input data-i18n-attr="placeholder:probe"><span>Unowned following label</span>', lint_untagged_markup, 2),
     ("tagged-ancestor-owns-descendant", "tests/fixtures/locales/owned-ancestor.html",
      '\n<div data-i18n="probe"><span>Owned descendant label</span></div>', lint_untagged_markup, None),
+    ("lowercase-button-markup", "tests/fixtures/locales/unowned-button.html",
+     "\n<button>copy</button>", lint_untagged_markup, 2),
+    ("short-button-markup", "tests/fixtures/locales/unowned-button.html",
+     "\n<button>OK</button>", lint_untagged_markup, 2),
+    ("lowercase-nested-button-markup", "tests/fixtures/locales/unowned-button.html",
+     "\n<button><span>copy</span></button>", lint_untagged_markup, 2),
+    ("frozen-button-markup", "tests/fixtures/locales/owned-button.html",
+     "\n<button>tok/s</button>", lint_untagged_markup, None),
+    ("status-button-markup", "tests/fixtures/locales/owned-button.html",
+     "\n<button>429</button>", lint_untagged_markup, None),
+    ("machine-role-button-markup", "tests/fixtures/locales/owned-button.html",
+     "\n<button data-urolepick=\"user\">user</button>", lint_untagged_markup, None),
 ]
 
 SINK_SELFTEST_CASES = [

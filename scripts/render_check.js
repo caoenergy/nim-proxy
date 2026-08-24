@@ -1427,7 +1427,7 @@ const DOM_CONTRACTS = {
     domContract('user-controls-absent', `!document.querySelector('#u-add')`, true),
   ],
   'refresh-dashboard-now': [
-    domContract('changed-fixture-uptime', `document.querySelector('#uptime')?.textContent.trim() ?? null`, 'up 2h 0m'),
+    domContract('changed-fixture-uptime', `document.querySelector('#uptime')?.textContent.trim() ?? null`, 'Uptime: 2h 0m'),
   ],
   'refresh-settings-access': [
     domContract('lane-state-updated', `document.querySelector('[data-ksfp="f17e0001"]')?.textContent.trim() ?? null`, '1 / 40 in window'),
@@ -6751,6 +6751,14 @@ async function main() {
           buttons: 0,
         }, S);
         await sleep(40);
+      }
+      if (r.id === 'chart-outcome-stack') {
+        const totalLabel = await evaluate(`(() => ({
+          actual: document.querySelector('#tooltip .row:last-child span')?.textContent ?? null,
+          expected: message('dashboard.common.tooltip.total'),
+        }))()`);
+        if (totalLabel.actual !== totalLabel.expected)
+          throw new Error(`stacked-chart total label is not catalog-owned: ${JSON.stringify(totalLabel)}`);
       }
       hovered.push(`${tab}/${r.id}`);
     }

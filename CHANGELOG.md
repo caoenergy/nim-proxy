@@ -38,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **A complete canonical English presentation source.** The 443-message
+- **A complete canonical English presentation source.** The 446-message
   `src/web/locales/en-US.json` catalog owns repository text across the
   dashboard, Settings, setup, login, dialogs, validation, empty/error states,
   and accessibility labels. Model ids, client names, publisher names, API
@@ -121,6 +121,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - User-management requests now reject non-admin and stale sessions before
   starting requested-password PBKDF2 work, while rechecking authorization
   before committing the change.
+- Dashboard uptime and stacked-chart totals now come from the canonical
+  catalog, and the i18n lint rejects short or lowercase text in visible sinks.
 - A 2xx status is classified consistently across availability, charts, and
   error taxonomy instead of treating only literal HTTP 200 as success.
 - Dashboard catalog values no longer double-escape, and setup/runtime catalog

@@ -723,7 +723,7 @@ function stackChart(el, series, unitFmt, opts = {}) {
     let html = `<div class="t">${at(STAMP, ts[bi])}</div>`;
     for (const s of bands)
       html += `<div class="row"><span><i class="sw" data-style="background:${s.color}"></i>${escapeHtml(s.name)}</span><b>${unitFmt(bandAt(s, bi))}</b></div>`;
-    html += `<div class="row" data-style="border-top:1px solid var(--hairline);margin-top:3px;padding-top:4px"><span>total</span><b>${unitFmt(totals[bi])}</b></div>`;
+    html += `<div class="row" data-style="border-top:1px solid var(--hairline);margin-top:3px;padding-top:4px"><span>${escapeHtml(catalogMessage('dashboard.common.tooltip.total'))}</span><b>${unitFmt(totals[bi])}</b></div>`;
     hoverg.innerHTML = xh.outerHTML + dots;
     hoverg.setAttribute('visibility', 'visible');
     showTip(clientX, clientY, html);

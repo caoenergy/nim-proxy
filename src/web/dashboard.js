@@ -985,7 +985,9 @@ async function pollNow() {
     }
     render();
     syncFollowControl();
-    $('uptime').textContent = 'up ' + ago(next.sampled_at - cfg.started);
+    setMessageText($('uptime'), 'dashboard.common.uptime', {
+      duration: ago(next.sampled_at - cfg.started),
+    });
   } catch {
     syncFollowControl(true);
   } finally {

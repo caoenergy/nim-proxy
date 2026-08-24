@@ -460,6 +460,16 @@
       "desc": "Badge on a card heading: this figure is the live instant, not an aggregate over the selected time range. Adverb of time.",
       "hash": "fe18013d"
     },
+    "dashboard.common.tooltip.total": {
+      "en": "Total",
+      "desc": "Final row in a stacked-chart tooltip: the sum of all visible series at the selected time.",
+      "hash": "c9b3c382"
+    },
+    "dashboard.common.uptime": {
+      "en": "Uptime: {duration}",
+      "desc": "Live proxy uptime. {duration} is an already-formatted localized duration.",
+      "hash": "92faa2d9"
+    },
     "dashboard.common.value.now": {
       "en": "{value} now",
       "hash": "dc1a4806"
