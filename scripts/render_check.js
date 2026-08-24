@@ -163,6 +163,57 @@ const INTERACTION_ROWS = [
     },
   },
   {
+    id: 'sorting-capacity-table-ascending',
+    category: 'sorting',
+    state: 'healthy',
+    action: 'activate the first Capacity table header once',
+    visible: 'the key column is ascending without a rendering or transport failure',
+    dom: [
+      {
+        selector: '#table-lanes tbody tr',
+        property: 'first-cell-sequence',
+        equals: ['Slot 1', 'Slot 2'],
+      },
+      { selector: '#liveText', property: 'textContent', equals: 'Live' },
+    ],
+  },
+  {
+    id: 'sorting-capacity-table-descending',
+    category: 'sorting',
+    state: 'healthy',
+    action: 'activate the same Capacity table header a second time',
+    visible: 'the key column reverses without a rendering or transport failure',
+    dom: [
+      {
+        selector: '#table-lanes tbody tr',
+        property: 'first-cell-sequence',
+        equals: ['Slot 2', 'Slot 1'],
+      },
+      { selector: '#liveText', property: 'textContent', equals: 'Live' },
+    ],
+  },
+  {
+    id: 'sorting-capacity-table-persists-rerender',
+    category: 'sorting',
+    state: 'healthy',
+    action: 'fulfill the next dashboard-now poll after sorting Capacity descending',
+    visible: 'the descending Capacity order rerenders and the live connection remains live',
+    dom: [
+      {
+        selector: '#table-lanes tbody tr',
+        property: 'first-cell-sequence',
+        equals: ['Slot 2', 'Slot 1'],
+      },
+      { selector: '#liveText', property: 'textContent', equals: 'Live' },
+    ],
+    request: {
+      method: 'GET',
+      path: '/api/dashboard/now',
+      query: {},
+      body: null,
+    },
+  },
+  {
     id: 'filtering-settings-role',
     category: 'filtering',
     state: 'role-user',
@@ -1342,6 +1393,33 @@ const DOM_CONTRACTS = {
       `Array.from(document.querySelectorAll('#table-models tbody tr')).map(row => row.cells[0]?.textContent.trim())`,
       ['fixture/zeta', 'fixture/alpha']),
   ],
+  'sorting-capacity-table-ascending': [
+    domContract('ascending-capacity-key-order',
+      `Array.from(document.querySelectorAll('#table-lanes tbody tr')).map(row => row.cells[0]?.textContent.trim())`,
+      ['Slot 1', 'Slot 2']),
+    domContract('capacity-sort-keeps-live-connection',
+      `document.querySelector('#liveText')?.textContent.trim() ?? null`, 'Live'),
+    domContract('capacity-sort-keeps-live-transport-class',
+      `document.querySelector('#live')?.className ?? null`, 'live'),
+  ],
+  'sorting-capacity-table-descending': [
+    domContract('descending-capacity-key-order',
+      `Array.from(document.querySelectorAll('#table-lanes tbody tr')).map(row => row.cells[0]?.textContent.trim())`,
+      ['Slot 2', 'Slot 1']),
+    domContract('capacity-sort-keeps-live-connection',
+      `document.querySelector('#liveText')?.textContent.trim() ?? null`, 'Live'),
+    domContract('capacity-sort-keeps-live-transport-class',
+      `document.querySelector('#live')?.className ?? null`, 'live'),
+  ],
+  'sorting-capacity-table-persists-rerender': [
+    domContract('descending-capacity-key-order-after-rerender',
+      `Array.from(document.querySelectorAll('#table-lanes tbody tr')).map(row => row.cells[0]?.textContent.trim())`,
+      ['Slot 2', 'Slot 1']),
+    domContract('capacity-sort-rerender-keeps-live-connection',
+      `document.querySelector('#liveText')?.textContent.trim() ?? null`, 'Live'),
+    domContract('capacity-sort-rerender-keeps-live-transport-class',
+      `document.querySelector('#live')?.className ?? null`, 'live'),
+  ],
   'filtering-settings-role': [
     domContract('server-nav-absent', `!document.querySelector('#setnav [data-sub="server"]')`, true),
     domContract('users-nav-absent', `!document.querySelector('#setnav [data-sub="users"]')`, true),
@@ -1964,6 +2042,14 @@ const FIXTURE_SCENARIOS = {
   'sorting-table-persists-rerender': dashboardRecipe({
     response: 'dashboard-now-changed.json',
     requires: ['sorting-table-descending'],
+  }),
+  'sorting-capacity-table-ascending': dashboardRecipe(),
+  'sorting-capacity-table-descending': dashboardRecipe({
+    requires: ['sorting-capacity-table-ascending'],
+  }),
+  'sorting-capacity-table-persists-rerender': dashboardRecipe({
+    response: 'dashboard-now-changed.json',
+    requires: ['sorting-capacity-table-descending'],
   }),
   'filtering-settings-role': dashboardRecipe({
     role: 'user',
@@ -4322,6 +4408,9 @@ function matrixActionExpression(id) {
     'sorting-table-ascending': `${click('#side [data-tab="models"]')};${click('#table-models thead th[data-i="0"]')}`,
     'sorting-table-descending': `${click('#table-models thead th[data-i="0"]')}`,
     'sorting-table-persists-rerender': `await pollNow()`,
+    'sorting-capacity-table-ascending': `${click('#side [data-tab="capacity"]')};${click('#table-lanes thead th[data-i="0"]')}`,
+    'sorting-capacity-table-descending': `${click('#table-lanes thead th[data-i="0"]')}`,
+    'sorting-capacity-table-persists-rerender': `await pollNow()`,
     'filtering-settings-role': openSettings,
     'refresh-dashboard-now': `await pollNow()`,
     'refresh-settings-access': `document.querySelector('#nk-key').focus();await window.__runMatrixIntervals(5000)`,
