@@ -804,7 +804,7 @@ function renderCapacity(c) {
     { label: catalogMessage('dashboard.common.col.key'), align: 'l', str: true }, { label: catalogMessage('dashboard.common.col.requests') }, { label: catalogMessage('dashboard.common.col.share') },
     { label: catalogMessage('dashboard.capacity.col.current_rate') }, { label: catalogMessage('dashboard.capacity.col.429s') }, { label: catalogMessage('dashboard.common.status.upstream_error_cooldowns') },
   ], lanes.map(l => ({
-    vals: [l.name, l.cur, l.cur / totalLane * 100, l.currentRpm, l.b429, l.bOther],
+    vals: [l.i, l.cur, l.cur / totalLane * 100, l.currentRpm, l.b429, l.bOther],
     cells: [`<i class="sw" data-style="background:${laneColor(l.i)}"></i>${escapeHtml(l.name)}`,
       fmt(l.cur), pctOf(l.cur / totalLane, 0), `${fmt(l.currentRpm)} / ${laneRpm(l.i)}`,
       `<span class="${l.b429 ? 'warnc' : 'dim'}">${fmt(l.b429)}</span>`,
