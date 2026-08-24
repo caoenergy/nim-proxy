@@ -275,7 +275,7 @@ fn contract_body(
             "strict_passthrough": false
         }),
         "api-settings-server" => serde_json::json!({
-            "base_url": format!("{}/matrix-{suffix}", mock.url),
+            "base_url": mock.url,
             "heartbeat_secs": 1,
             "max_inflight": 640 + actor.ordinal(),
             "max_wait_secs": 31,
